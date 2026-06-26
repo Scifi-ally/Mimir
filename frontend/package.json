@@ -1,0 +1,44 @@
+{
+  "name": "mimir-frontend",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@fontsource/geist-mono": "^5.2.5",
+    "@radix-ui/react-roving-focus": "^1.1.13",
+    "@tanstack/react-query": "^5.90.21",
+    "@tanstack/react-virtual": "^3.14.3",
+    "clsx": "^2.1.1",
+    "cmdk": "^1.1.1",
+    "framer-motion": "^12.23.24",
+    "lightweight-charts": "^5.0.7",
+    "lucide-react": "^0.545.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-hotkeys-hook": "^5.3.2",
+    "react-resizable-panels": "^4.11.2",
+    "tailwind-merge": "^3.3.1",
+    "zustand": "^5.0.8"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@tailwindcss/vite": "^4.1.14",
+    "@types/node": "^25.3.3",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^5.0.4",
+    "eslint": "^10.5.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.3",
+    "globals": "^17.7.0",
+    "tailwindcss": "^4.1.14",
+    "typescript": "~5.9.2",
+    "typescript-eslint": "^8.62.0",
+    "vite": "^7.3.2"
+  }
+}
