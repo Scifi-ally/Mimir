@@ -1,0 +1,27 @@
+{
+  "name": "workspace",
+  "version": "0.0.0",
+  "license": "MIT",
+  "scripts": {
+    "build": "npm run typecheck && npm --prefix backend run build",
+    "typecheck": "npm --prefix backend run typecheck",
+    "test": "npm --prefix backend test",
+    "dev": "npm run dev:backend & npm run dev:frontend",
+    "dev:backend": "npm --prefix backend run dev",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "setup:db": "npm --prefix backend run setup:db && npm --prefix backend run setup:tables",
+    "trade:start": "bot.bat start",
+    "trade:stop": "bot.bat stop",
+    "trade:status": "bot.bat status",
+    "bot:start": "bot.bat start",
+    "bot:stop": "bot.bat stop",
+    "bot:status": "bot.bat status",
+    "stop:servers": "bot.bat stop",
+    "stop": "bot.bat stop"
+  },
+  "private": true,
+  "devDependencies": {
+    "typescript": "~5.9.2",
+    "prettier": "^3.8.1"
+  }
+}

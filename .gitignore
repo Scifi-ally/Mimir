@@ -1,0 +1,55 @@
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Dependencies
+node_modules/
+dist/
+build/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Database
+drizzle/
+
+# Compiled JS artifacts (alongside TS source)
+backend/src/**/*.js
+
+# Build outputs
+backend/dist/
+frontend/dist/
+
+# Temporary files
+*.tmp
+.cache/
+
+# Portable environment
+.portable/
+.codex-logs/
+*.pid
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# Internship specific scripts (Do not commit to GitHub!)
+scripts/generate_internship_commits.ps1
+scripts/internship_push.ps1
+scripts/milestones.json
