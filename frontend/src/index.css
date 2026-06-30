@@ -1,0 +1,301 @@
+@import "tailwindcss";
+@import "@fontsource/geist-mono";
+
+@theme {
+  --font-sans: "Geist Mono", ui-monospace, monospace;
+  --font-mono: "Geist Mono", ui-monospace, monospace;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-bull: #22c55e;
+  --color-bear: #ef4444;
+  --color-surface: #0a0a0a;
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #e5e5e5;
+    
+    --card: #0a0a0a;
+    --card-foreground: #e5e5e5;
+    
+    --popover: #171717;
+    --popover-foreground: #e5e5e5;
+    
+    --primary: #e5e5e5;
+    --primary-foreground: #0a0a0a;
+    
+    --secondary: #262626;
+    --secondary-foreground: #e5e5e5;
+    
+    --muted: #262626;
+    --muted-foreground: #a3a3a3;
+    
+    --accent: #262626;
+    --accent-foreground: #e5e5e5;
+    
+    --destructive: #ef4444;
+    --destructive-foreground: #e5e5e5;
+    
+    --border: #262626;
+    --input: #262626;
+    --ring: #e5e5e5;
+
+    --radius: 0.5rem;
+
+    --island-bg: #1a1a1a;
+    --island-text: #ffffff;
+  }
+
+
+}
+
+@layer base {
+  * {
+    @apply border-border;
+    box-sizing: border-box;
+  }
+  
+  html,
+  body,
+  #root {
+    height: 100%;
+    overflow: hidden;
+  }
+  
+  body {
+    margin: 0;
+    @apply bg-background text-foreground;
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  
+  ::selection {
+    background: color-mix(in srgb, var(--accent) 35%, transparent);
+  }
+  
+  button {
+    font-family: inherit;
+    cursor: pointer;
+    background: none;
+    border: none;
+    color: inherit;
+    outline: none;
+  }
+  
+  input {
+    font-family: inherit;
+    background: transparent;
+    border: none;
+    color: inherit;
+    outline: none;
+  }
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.animate-pulse-dot {
+  animation: pulse-dot 1.4s ease-in-out infinite;
+}
+
+
+
+::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+
+/* Custom visible scrollbar for specific areas */
+.terminal-scrollbar::-webkit-scrollbar {
+  display: block;
+  width: 6px;
+  height: 6px;
+}
+.terminal-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.terminal-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 9999px;
+}
+.terminal-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+@layer base {
+  html.light {
+    --background: #ffffff;
+    --foreground: #000000;
+    --card: #ffffff;
+    --card-foreground: #000000;
+    --popover: #ffffff;
+    --popover-foreground: #000000;
+    --primary: #000000;
+    --primary-foreground: #ffffff;
+    --secondary: #e4e4e7;
+    --secondary-foreground: #000000;
+    --muted: #f4f4f5;
+    --muted-foreground: #52525b;
+    --accent: #e4e4e7;
+    --accent-foreground: #000000;
+    --destructive: #ef4444;
+    --destructive-foreground: #fafaf9;
+    --border: #d4d4d8;
+    --input: #e4e4e7;
+    --ring: #000000;
+    
+    --island-bg: #000000;
+    --island-text: #ffffff;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Apple-Inspired Animation System
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  --apple-ease: cubic-bezier(0.25, 0.1, 0.25, 1);
+  --apple-ease-out: cubic-bezier(0, 0, 0.58, 1);
+  --apple-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --apple-bounce: cubic-bezier(0.68, -0.55, 0.265, 1.55);
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+/* Breathe — subtle idle "alive" pulse */
+@keyframes breathe {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.012); opacity: 0.95; }
+}
+
+/* Slide up with fade — content entry */
+@keyframes slide-up-fade {
+  from { transform: translateY(8px); opacity: 0; filter: blur(4px); }
+  to { transform: translateY(0); opacity: 1; filter: blur(0px); }
+}
+
+/* Scale in — card/modal entry */
+@keyframes scale-in {
+  from { transform: scale(0.96); opacity: 0; filter: blur(6px); }
+  to { transform: scale(1); opacity: 1; filter: blur(0px); }
+}
+
+/* Shimmer — loading skeleton */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.animate-breathe {
+  animation: breathe 4s var(--apple-ease) infinite;
+}
+
+.animate-slide-up-fade {
+  animation: slide-up-fade 0.5s var(--apple-ease) both;
+}
+
+.animate-scale-in {
+  animation: scale-in 0.4s var(--apple-spring) both;
+}
+
+.animate-shimmer {
+  background: linear-gradient(90deg, transparent 0%, var(--border) 50%, transparent 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.8s var(--apple-ease) infinite;
+}
+
+/* Apple-style hover interaction */
+.apple-hover {
+  transition:
+    transform 0.35s var(--apple-spring),
+    box-shadow 0.35s var(--apple-ease-out),
+    opacity 0.2s var(--apple-ease);
+  will-change: transform;
+}
+
+.apple-hover:hover {
+  transform: scale(1.02) translateY(-1px);
+  box-shadow: 0 8px 25px -8px rgba(0, 0, 0, 0.3);
+}
+
+.apple-hover:active {
+  transform: scale(0.98);
+  transition-duration: 0.1s;
+}
+
+/* Smooth color/background transitions */
+.apple-transition {
+  transition: all 0.3s var(--apple-ease);
+}
+
+/* Reduced motion — respect user preferences */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .animate-breathe,
+  .animate-slide-up-fade,
+  .animate-scale-in,
+  .animate-shimmer {
+    animation: none !important;
+  }
+}
