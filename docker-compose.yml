@@ -1,0 +1,113 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: upstox_bot
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d upstox_bot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ai-service:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/upstox_bot
+      REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD}@redis:6379
+      PORT: 5000
+      NODE_ENV: production
+      UPSTOXBOT_ADMIN_TOKEN: ${UPSTOXBOT_ADMIN_TOKEN:?set a strong UPSTOXBOT_ADMIN_TOKEN}
+      UPSTOXBOT_SECRET_KEY: ${UPSTOXBOT_SECRET_KEY:?set a stable UPSTOXBOT_SECRET_KEY}
+      UPSTOX_API_KEY: ${UPSTOX_API_KEY:-}
+      UPSTOX_API_SECRET: ${UPSTOX_API_SECRET:-}
+      UPSTOX_REDIRECT_URI: ${UPSTOX_REDIRECT_URI:-http://localhost:5000/api/system/auth-callback}
+    ports:
+      - "127.0.0.1:5000:5000"
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:5000/api/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    command: sh -c "node dist/migrate.mjs && npm start"
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  ai-service:
+    build:
+      context: .
+      dockerfile: backend/ai_service/Dockerfile
+    restart: unless-stopped
+    environment:
+      AI_CORS_ORIGINS: http://localhost:5000
+    expose:
+      - "8001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+
+  nginx:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    ports:
+      - "127.0.0.1:3000:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:80/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD:?set REDIS_PASSWORD} --appendonly yes
+    expose:
+      - "6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?set REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+volumes:
+  postgres-data:
+  redis-data:
