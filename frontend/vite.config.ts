@@ -10,16 +10,35 @@ export default defineConfig({
       "@": fileURLToPath(new URL("./src", import.meta.url)),
     },
   },
+  optimizeDeps: {
+    include: ["react", "react-dom", "framer-motion", "lightweight-charts", "@tanstack/react-query", "zustand", "lucide-react"],
+  },
   server: {
     port: 3000,
+    host: "127.0.0.1",
     allowedHosts: true,
     proxy: {
       "/api": {
-        target: "http://localhost:5000",
+        target: "http://127.0.0.1:5000",
         changeOrigin: true,
       },
       "/ws": {
-        target: "ws://localhost:5000",
+        target: "ws://127.0.0.1:5000",
+        ws: true,
+      },
+    },
+  },
+  preview: {
+    port: 3000,
+    host: "127.0.0.1",
+    allowedHosts: true,
+    proxy: {
+      "/api": {
+        target: "http://127.0.0.1:5000",
+        changeOrigin: true,
+      },
+      "/ws": {
+        target: "ws://127.0.0.1:5000",
         ws: true,
       },
     },
@@ -28,7 +47,10 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks: {
-          vendor: ["react", "react-dom", "framer-motion", "lightweight-charts"],
+          react: ["react", "react-dom"],
+          motion: ["framer-motion"],
+          charts: ["lightweight-charts"],
+          vendor: ["@tanstack/react-query", "zustand"],
         },
       },
     },
