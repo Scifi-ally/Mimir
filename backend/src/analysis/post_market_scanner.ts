@@ -1,0 +1,358 @@
+/**
+ * Post-Market Full NSE Scanner
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Runs comprehensive analysis after market close on the full NSE universe.
+ * Takes time to properly scan each stock without rushing.
+ *
+ * Features:
+ * - Analyzes every stock with multi-timeframe confluence
+ * - Tracks setup formation and signal confidence
+ * - Ranks by probability and filters strictly
+ * - Saves results for next day's monitoring
+ * - Provides detailed diagnostics on blockers
+ */
+
+import { logger } from "../lib/logger";
+import { db } from "../../db/src";
+import { overnightWatchlistTable } from "../../db/src";
+import { eq } from "drizzle-orm";
+import { broadcast } from "../ws/websocket_server";
+import { createServerEvent } from "../ws/events";
+import { getNextTradingDayStr } from "../lib/ist-time";
+import { getEffectiveUniverse } from "./stock_scanner";
+import { analyzeMultiTimeframe } from "./multi_timeframe";
+import { beginWorkflow, endWorkflow } from "../workflow/coordinator";
+
+interface PostMarketScanResult {
+  symbol: string;
+  name: string;
+  sector: string;
+  direction: "BUY" | "SELL";
+  setupType: string;
+  confluenceScore: number;
+  signalStrength: number;
+  dailyTrend: string;
+  hourlyTrend: string;
+  reasoning: string;
+  probability: number;
+  category: string;
+}
+
+interface ScannerState {
+  running: boolean;
+  startedAt: string | null;
+  finishedAt: string | null;
+  totalStocks: number;
+  analyzedCount: number;
+  candidatesFound: number;
+  errors: number;
+  diagnostics: {
+    noData: number;
+    noSetup: number;
+    lowConfluence: number;
+    bearishRegime: number;
+    corporateAction: number;
+    sectorConcern: number;
+  };
+  topCandidates: PostMarketScanResult[];
+}
+
+let scannerState: ScannerState = {
+  running: false,
+  startedAt: null,
+  finishedAt: null,
+  totalStocks: 0,
+  analyzedCount: 0,
+  candidatesFound: 0,
+  errors: 0,
+  diagnostics: {
+    noData: 0,
+    noSetup: 0,
+    lowConfluence: 0,
+    bearishRegime: 0,
+    corporateAction: 0,
+    sectorConcern: 0,
+  },
+  topCandidates: [],
+};
+
+/**
+ * Run comprehensive post-market scan on full NSE universe
+ */
+export async function runPostMarketFullScan(
+  source: "scheduler" | "manual" | "startup" = "scheduler",
+): Promise<PostMarketScanResult[]> {
+  if (scannerState.running) {
+    logger.warn("Post-market scan already running");
+    return [];
+  }
+
+  const workflow = beginWorkflow("POSTMARKET_SCAN", source);
+  if (!workflow.ok) {
+    logger.warn(
+      { reason: workflow.reason },
+      "Post-market scan skipped due to workflow conflict",
+    );
+    return [];
+  }
+
+  const startTime = Date.now();
+  let workflowSuccess = true;
+  let workflowFailureReason: string | undefined;
+  scannerState = {
+    running: true,
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+    totalStocks: 0,
+    analyzedCount: 0,
+    candidatesFound: 0,
+    errors: 0,
+    diagnostics: {
+      noData: 0,
+      noSetup: 0,
+      lowConfluence: 0,
+      bearishRegime: 0,
+      corporateAction: 0,
+      sectorConcern: 0,
+    },
+    topCandidates: [],
+  };
+
+  try {
+    const universe = await getEffectiveUniverse();
+    scannerState.totalStocks = universe.length;
+
+    logger.info(
+      { stockCount: universe.length },
+      "Starting post-market full NSE scan",
+    );
+
+    broadcast(
+      createServerEvent.systemAlert({
+        message: `Post-market scan started: Analyzing ${universe.length} NSE stocks`,
+        severity: "info",
+      }),
+    );
+
+    const candidates: PostMarketScanResult[] = [];
+    const batchSize = 5; // Analyze in small batches to avoid overwhelming API
+    const delayBetweenBatches = 1000; // 1 second between batches
+
+  // Process stocks in batches
+    for (let i = 0; i < universe.length; i += batchSize) {
+    const batch = universe.slice(i, i + batchSize);
+    const batchResults = await Promise.all(
+      batch.map((stock) => analyzeStockForPostMarketScan(stock)),
+    );
+
+    for (const result of batchResults) {
+      scannerState.analyzedCount++;
+
+      if (result) {
+        candidates.push(result);
+        scannerState.candidatesFound++;
+      }
+
+      // Broadcast progress every 10 stocks
+      if (scannerState.analyzedCount % 10 === 0) {
+        broadcast(
+          createServerEvent.scanProgress({
+            current: scannerState.analyzedCount,
+            total: universe.length,
+            currentStock: result?.symbol ?? "scanning",
+          }),
+        );
+
+        logger.info(
+          {
+            analyzed: scannerState.analyzedCount,
+            total: universe.length,
+            candidatesFound: scannerState.candidatesFound,
+          },
+          "Post-market scan progress",
+        );
+      }
+    }
+
+    // Delay between batches
+      if (i + batchSize < universe.length) {
+        await new Promise((resolve) => setTimeout(resolve, delayBetweenBatches));
+      }
+    }
+
+  // Rank candidates by probability
+    const ranked = candidates
+      .sort((a, b) => b.probability - a.probability)
+      .slice(0, 30); // Keep top 30 for monitoring
+
+    scannerState.topCandidates = ranked.slice(0, 10);
+    scannerState.finishedAt = new Date().toISOString();
+    scannerState.running = false;
+
+    const durationMs = Date.now() - startTime;
+
+    logger.info(
+      {
+        candidatesFound: ranked.length,
+        duration: `${(durationMs / 1000).toFixed(2)}s`,
+        topPicks: ranked
+          .slice(0, 5)
+          .map((c) => `${c.symbol}(${c.probability.toFixed(0)}%)`),
+      },
+      "Post-market scan completed",
+    );
+
+    broadcast(
+      createServerEvent.scanCompleted({
+        suggestionsGenerated: ranked.length,
+        duration: durationMs,
+      }),
+    );
+
+  // Save candidates to overnight watchlist for tomorrow
+    const nextTradingDay = getNextTradingDayStr();
+    await saveWatchlistCandidates(ranked, nextTradingDay);
+
+    return ranked;
+  } catch (err) {
+    workflowSuccess = false;
+    workflowFailureReason =
+      err instanceof Error ? err.message : "post-market scan failed";
+    scannerState.running = false;
+    scannerState.finishedAt = new Date().toISOString();
+    logger.error({ err }, "Post-market scan failed");
+    return [];
+  } finally {
+    endWorkflow("POSTMARKET_SCAN", workflowSuccess, workflowFailureReason);
+  }
+}
+
+/**
+ * Analyze a single stock for post-market potential
+ */
+async function analyzeStockForPostMarketScan(
+  stock: { symbol: string; key: string; name: string; sector: string },
+): Promise<PostMarketScanResult | null> {
+  try {
+    const mtf = await analyzeMultiTimeframe(stock.key);
+
+    // Check if signal exists
+    if (!mtf.signal || mtf.signal.direction === "NEUTRAL") {
+      scannerState.diagnostics.noSetup++;
+      return null;
+    }
+
+    // Calculate probability based on confluence and directional agreement.
+    let probability = mtf.signal.confluenceScore;
+
+    if (mtf.signal.hourlyConfirm) probability += 5;
+    if (mtf.signal.crossover1h) probability += 3;
+    if (mtf.signal.crossover4h) probability += 5;
+    if (mtf.signal.volumeIncrease) probability += 2;
+
+    if (mtf.signal.direction === "BUY" && mtf.signal.dailyTrend === "UP") probability += 4;
+    if (mtf.signal.direction === "SELL" && mtf.signal.dailyTrend === "DOWN") probability += 4;
+
+    // Penalize weak confluence
+    if (probability < 45) {
+      scannerState.diagnostics.lowConfluence++;
+      return null;
+    }
+
+    // Cap at 100%
+    probability = Math.min(100, probability);
+
+    // Determine setup type from the multi-timeframe direction state.
+    let setupType = "EMA_ALIGNMENT";
+    if (mtf.signal.hourlyConfirm && mtf.signal.crossover4h) setupType = "CROSSOVER";
+    else if (mtf.signal.hourlyConfirm) setupType = "CONFIRMED_TREND";
+
+    const reasoning = `${mtf.signal.dailyTrend} daily | ${mtf.signal.hourlyConfirm ? "Confirmed" : "Forming"} on hourly | Confluence: ${mtf.signal.confluenceScore}%`;
+
+    return {
+      symbol: stock.symbol,
+      name: stock.name,
+      sector: stock.sector,
+      direction: mtf.signal.direction,
+      setupType,
+      confluenceScore: mtf.signal.confluenceScore,
+      signalStrength: Math.min(100, probability),
+      dailyTrend: mtf.signal.dailyTrend,
+      hourlyTrend: mtf.signal.hourlyConfirm ? "CONFIRMED" : "FORMING",
+      reasoning,
+      probability,
+      category: mtf.signal.direction === "BUY" ? "LONG_SETUP" : "SHORT_SETUP",
+    };
+  } catch (err) {
+    scannerState.errors++;
+    logger.debug(
+      { err, symbol: stock.symbol },
+      "Failed to analyze stock in post-market scan",
+    );
+    return null;
+  }
+}
+
+/**
+ * Save candidates to overnight watchlist for monitoring
+ */
+async function saveWatchlistCandidates(
+  candidates: PostMarketScanResult[],
+  forDate: string,
+): Promise<void> {
+  if (!candidates.length) {
+    logger.info("No candidates to save to watchlist");
+    return;
+  }
+
+  try {
+    // Delete existing candidates for this date
+    await db
+      .delete(overnightWatchlistTable)
+      .where(eq(overnightWatchlistTable.forDate, forDate));
+
+    // Insert new candidates
+    const rows = candidates.map((c) => ({
+      forDate,
+      symbol: c.symbol,
+      name: c.name,
+      category: c.category,
+      condition: c.reasoning,
+      priority: Math.round(c.probability),
+      direction: c.direction,
+      metadata: JSON.stringify({
+        setupType: c.setupType,
+        confluenceScore: c.confluenceScore,
+        dailyTrend: c.dailyTrend,
+        hourlyTrend: c.hourlyTrend,
+        probability: c.probability,
+      }),
+    }));
+
+    await db.insert(overnightWatchlistTable).values(rows);
+
+    logger.info(
+      { candidatesCount: rows.length, forDate },
+      "Watchlist candidates saved",
+    );
+  } catch (err) {
+    logger.error({ err }, "Failed to save watchlist candidates");
+  }
+}
+
+/**
+ * Get current scanner state and diagnostics
+ */
+export function getScannerState() {
+  return {
+    ...scannerState,
+    blockers: {
+      "No Data/Setup": scannerState.diagnostics.noSetup,
+      "Low Confluence": scannerState.diagnostics.lowConfluence,
+      "No Data": scannerState.diagnostics.noData,
+      "Bearish Regime": scannerState.diagnostics.bearishRegime,
+      "Corporate Action": scannerState.diagnostics.corporateAction,
+      "Sector Concern": scannerState.diagnostics.sectorConcern,
+    },
+  };
+}

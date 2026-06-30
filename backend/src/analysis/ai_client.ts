@@ -1,0 +1,361 @@
+import axios from "axios";
+import { logger } from "../lib/logger";
+import { getGlobalMacroState } from "./global_macro";
+import { fetchFIIDIIData } from "../market_data/fii_dii";
+import { fetchOptionChainData } from "../market_data/option_chain";
+import { buildSnapshot, type OHLCV } from "./technical";
+
+export interface BatchInferenceCandidate {
+  symbol: string;
+  ohlcv: number[][];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  features: any;
+}
+
+export interface BatchResult {
+  symbol: string;
+  kronos: {
+    bullish_probability: number;
+    confidence: number;
+    detected_patterns: string[];
+    source: string;
+  };
+  chronos: {
+    median_forecast: number[];
+    quantile_forecasts: Record<string, number[]>;
+    trend: string;
+    forecast_return_pct: number;
+    source: string;
+  };
+  sentiment_score: number;
+  world_sentiment_score?: number;
+  composite_score: number;
+}
+
+export interface BatchResponse {
+  results: BatchResult[];
+  processing_time_ms: number;
+}
+
+export interface HealthResponse {
+  status: string;
+  ai_mode: string;
+  ranking_provider: string;
+  uptime_seconds: number;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  models: Record<string, any>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  hardware: Record<string, any>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  diagnostics: Record<string, any>;
+}
+
+function getAiServiceUrl(): string {
+  return process.env.AI_SERVICE_URL || "http://localhost:8001";
+}
+
+// Lightweight Circuit Breaker (Resolves Finding 1B & 2A)
+class CircuitBreaker {
+  private failures = 0;
+  private lastFailureTime = 0;
+  private readonly failureThreshold = 5;
+  private readonly cooldownMs = 15_000;
+
+  canRequest(): boolean {
+    if (this.failures >= this.failureThreshold) {
+      if (Date.now() - this.lastFailureTime > this.cooldownMs) {
+        this.failures = Math.floor(this.failureThreshold / 2); // Half-open
+        return true;
+      }
+      return false;
+    }
+    return true;
+  }
+
+  recordSuccess(): void {
+    this.failures = 0;
+  }
+
+  recordFailure(): void {
+    this.failures++;
+    this.lastFailureTime = Date.now();
+  }
+}
+
+const aiCircuitBreaker = new CircuitBreaker();
+
+export async function checkAIHealth(): Promise<HealthResponse> {
+  const url = `${getAiServiceUrl()}/health`;
+  try {
+    if (!aiCircuitBreaker.canRequest()) {
+      throw new Error("Circuit breaker open");
+    }
+    const res = await axios.get(url, { timeout: 15000 });
+    aiCircuitBreaker.recordSuccess();
+    return res.data as HealthResponse;
+  } catch (err) {
+    aiCircuitBreaker.recordFailure();
+    logger.debug({ err: (err as Error).message }, "FastAPI /health check failed, returning fallback health status");
+    return {
+      status: "degraded",
+      ai_mode: "Native Math Model (Fallback)",
+      ranking_provider: "Native Rankings",
+      uptime_seconds: process.uptime(),
+      models: {
+        kronos: { loaded: false, healthy: false },
+        chronos: { loaded: false, healthy: false }
+      },
+      hardware: { type: "Node.js Fallback" },
+      diagnostics: { latency: "0ms", error: "FastAPI unreachable" }
+    };
+  }
+}
+
+export async function batchInference(
+  candidates: BatchInferenceCandidate[]
+): Promise<Map<string, BatchResult>> {
+  const aiResults = new Map<string, BatchResult>();
+  if (candidates.length === 0) return aiResults;
+
+  if (aiCircuitBreaker.canRequest()) {
+    try {
+      const url = `${getAiServiceUrl()}/inference/batch`;
+      logger.debug({ url, candidates: candidates.length }, "Calling Python AI service for batch inference");
+      const response = await axios.post<BatchResponse>(url, { candidates }, { timeout: 15000 });
+      
+      if (response.data && Array.isArray(response.data.results)) {
+        aiCircuitBreaker.recordSuccess();
+        for (const res of response.data.results) {
+          aiResults.set(res.symbol, res);
+        }
+        return aiResults;
+      }
+    } catch (err) {
+      aiCircuitBreaker.recordFailure();
+      logger.warn({ err: (err as Error).message }, "Failed to reach Python AI service or circuit tripped. Falling back to Native Math Model.");
+    }
+  } else {
+    logger.debug("AI Circuit Breaker open, skipping FastAPI call and using Native Math Model directly.");
+  }
+
+  // FALLBACK: Native Math Model (Advanced Stochastic Engine)
+  for (const c of candidates) {
+    if (c.ohlcv.length < 55) continue; // We need at least 55 for a good technical snapshot
+
+    const candles = c.ohlcv.map(([open, high, low, close, volume], index): OHLCV => ({
+      timestamp: String(index),
+      open: Number(open),
+      high: Number(high),
+      low: Number(low),
+      close: Number(close),
+      volume: Number(volume ?? 0),
+    }));
+
+    const snap = buildSnapshot(candles);
+    if (!snap) continue;
+
+    const returns: number[] = [];
+    for (let i = 1; i < candles.length; i++) {
+      const prev = candles[i - 1].close;
+      const curr = candles[i].close;
+      if (prev > 0) returns.push((curr - prev) / prev);
+    }
+    if (returns.length === 0) continue;
+
+    // 1. EWMA Volatility calculation (Lambda = 0.94 is standard for daily returns)
+    let ewmaVar = returns[0] * returns[0];
+    const lambda = 0.94;
+    for (let i = 1; i < returns.length; i++) {
+      ewmaVar = lambda * ewmaVar + (1 - lambda) * (returns[i] * returns[i]);
+    }
+    const stdDev = Math.sqrt(ewmaVar);
+
+    const lastClose = candles[candles.length - 1].close;
+    const HORIZON = 90; // 90 days forecast
+    const detected_patterns = [];
+
+    // 2. Indicator-Driven Drift
+    // Base drift is slightly positive
+    let drift = 0.0001; 
+
+    // Adjust drift based on Trend and ADX (Momentum strength)
+    if (snap.trend === "UP") {
+      const adxMultiplier = Math.min(snap.adx14 / 25, 2.0); // ADX > 25 adds strong drift
+      drift += 0.0005 * adxMultiplier;
+      detected_patterns.push("Trend Alignment: Bullish");
+    } else if (snap.trend === "DOWN") {
+      const adxMultiplier = Math.min(snap.adx14 / 25, 2.0);
+      drift -= 0.0005 * adxMultiplier;
+      detected_patterns.push("Trend Alignment: Bearish");
+    }
+
+    // Adjust drift based on distance from EMA20 (Rubber band effect)
+    if (snap.distFromEma20Pct > 10) {
+      drift -= 0.001; // Pulled too far up
+    } else if (snap.distFromEma20Pct < -10) {
+      drift += 0.001; // Pulled too far down
+    }
+
+    // Smart Money VWAP & Volume Profile Adjustment
+    if (snap.vwap && snap.vpvrPOC) {
+      const distFromVwapPct = ((lastClose - snap.vwap) / snap.vwap) * 100;
+      const distFromPocPct = ((lastClose - snap.vpvrPOC) / snap.vpvrPOC) * 100;
+      
+      // If we are slightly above VWAP and POC, institutions are defending this level.
+      if (distFromVwapPct > 0 && distFromPocPct > 0 && distFromPocPct < 5) {
+        drift += 0.0008; 
+        detected_patterns.push("Institutional Support: Above POC & VWAP");
+      } 
+      // If we are far below POC, we are in a low liquidity void, expect mean reversion towards POC
+      else if (distFromPocPct < -3) {
+        drift += 0.0005;
+        detected_patterns.push("Liquidity Void: Magnet to POC");
+      }
+      // If price is crashing through VWAP and POC downwards
+      else if (distFromVwapPct < 0 && distFromPocPct < 0) {
+        drift -= 0.0008;
+        detected_patterns.push("Institutional Distribution: Below POC & VWAP");
+      }
+    }
+
+    // 3. Mean Reversion (RSI Penalty)
+    if (snap.rsi14 > 75) {
+      drift -= 0.0015; // Heavy penalty for extreme overbought
+      detected_patterns.push("Overbought: Mean Reversion Expected");
+    } else if (snap.rsi14 < 30) {
+      drift += 0.0015; // Heavy boost for extreme oversold
+      detected_patterns.push("Oversold: Bounce Expected");
+    }
+
+    // Prevent impossible drifts
+    drift = Math.max(-0.005, Math.min(0.005, drift));
+
+    const median_forecast: number[] = [];
+    const q10: number[] = [];
+    const q25: number[] = [];
+    const q75: number[] = [];
+    const q90: number[] = [];
+
+    for (let t = 1; t <= HORIZON; t++) {
+      const driftTerm = (drift - 0.5 * ewmaVar) * t;
+      const volTerm = stdDev * Math.sqrt(t);
+
+      median_forecast.push(lastClose * Math.exp(driftTerm));
+      q10.push(lastClose * Math.exp(driftTerm - 1.28 * volTerm));
+      q25.push(lastClose * Math.exp(driftTerm - 0.67 * volTerm));
+      q75.push(lastClose * Math.exp(driftTerm + 0.67 * volTerm));
+      q90.push(lastClose * Math.exp(driftTerm + 1.28 * volTerm));
+    }
+
+    const forecast_return_pct = ((median_forecast[HORIZON - 1] - lastClose) / lastClose) * 100;
+    const trend = forecast_return_pct > 2 ? "bullish" : forecast_return_pct < -2 ? "bearish" : "neutral";
+
+    if (stdDev > 0.025) detected_patterns.push("High Recent Volatility (EWMA)");
+    if (snap.volumeAnomaly) detected_patterns.push("Volume Anomaly Detected");
+
+    // Baseline probability using Logistic function on the Sharpe-like ratio
+    const x = drift / (stdDev * Math.sqrt(1) + 1e-9);
+    let prob = 1 / (1 + Math.exp(-x * 2.0)); 
+
+    // 4. Volume-Weighted Confidence
+    let confidence = Math.max(0.1, 1 - stdDev * 12);
+    if (snap.volumeRatio > 1.5) {
+      confidence = Math.min(0.99, confidence * 1.2); // 20% boost to confidence on high volume
+    } else if (snap.volumeRatio < 0.7) {
+      confidence *= 0.8; // Penalty for low volume
+    }
+
+    // Phase 5: Macro-Coupled AI Penalty
+    const macroState = getGlobalMacroState();
+    if (macroState.eventRiskActive) {
+      prob *= 0.90; // 10% penalty
+      confidence *= 0.85;
+      detected_patterns.push("Macro Risk Penalty Applied");
+    }
+
+    // Phase 6: Indian Market Institutional & Sentiment Edge
+    const fiiDii = await fetchFIIDIIData();
+    const optionChain = await fetchOptionChainData();
+    
+    if (fiiDii) {
+      if (fiiDii.fiiNetInr < -2000) {
+        prob *= 0.85; 
+        detected_patterns.push("Heavy FII Selling Penalty");
+      } else if (fiiDii.fiiNetInr > 2000) {
+        prob *= 1.15; 
+        detected_patterns.push("FII Buying Boost");
+      }
+    }
+
+    if (optionChain) {
+      if (optionChain.pcr < 0.7) {
+        prob *= 0.90; 
+        detected_patterns.push("Bearish PCR Penalty");
+      } else if (optionChain.pcr > 1.2) {
+        prob *= 1.10; 
+        detected_patterns.push("Bullish PCR Boost");
+      }
+    }
+
+    prob = Math.max(0, Math.min(0.99, prob)); 
+    const composite_score = Math.max(0, Math.min(100, Math.round(prob * 100)));
+
+    aiResults.set(c.symbol, {
+      symbol: c.symbol,
+      kronos: {
+        bullish_probability: prob,
+        confidence: confidence,
+        detected_patterns,
+        source: "Advanced Stochastic Engine",
+      },
+      chronos: {
+        median_forecast,
+        quantile_forecasts: { q10, q25, q75, q90 },
+        trend,
+        forecast_return_pct,
+        source: "Indicator-Driven TS",
+      },
+      sentiment_score: Math.round(prob * 100),
+      composite_score,
+    });
+  }
+
+  return aiResults;
+}
+
+const aiCache = new Map<string, { result: BatchResult, ts: number }>();
+const inFlightInference = new Map<string, Promise<BatchResult | null>>();
+const CACHE_TTL = 15 * 60 * 1000; // 15 minutes
+
+export async function inferSymbolForecast(
+  symbol: string,
+  candles: OHLCV[],
+  features: Record<string, unknown> = {},
+): Promise<BatchResult | null> {
+  const cached = aiCache.get(symbol);
+  if (cached && Date.now() - cached.ts < CACHE_TTL) {
+    return cached.result;
+  }
+
+  let pending = inFlightInference.get(symbol);
+  if (pending) {
+    return pending;
+  }
+
+  pending = (async () => {
+    try {
+      const ohlcv = candles.map((c) => [c.open, c.high, c.low, c.close, c.volume]);
+      const results = await batchInference([{ symbol, ohlcv, features }]);
+      const result = results.get(symbol) ?? null;
+      if (result) {
+        aiCache.set(symbol, { result, ts: Date.now() });
+      }
+      return result;
+    } finally {
+      inFlightInference.delete(symbol);
+    }
+  })();
+
+  inFlightInference.set(symbol, pending);
+  return pending;
+}

@@ -1,0 +1,361 @@
+/**
+ * Risk Engine — Layer 6
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Risk ALWAYS overrides AI. If risk criteria fail, the signal is rejected
+ * regardless of how high the AI confidence is.
+ *
+ * Mandatory calculations:
+ *   • Entry Price
+ *   • Stop Loss
+ *   • Target (T1, T2)
+ *   • Position Size (Kelly-adjusted)
+ *   • Risk Reward Ratio
+ *
+ * Rejection criteria:
+ *   • RR < 1.5
+ *   • Liquidity below threshold
+ *   • Volatility exceeds limits (ATR% > 7.5 or < 0.6)
+ *   • Daily loss limit exceeded
+ *   • Max positions exceeded
+ *   • Sector exposure exceeded
+ */
+import { getConfig } from "../config";
+import { logger } from "../lib/logger";
+import type { SetupCandidate, TechnicalSnapshot } from "./technical";
+import type { FeatureVector } from "./feature_engine";
+import { getGlobalMacroState } from "./global_macro";
+import { getAutoTunedRiskParams } from "./learning_engine";
+import { fetchFIIDIIData } from "../market_data/fii_dii";
+import { fetchOptionChainData } from "../market_data/option_chain";
+
+// ── Risk assessment output ───────────────────────────────────────────────────
+
+export interface RiskAssessment {
+  passed: boolean;
+  rejectionReasons: string[];
+  warningReasons: string[];
+
+  // Position details
+  entryPrice: number;
+  stopLoss: number;
+  target1: number;
+  target2: number;
+  riskReward: number;
+
+  // Position sizing
+  positionSize: number;       // Number of shares
+  investmentAmount: number;   // Total investment in INR
+  maxRiskInr: number;         // Max loss in INR if stop hit
+  riskPercentage: number;     // Risk as % of capital
+  stopDistancePct: number;    // Stop distance as % of entry
+
+  // Checks
+  liquidityOk: boolean;
+  volatilityOk: boolean;
+  sectorExposureOk: boolean;
+  dailyLossLimitOk: boolean;
+  positionLimitOk: boolean;
+}
+
+import { db } from "../../db/src";
+import { suggestionsTable } from "../../db/src/schema/suggestions";
+import { eq, and, gte, sql } from "drizzle-orm";
+import { todayStartUTC } from "../lib/ist-time";
+import { STOCK_SECTOR_MAP } from "./stock_scanner";
+
+// ── Open position tracking (in-memory for fast checks) ───────────────────────
+
+interface OpenPosition {
+  symbol: string;
+  sector: string;
+  direction: "BUY" | "SELL";
+  entryPrice: number;
+  quantity: number;
+  maxRiskInr: number;
+}
+
+let _openPositions: OpenPosition[] = [];
+let _dailyPnlInr = 0;
+let _dailyLossCount = 0;
+
+export function updateOpenPositions(positions: OpenPosition[]): void {
+  _openPositions = positions;
+}
+
+export function updateDailyPnl(pnl: number, lossCount: number): void {
+  _dailyPnlInr = pnl;
+  _dailyLossCount = lossCount;
+}
+
+export function resetDailyTracking(): void {
+  _dailyPnlInr = 0;
+  _dailyLossCount = 0;
+}
+
+export function getOpenPositionCount(): number {
+  return _openPositions.length;
+}
+
+export async function syncRiskEngineState(): Promise<void> {
+  try {
+    const active = await db
+      .select()
+      .from(suggestionsTable)
+      .where(eq(suggestionsTable.status, "ACTIVE"));
+
+    const mapped: OpenPosition[] = active.map(p => ({
+      symbol: p.symbol,
+      sector: STOCK_SECTOR_MAP[p.symbol] ?? "Other",
+      direction: p.direction as "BUY" | "SELL",
+      entryPrice: parseFloat(p.entryPrice),
+      quantity: p.quantity,
+      maxRiskInr: p.maxRiskInr ? parseFloat(p.maxRiskInr) : 0,
+    }));
+
+    updateOpenPositions(mapped);
+
+    const todayStart = todayStartUTC();
+    const closedToday = await db
+      .select()
+      .from(suggestionsTable)
+      .where(
+        and(
+          gte(suggestionsTable.generatedAt, todayStart),
+          sql`status != 'ACTIVE'`
+        )
+      );
+
+    let pnl = 0;
+    let lossCount = 0;
+    for (const c of closedToday) {
+      pnl += c.pnlInr ? parseFloat(c.pnlInr) : 0;
+      if (c.status === "STOP_HIT") {
+        lossCount++;
+      }
+    }
+
+    updateDailyPnl(pnl, lossCount);
+    logger.info(
+      { activeCount: mapped.length, todayClosedCount: closedToday.length, pnl },
+      "Risk engine state synced with database successfully"
+    );
+  } catch (err) {
+    logger.error({ err }, "Failed to sync risk engine state with database");
+  }
+}
+
+// ── Position sizing ──────────────────────────────────────────────────────────
+
+function computePositionSize(
+  capital: number,
+  maxRiskPct: number,
+  entryPrice: number,
+  stopLoss: number,
+  direction: "BUY" | "SELL",
+): { quantity: number; maxRiskInr: number; investmentAmount: number; riskPct: number } {
+  const riskPerShare = direction === "BUY"
+    ? entryPrice - stopLoss
+    : stopLoss - entryPrice;
+
+  if (riskPerShare <= 0) {
+    return { quantity: 0, maxRiskInr: 0, investmentAmount: 0, riskPct: 0 };
+  }
+
+  const maxRiskInr = capital * (maxRiskPct / 100);
+  let quantity = Math.floor(maxRiskInr / riskPerShare);
+
+  // Cap position to 20% of capital
+  const maxPositionValue = capital * 0.20;
+  const positionValue = quantity * entryPrice;
+  if (positionValue > maxPositionValue) {
+    quantity = Math.floor(maxPositionValue / entryPrice);
+  }
+
+  if (quantity < 1) {
+    return { quantity: 0, maxRiskInr: 0, investmentAmount: 0, riskPct: 0 };
+  }
+
+  const actualRiskInr = quantity * riskPerShare;
+  const investmentAmount = quantity * entryPrice;
+  const riskPct = capital > 0 ? (actualRiskInr / capital) * 100 : 0;
+
+  return {
+    quantity,
+    maxRiskInr: Math.round(actualRiskInr * 100) / 100,
+    investmentAmount: Math.round(investmentAmount * 100) / 100,
+    riskPct: Math.round(riskPct * 100) / 100,
+  };
+}
+
+// ── Core risk assessment ─────────────────────────────────────────────────────
+
+export async function assessRisk(
+  setup: SetupCandidate,
+  snap: TechnicalSnapshot,
+  sector: string,
+  features?: FeatureVector,
+): Promise<RiskAssessment> {
+  const cfg = getConfig();
+  const autoRisk = await getAutoTunedRiskParams();
+  const rejections: string[] = [];
+  const warnings: string[] = [];
+
+  const { entryPrice, stopLoss, target1, target2, riskReward, direction } = setup;
+
+  // ── Check 1: Risk-Reward ratio ────────────────────────────────────────
+  const liquidityOk = snap.avgDailyVolume >= cfg.minDailyVolume;
+  if (!liquidityOk) {
+    rejections.push(`Liquidity ${snap.avgDailyVolume.toLocaleString()} below minimum ${cfg.minDailyVolume.toLocaleString()}`);
+  }
+
+  // ── Check 2: RR ratio ─────────────────────────────────────────────────
+  const effectiveMinRR = Math.max(cfg.minRiskReward, autoRisk.minRiskReward);
+  if (riskReward < effectiveMinRR) {
+    rejections.push(`Risk-reward ${riskReward.toFixed(2)} below auto-tuned minimum ${effectiveMinRR.toFixed(2)}`);
+  }
+
+  // ── Check 3: Volatility bounds ────────────────────────────────────────
+  const atrPct = snap.close > 0 ? (snap.atr14 / snap.close) * 100 : 0;
+  const volatilityOk = atrPct >= 0.6 && atrPct <= 7.5;
+  if (!volatilityOk) {
+    if (atrPct < 0.6) {
+      rejections.push(`Volatility too low (ATR ${atrPct.toFixed(2)}%) — no tradeable movement`);
+    } else {
+      rejections.push(`Volatility too high (ATR ${atrPct.toFixed(2)}%) — excessive risk`);
+    }
+  }
+
+  // ── Check 4: Stop distance sanity ─────────────────────────────────────
+  const stopDistancePct = direction === "BUY"
+    ? ((entryPrice - stopLoss) / entryPrice) * 100
+    : ((stopLoss - entryPrice) / entryPrice) * 100;
+
+  if (stopDistancePct > 8) {
+    rejections.push(`Stop distance ${stopDistancePct.toFixed(1)}% too wide — max 8%`);
+  }
+  if (stopDistancePct < 0.3) {
+    warnings.push(`Stop distance ${stopDistancePct.toFixed(2)}% very tight — may get whipsawed`);
+  }
+
+  // ── Check 5: Daily loss limit ─────────────────────────────────────────
+  const dailyLossLimit = cfg.tradingCapital * (cfg.maxDailyLossPct / 100);
+  const dailyLossLimitOk = _dailyPnlInr > -dailyLossLimit;
+  if (!dailyLossLimitOk && _dailyPnlInr < 0) {
+    rejections.push(`Daily loss limit reached: ₹${Math.abs(_dailyPnlInr).toFixed(0)} / ₹${dailyLossLimit.toFixed(0)}`);
+  }
+
+  // ── Check 6: Max open positions ───────────────────────────────────────
+  const positionLimitOk = _openPositions.length < cfg.maxOpenPositions;
+  if (!positionLimitOk) {
+    rejections.push(`Max open positions reached (${_openPositions.length}/${cfg.maxOpenPositions})`);
+  }
+
+  // ── Check 7: Same-direction position limit ────────────────────────────
+  const sameDirectionCount = _openPositions.filter(p => p.direction === direction).length;
+  if (sameDirectionCount >= cfg.maxSameDirectionOpenPositions) {
+    rejections.push(`Max same-direction positions reached (${sameDirectionCount}/${cfg.maxSameDirectionOpenPositions})`);
+  }
+
+  // ── Check 8: Sector exposure ──────────────────────────────────────────
+  const sectorPositions = _openPositions.filter(p => p.sector === sector).length;
+  const sectorExposureOk = sectorPositions < cfg.maxSectorExposure;
+  if (!sectorExposureOk) {
+    rejections.push(`Max sector exposure reached for ${sector} (${sectorPositions}/${cfg.maxSectorExposure})`);
+  }
+
+  // ── Check 9: Duplicate symbol ─────────────────────────────────────────
+  const alreadyOpen = _openPositions.some(
+    p => p.symbol === features?.symbol && p.direction === direction,
+  );
+  if (alreadyOpen) {
+    rejections.push(`Already have an open ${direction} position in ${features?.symbol}`);
+  }
+
+  // ── Check 9: Indian Market Institutional Constraints ────────────────────
+  const fiiDii = await fetchFIIDIIData();
+  const optionChain = await fetchOptionChainData();
+
+  if (fiiDii) {
+    if (direction === "BUY" && fiiDii.fiiNetInr < -3000) {
+      rejections.push(`Severe FII Selling (₹${fiiDii.fiiNetInr} Cr) — blocking BUY trades`);
+    } else if (direction === "SELL" && fiiDii.fiiNetInr > 3000) {
+      rejections.push(`Severe FII Buying (₹${fiiDii.fiiNetInr} Cr) — blocking SELL trades`);
+    }
+  }
+
+  if (optionChain) {
+    if (direction === "BUY" && optionChain.pcr < 0.6) {
+      rejections.push(`Nifty PCR highly bearish (${optionChain.pcr}) — blocking BUY trades`);
+    } else if (direction === "SELL" && optionChain.pcr > 1.4) {
+      rejections.push(`Nifty PCR highly bullish (${optionChain.pcr}) — blocking SELL trades`);
+    }
+  }
+
+  // ── Position Sizing Calculation ───────────────────────────────────────────────────
+  const effectiveMaxRiskPct = Math.min(cfg.maxRiskPerTradePct, autoRisk.maxRiskPerTradePct);
+  let { quantity, maxRiskInr, investmentAmount, riskPct } = computePositionSize(
+    cfg.tradingCapital,
+    effectiveMaxRiskPct,
+    entryPrice,
+    stopLoss,
+    direction,
+  );
+
+  // Dynamic Macro Risk Adjustment
+  const macro = getGlobalMacroState();
+  if (macro.eventRiskActive && quantity > 0) {
+    warnings.push("Halving position size due to elevated global macro event risk (Yields/DXY)");
+    quantity = Math.floor(quantity * 0.5);
+    maxRiskInr = maxRiskInr * 0.5;
+    investmentAmount = investmentAmount * 0.5;
+    riskPct = riskPct * 0.5;
+  }
+
+  if (quantity === 0) {
+    rejections.push("Position size computed to 0 — risk per share too large");
+  }
+
+  // ── Warnings (non-blocking) ───────────────────────────────────────────
+  if (riskReward < 2.0 && riskReward >= 1.5) {
+    warnings.push(`Risk-reward ${riskReward.toFixed(2)} — acceptable but not ideal (prefer >2.0)`);
+  }
+  if (snap.rsi14 > 75) {
+    warnings.push(`RSI ${snap.rsi14.toFixed(0)} overbought — elevated reversal risk`);
+  }
+  if (snap.rsi14 < 25) {
+    warnings.push(`RSI ${snap.rsi14.toFixed(0)} oversold — elevated bounce risk`);
+  }
+  if (_dailyLossCount >= 3) {
+    warnings.push(`${_dailyLossCount} losses today — consider reducing position size`);
+  }
+
+  const passed = rejections.length === 0;
+
+  if (!passed) {
+    logger.debug(
+      { symbol: features?.symbol, rejections, direction, rr: riskReward },
+      "Risk assessment REJECTED",
+    );
+  }
+
+  return {
+    passed,
+    rejectionReasons: rejections,
+    warningReasons: warnings,
+    entryPrice,
+    stopLoss,
+    target1,
+    target2,
+    riskReward,
+    positionSize: quantity,
+    investmentAmount,
+    maxRiskInr,
+    riskPercentage: riskPct,
+    stopDistancePct: Math.round(stopDistancePct * 100) / 100,
+    liquidityOk,
+    volatilityOk,
+    sectorExposureOk,
+    dailyLossLimitOk,
+    positionLimitOk,
+  };
+}
