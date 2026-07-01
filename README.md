@@ -1,20 +1,42 @@
 # Mimir
 
-AI-assisted Indian stock market dashboard with an Express/TypeScript backend, React/Vite frontend, FastAPI AI service, and PostgreSQL storage.
+Mimir is an advanced, AI-assisted Indian stock market monitoring and analysis platform. It features an Express and TypeScript backend, a modern React and Vite frontend, a FastAPI-powered AI analysis service, and PostgreSQL for robust data storage.
 
-## Safety Defaults
+## Architecture
 
-- Remote backend API access is disabled unless `UPSTOXBOT_ADMIN_TOKEN` is set.
-- The example env leaves admin tokens blank instead of shipping an insecure placeholder.
-- Non-local `/api` calls are rate-limited by default to 120 requests per minute.
-- AI service CORS is restricted to configured/local origins via `AI_CORS_ORIGINS`.
-- Trading config loaded from the database is no longer silently loosened at startup.
+*   **Backend API**: Built with Node.js, Express, and TypeScript. Handles data ingestion, authentication, and core business logic.
+*   **Frontend**: A responsive, high-performance dashboard built with React, Vite, and Tailwind CSS.
+*   **AI Service**: A Python-based FastAPI service leveraging state-of-the-art models for market sentiment analysis and predictive modeling.
+*   **Database**: PostgreSQL for storing historical market data, user configurations, and trading suggestions.
 
-## Local Setup
+## Security Overview
 
-1. Install Node.js 22+, Python 3.12+, and PostgreSQL 16+.
-2. Copy `.env.example` to `.env` and fill in `DATABASE_URL`, Upstox credentials, `UPSTOXBOT_SECRET_KEY`, and a strong `UPSTOXBOT_ADMIN_TOKEN` if using remote clients.
-3. Install dependencies:
+*   **Restricted Access**: Remote backend API access is disabled by default unless the `UPSTOXBOT_ADMIN_TOKEN` environment variable is explicitly configured.
+*   **Secure Defaults**: The provided `.env.example` file mandates manual configuration of admin tokens to prevent the deployment of insecure placeholders.
+*   **Rate Limiting**: Non-local `/api` endpoints are strictly rate-limited to 120 requests per minute to mitigate abuse.
+*   **CORS Policies**: AI service Cross-Origin Resource Sharing (CORS) is restricted to configured and local origins via the `AI_CORS_ORIGINS` variable.
+*   **Strict Configuration**: Trading configurations loaded from the database are strictly enforced at startup.
+
+## Local Environment Setup
+
+### Prerequisites
+
+Ensure the following dependencies are installed on your system:
+*   Node.js (v22 or higher)
+*   Python (v3.12 or higher)
+*   PostgreSQL (v16 or higher)
+
+### Configuration
+
+1.  Copy the example environment configuration:
+    ```bash
+    cp .env.example .env
+    ```
+2.  Populate the `.env` file with your `DATABASE_URL`, Upstox API credentials, `UPSTOXBOT_SECRET_KEY`, and a strong `UPSTOXBOT_ADMIN_TOKEN` if remote client access is required.
+
+### Installation
+
+Install all required dependencies for the backend, frontend, and AI service:
 
 ```bash
 npm install
@@ -22,36 +44,44 @@ npm --prefix backend install --legacy-peer-deps
 pip install -r backend/ai_service/requirements.txt
 ```
 
-4. Prepare the database:
+### Database Initialization
+
+Prepare the PostgreSQL database schemas and migrations:
 
 ```bash
 npm run setup:db
 ```
 
-5. Start services:
+### Starting the Application
+
+Launch the development servers:
 
 ```bash
+# Start the Node.js backend
 npm run dev:backend
+
+# Start the Python AI service
 uvicorn main:app --app-dir backend/ai_service --host 0.0.0.0 --port 8001
 ```
 
-Backend defaults to `http://localhost:5000`, and the AI service defaults to `http://localhost:8001`.
+By default, the backend API is available at `http://localhost:5000`, and the AI service is available at `http://localhost:8001`.
 
-## Docker
+## Docker Deployment
 
-Set secrets in your shell or an `.env` file, then run:
+To deploy Mimir using Docker, ensure your environment variables are set in your shell or `.env` file, and execute:
 
 ```bash
 docker compose up --build
 ```
 
-The compose stack exposes:
+The Docker compose stack exposes the following services:
+*   **Backend API**: `http://localhost:5000`
+*   **AI Service**: `http://localhost:8001`
+*   **PostgreSQL**: `localhost:5432`
 
-- Backend API: `http://localhost:5000`
-- AI service: `http://localhost:8001`
-- PostgreSQL: `localhost:5432`
+## Quality Assurance
 
-## Verification
+To verify the integrity of the application, run the provided test suites and build scripts:
 
 ```bash
 npm run typecheck
@@ -59,4 +89,4 @@ npm test
 npm run build
 ```
 
-Current backend test coverage starts with risk sizing, daily loss limits, duplicate positions, and core technical indicators. Add tests next around `signal_generator.ts` and scanner workflows before trusting live order automation.
+Current backend test coverage includes risk sizing, daily loss limits, duplicate position prevention, and core technical indicators. Future test expansions will focus on `signal_generator.ts` and automated scanner workflows to ensure reliability before deploying live order automation.
