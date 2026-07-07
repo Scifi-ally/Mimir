@@ -13,9 +13,9 @@ export function fmtNum(value: number | null | undefined, decimals = 2) {
   });
 }
 
-export function fmtPct(value: number | null | undefined) {
+export function fmtPct(value: number | null | undefined, decimals: number = 1) {
   if (value == null || Number.isNaN(value)) return "—";
-  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
+  return `${value >= 0 ? "+" : ""}${value.toFixed(decimals)}%`;
 }
 
 export function calcPnLPct(current: number | null | undefined, entry: number | null | undefined): number | null {

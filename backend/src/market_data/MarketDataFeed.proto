@@ -1,0 +1,120 @@
+syntax = "proto3";
+
+package com.upstox.marketdatafeeder.rpc.proto;
+
+enum Type {
+  initial_feed = 0;
+  live_feed = 1;
+}
+
+message LTPC {
+  double ltp = 1;
+  int64 ltt = 2;
+  int64 ltq = 3;
+  double cp = 4;
+}
+
+message Quote {
+  int32 bq = 1;
+  double bp = 2;
+  int32 aq = 3;
+  double ap = 4;
+  int32 bno = 5;
+  int32 ano = 6;
+}
+
+message MarketLevel {
+  repeated Quote bidAskQuote = 1;
+}
+
+message OHLC {
+  string interval = 1;
+  double open = 2;
+  double high = 3;
+  double low = 4;
+  double close = 5;
+  int32 volume = 6;
+  int64 ts = 7;
+}
+
+message MarketOHLC {
+  repeated OHLC ohlc = 1;
+}
+
+message OptionGreeks {
+  double op = 1;
+  double up = 2;
+  double iv = 3;
+  double delta = 4;
+  double theta = 5;
+  double gamma = 6;
+  double vega = 7;
+  double rho = 8;
+}
+
+message ExtendedFeedDetails {
+  double atp = 1;
+  double cp = 2;
+  int64 vtt = 3;
+  double oi = 4;
+  double changeOi = 5;
+  double lastClose = 6;
+  double tbq = 7;
+  double tsq = 8;
+  double close = 9;
+  double lc = 10;
+  double uc = 11;
+  double yh = 12;
+  double yl = 13;
+  double fp = 14;
+  int32 fv = 15;
+  int64 mbpBuy = 16;
+  int64 mbpSell = 17;
+  int64 tv = 18;
+  double dhoi = 19;
+  double dloi = 20;
+  double sp = 21;
+  double poi = 22;
+}
+
+message MarketFullFeed {
+  LTPC ltpc = 1;
+  MarketLevel marketLevel = 2;
+  OptionGreeks optionGreeks = 3;
+  MarketOHLC marketOHLC = 4;
+}
+
+message IndexFullFeed {
+  LTPC ltpc = 1;
+  MarketOHLC marketOHLC = 2;
+  double lastClose = 3;
+  double yh = 4;
+  double yl = 5;
+}
+
+message FullFeed {
+  oneof FullFeedUnion {
+    MarketFullFeed marketFF = 1;
+    IndexFullFeed indexFF = 2;
+  }
+}
+
+message OptionChain {
+  LTPC ltpc = 1;
+  Quote bidAskQuote = 2;
+  OptionGreeks optionGreeks = 3;
+  ExtendedFeedDetails eFeedDetails = 4;
+}
+
+message Feed {
+  oneof FeedUnion {
+    LTPC ltpc = 1;
+    FullFeed ff = 2;
+    OptionChain oc = 3;
+  }
+}
+
+message FeedResponse {
+  Type type = 1;
+  map<string, Feed> feeds = 2;
+}

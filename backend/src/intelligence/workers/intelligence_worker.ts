@@ -203,7 +203,7 @@ async function rankAiOpportunities(
              `AI Score: ${aiResult.composite_score.toFixed(1)}`, 
              `Kronos Bullish: ${(aiResult.kronos.bullish_probability * 100).toFixed(1)}%`,
              `Chronos Trend: ${aiResult.chronos.trend}`,
-             ...opp.reasoning
+             ...(Array.isArray(opp?.reasoning) ? opp.reasoning : [])
           ],
         };
       }
@@ -227,16 +227,17 @@ interface AiRankResult {
 }
 
 function deterministicFallback(opportunity: TechnicalOpportunity, regime?: string): RankedOpportunity {
-  const regimeBonus = opportunity.reasoning.some((r) => r.includes("trend aligned")) ? 0.8 : 0;
-  let aiScore = Math.min(10, opportunity.score + regimeBonus);
+  const reasoningList = Array.isArray(opportunity?.reasoning) ? opportunity.reasoning : [];
+  const regimeBonus = reasoningList.some((r) => r && typeof r === "string" && r.includes("trend aligned")) ? 0.8 : 0;
+  let aiScore = Math.min(10, (opportunity?.score || 0) + regimeBonus);
 
   // Regime-aware signal filtering
   if (regime === "TRENDING_DOWN" || regime === "BEARISH") {
-    if (opportunity.direction === "BUY") {
+    if (opportunity?.direction === "BUY") {
       aiScore -= 5;
     }
   } else if (regime === "TRENDING_UP" || regime === "BULLISH") {
-    if (opportunity.direction === "SELL") {
+    if (opportunity?.direction === "SELL") {
       aiScore -= 5;
     }
   }
@@ -245,8 +246,8 @@ function deterministicFallback(opportunity: TechnicalOpportunity, regime?: strin
   return {
     ...opportunity,
     aiScore,
-    compositeScore: Number((opportunity.score * 0.75 + aiScore * 0.25).toFixed(2)),
-    rankReasoning: ["deterministic AI fallback ranker", ...opportunity.reasoning],
+    compositeScore: Number(((opportunity?.score || 0) * 0.75 + aiScore * 0.25).toFixed(2)),
+    rankReasoning: ["deterministic AI fallback ranker", ...reasoningList],
   };
 }
 

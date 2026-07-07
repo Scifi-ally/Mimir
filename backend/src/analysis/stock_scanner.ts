@@ -926,6 +926,14 @@ export interface ScanResult {
 const NIFTY_KEY = "NSE_INDEX|Nifty 50";
 const upstoxClient = createUpstoxClient({ cacheTimeMs: 10 * 60 * 1000 });
 
+interface CachedCandleEntry {
+  timestamp: number;
+  candles: OHLCV[];
+}
+const CANDLE_CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
+const dailyCandleCache = new Map<string, CachedCandleEntry>();
+const hourlyCandleCache = new Map<string, CachedCandleEntry>();
+
 // ── Fetch helpers ────────────────────────────────────────────────────────────
 
 async function fetchDailyCandles(
@@ -939,6 +947,13 @@ async function fetchDailyCandles(
   if (!token) {
     logger.error("fetchDailyCandles: No authentication token available");
     throw new Error("Not authenticated");
+  }
+
+  const cacheKey = `${instrumentKey}_${daysBack}_${endDate ?? "latest"}`;
+  const now = Date.now();
+  const cached = dailyCandleCache.get(cacheKey);
+  if (cached && now - cached.timestamp < CANDLE_CACHE_TTL_MS) {
+    return cached.candles;
   }
 
   const toDateStr = endDate ?? getLastCompletedTradingDayStr();
@@ -965,7 +980,7 @@ async function fetchDailyCandles(
       );
     }
 
-    return [...candles].reverse().map((c) => ({
+    const result = [...candles].reverse().map((c) => ({
       timestamp: c[0] as string,
       open: c[1] as number,
       high: c[2] as number,
@@ -973,6 +988,11 @@ async function fetchDailyCandles(
       close: c[4] as number,
       volume: c[5] as number,
     }));
+
+    if (result.length > 0) {
+      dailyCandleCache.set(cacheKey, { timestamp: now, candles: result });
+    }
+    return result;
   } catch (err) {
     logger.error(
       {
@@ -990,11 +1010,6 @@ async function fetchDailyCandles(
  * Fetch 1-hour candles for the last `daysBack` trading days.
  * Used for multi-timeframe confirmation.
  */
-/**
- * Fetch 1-hour candles for the last `daysBack` trading days.
- * Used for multi-timeframe confirmation.
- */
-
 async function fetchHourlyCandles(
   instrumentKey: string,
   daysBack = 75,
@@ -1004,6 +1019,13 @@ async function fetchHourlyCandles(
 ): Promise<OHLCV[]> {
   const token = getAccessToken();
   if (!token) return [];
+
+  const cacheKey = `${instrumentKey}_${daysBack}_${endDate ?? "latest"}`;
+  const now = Date.now();
+  const cached = hourlyCandleCache.get(cacheKey);
+  if (cached && now - cached.timestamp < CANDLE_CACHE_TTL_MS) {
+    return cached.candles;
+  }
 
   const toDateStr = endDate ?? getISTDateStr();
   const fromDateStr = shiftISTDateStr(toDateStr, -daysBack);
@@ -1024,6 +1046,9 @@ async function fetchHourlyCandles(
       close: c[4] as number,
       volume: c[5] as number,
     }));
+    if (c60.length > 0) {
+      hourlyCandleCache.set(cacheKey, { timestamp: now, candles: c60 });
+    }
     return c60;
   } catch {
     return [];

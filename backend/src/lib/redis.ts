@@ -1,5 +1,5 @@
 // Resolves Finding 1B: Multiple unmanaged ioredis connections
-import { Redis, type RedisOptions } from "ioredis";
+import Redis, { type RedisOptions } from "ioredis";
 import { logger } from "./logger";
 
 const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";

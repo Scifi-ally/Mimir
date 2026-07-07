@@ -66,25 +66,8 @@ const SCHEDULE_OPTIONS: Array<{ label: string; value: ScheduleMode }> = [
   { label: "On demand (manual)", value: "ON_DEMAND" },
 ];
 
-const operatorLabels: Record<Operator, string> = {
-  ">": ">",
-  "<": "<",
-  ">=": ">=",
-  "<=": "<=",
-  "==": "=",
-  "!=": "!=",
-  CROSSES_ABOVE: "crosses above",
-  CROSSES_BELOW: "crosses below",
-};
 
-function targetTypeLabel(targetType: string, outputName: string): string {
-  if (targetType === "CUSTOM") return outputName.trim() ? `"${outputName.trim()}"` : "a new custom watchlist";
-  return {
-    ALL: "all screener targets",
-    SUGGESTIONS: "active suggestions",
-    OVERNIGHT: "the overnight watchlist",
-  }[targetType] || targetType.toLowerCase();
-}
+
 
 function scheduleLabel(mode: ScheduleMode, time: string): string {
   if (mode === "MARKET_OPEN") return "at market open";
@@ -95,24 +78,23 @@ function scheduleLabel(mode: ScheduleMode, time: string): string {
   return `at ${time || "the selected time"} IST`;
 }
 
-function summarizeNode(node: RuleNode): string {
-  if (node.type === "CONDITION") {
-    return `${node.indicatorA || "LEFT"} ${operatorLabels[node.operator]} ${node.indicatorB || "RIGHT"}`;
-  }
-  return node.rules.map((child) => summarizeNode(child)).join(` ${node.type} `);
-}
 
-function CustomSelect({ value, onChange, options, editable = false, placeholder = "" }: {
+function CustomSelect({ value, onChange, options, editable = false, placeholder = "", textValue, onTextChange, disableFilter = false, autoFocus = false }: {
   value: string;
   onChange: (value: string) => void;
   options: ReadonlyArray<{ label: string; value: string }>;
   editable?: boolean;
   placeholder?: string;
+  textValue?: string;
+  onTextChange?: (text: string) => void;
+  disableFilter?: boolean;
+  autoFocus?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const anchorRef = useRef<HTMLInputElement | HTMLButtonElement>(null);
   const [coords, setCoords] = useState({ top: 0, left: 0 });
   const selectedLabel = options.find((option) => option.value === value)?.label ?? value;
+  const [highlightedIndex, setHighlightedIndex] = useState(-1);
 
   useEffect(() => {
     if (!open || !anchorRef.current) return;
@@ -129,9 +111,48 @@ function CustomSelect({ value, onChange, options, editable = false, placeholder 
     };
   }, [open]);
 
-  const filteredOptions = editable && value
-    ? options.filter((option) => option.value.includes(value.toUpperCase()) || option.label.toUpperCase().includes(value.toUpperCase()))
+  const currentInputValue = textValue !== undefined ? textValue : value;
+
+  const filteredOptions = editable && currentInputValue && !disableFilter
+    ? options.filter((option) => option.value.includes(currentInputValue.toUpperCase()) || option.label.toUpperCase().includes(currentInputValue.toUpperCase()))
     : options;
+
+  useEffect(() => {
+    setHighlightedIndex(-1);
+  }, [open, filteredOptions.length]);
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    // Prevent event from bubbling up to parents (like the dashboard watchlist listener)
+    if (["ArrowUp", "ArrowDown", "Enter", "Escape", " "].includes(e.key)) {
+      e.stopPropagation();
+    }
+
+    if (!open) {
+      if (e.key === "Enter" || e.key === " " || e.key === "ArrowDown") {
+        e.preventDefault();
+        setOpen(true);
+      }
+      return;
+    }
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setHighlightedIndex((prev) => (prev < filteredOptions.length - 1 ? prev + 1 : prev));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHighlightedIndex((prev) => (prev > 0 ? prev - 1 : prev));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (highlightedIndex >= 0 && highlightedIndex < filteredOptions.length) {
+        onChange(filteredOptions[highlightedIndex].value);
+        setOpen(false);
+      } else if (editable) {
+        setOpen(false);
+      }
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      setOpen(false);
+    }
+  };
 
   return (
     <>
@@ -139,21 +160,37 @@ function CustomSelect({ value, onChange, options, editable = false, placeholder 
         <input
           id={placeholder ? `rule-node-${placeholder.toLowerCase().replace(/\s+/g, '-')}` : "rule-node-input"}
           name={placeholder ? `rule-node-${placeholder.toLowerCase().replace(/\s+/g, '-')}` : "rule-node-input"}
-          ref={anchorRef as React.RefObject<HTMLInputElement>}
+          ref={(el) => {
+            if (el && autoFocus && document.activeElement !== el) {
+              setTimeout(() => el.focus(), 10);
+            }
+            anchorRef.current = el;
+          }}
           type="text"
-          value={value}
-          onChange={(event) => { onChange(event.target.value.toUpperCase().trimStart()); setOpen(true); }}
+          autoComplete="off"
+          spellCheck="false"
+          value={currentInputValue}
+          onChange={(event) => {
+            if (onTextChange) onTextChange(event.target.value);
+            else onChange(event.target.value.toUpperCase().trimStart());
+            setOpen(true);
+          }}
+          onKeyDown={handleKeyDown}
           onFocus={() => setOpen(true)}
           placeholder={placeholder}
           aria-label={placeholder || "Indicator"}
-          style={{ width: `calc(${Math.max(value.length || placeholder.length, 2)}ch + 24px)` }}
-          className="rounded-md bg-transparent px-3 py-1.5 text-center text-xs font-bold text-foreground outline-none transition-colors placeholder:text-foreground/30 hover:bg-secondary/30 focus:bg-secondary/50"
+          style={{ width: `calc(${Math.max(currentInputValue.length || placeholder.length, 2)}ch + 24px)` }}
+          className={cn(
+            "rounded-md bg-transparent px-3 py-1.5 text-center text-xs font-bold text-foreground outline-none transition-colors placeholder:text-foreground/30 hover:bg-secondary/30 focus:bg-secondary/50",
+            textValue !== undefined && "bg-secondary/20"
+          )}
         />
       ) : (
         <button
           ref={anchorRef as React.RefObject<HTMLButtonElement>}
           type="button"
           onClick={() => setOpen((current) => !current)}
+          onKeyDown={handleKeyDown}
           className="whitespace-nowrap rounded-md bg-transparent px-2 py-1.5 text-xs font-bold text-foreground transition-colors hover:bg-secondary/30"
         >
           {selectedLabel}
@@ -164,23 +201,24 @@ function CustomSelect({ value, onChange, options, editable = false, placeholder 
         <AnimatePresence>
           {open && (
             <>
-              <button aria-label="Close options" className="fixed inset-0 z-[200] cursor-default" onClick={() => setOpen(false)} />
+              <button aria-label="Close options" className="fixed inset-0 z-[10000] cursor-default" onClick={() => setOpen(false)} />
               <motion.div
                 initial={{ opacity: 0, y: 3, scale: 0.98 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, y: 3, scale: 0.98 }}
                 transition={{ duration: 0.14 }}
                 style={{ top: coords.top, left: coords.left }}
-                className="fixed z-[210] flex max-h-64 min-w-48 max-w-56 flex-col overflow-y-auto rounded-xl border border-border/60 bg-background/95 p-1 shadow-2xl backdrop-blur-xl"
+                className="fixed z-[10001] flex max-h-[300px] min-w-[140px] flex-col overflow-y-auto rounded-lg border border-border/50 bg-popover p-1 shadow-2xl backdrop-blur-xl text-popover-foreground"
               >
-                {filteredOptions.length ? filteredOptions.map((option) => (
+                {filteredOptions.length ? filteredOptions.map((option, index) => (
                   <button
                     key={option.value}
                     type="button"
+                    onMouseEnter={() => setHighlightedIndex(index)}
                     onClick={() => { onChange(option.value); setOpen(false); }}
                     className={cn(
-                      "rounded-lg px-3 py-2 text-left text-xs font-medium transition-colors hover:bg-foreground/10",
-                      option.value === value ? "bg-foreground/10 text-foreground" : "text-foreground/70",
+                      "rounded-lg px-3 py-1.5 text-left text-[11px] font-medium transition-colors hover:bg-foreground/10",
+                      (option.value === value || highlightedIndex === index) ? "bg-foreground/10 text-foreground" : "text-foreground/70",
                     )}
                   >
                     {option.label}
@@ -253,11 +291,6 @@ export function AdvancedRuleBuilder({ onComplete, initialRule }: { onComplete: (
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const conditionCount = useMemo(() => countConditions(conditions), [conditions]);
-  const readableTarget = useMemo(() => targetTypeLabel(targetType, outputName), [targetType, outputName]);
-  const rulePreview = useMemo(
-    () => `Scan ${readableTarget} on ${timeframe} candles ${scheduleLabel(scheduleMode, scheduleTime)} where ${summarizeNode(conditions)}`,
-    [conditions, readableTarget, scheduleMode, scheduleTime, timeframe],
-  );
   
   useEffect(() => {
     if (scrollRef.current) {
@@ -362,7 +395,7 @@ export function AdvancedRuleBuilder({ onComplete, initialRule }: { onComplete: (
   const renderNode = (node: RuleNode, path: number[], depth: number) => {
     if (node.type === "CONDITION") {
       return (
-        <div key={path.join("-")} className="group flex flex-wrap items-center gap-2 rounded-xl hover:bg-secondary/10 px-1 py-1.5 transition-colors">
+        <div key={path.join("-")} className="group flex flex-wrap items-center gap-1.5 rounded-lg hover:bg-secondary/10 px-1 py-1 transition-colors">
           <CustomSelect editable placeholder="Indicator" value={node.indicatorA} onChange={(value) => updateAt(path, () => ({ ...node, indicatorA: value }))} options={INDICATORS} />
           <CustomSelect value={node.operator} onChange={(value) => updateAt(path, () => ({ ...node, operator: value as Operator }))} options={OPERATORS} />
           <CustomSelect editable placeholder="Indicator or number" value={node.indicatorB} onChange={(value) => updateAt(path, () => ({ ...node, indicatorB: value }))} options={INDICATORS} />
@@ -370,17 +403,19 @@ export function AdvancedRuleBuilder({ onComplete, initialRule }: { onComplete: (
           <input 
             id={`rule-alert-message-${path.join("-")}`}
             name={`rule-alert-message-${path.join("-")}`}
-            aria-label="Signal Name"
+            aria-label="Tag Name"
             type="text" 
-            placeholder="Signal Name (e.g. 'Bullish Breakout')" 
+            autoComplete="off"
+            spellCheck="false"
+            placeholder="Tag (e.g. 'Bullish')" 
             value={node.alertMessage || ""} 
             onChange={(e) => updateAt(path, () => ({ ...node, alertMessage: e.target.value }))}
-            className="ml-2 rounded-md bg-transparent px-2 py-1 text-xs text-foreground/80 outline-none placeholder:text-foreground/30 hover:bg-secondary/30 focus:bg-secondary/50"
+            className="ml-1 rounded bg-transparent px-1 py-0.5 text-[10px] text-foreground/80 outline-none placeholder:text-foreground/30 hover:bg-secondary/30 focus:bg-secondary/50 w-24"
           />
 
           {path.length > 0 && (
-            <button type="button" aria-label="Remove condition" onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); removeAt(path); }} className="ml-auto rounded p-1 text-foreground/40 hover:bg-destructive/10 hover:text-destructive">
-              <X className="h-4 w-4" />
+            <button type="button" aria-label="Remove condition" onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); removeAt(path); }} className="ml-auto rounded p-0.5 text-foreground/40 hover:bg-destructive/10 hover:text-destructive">
+              <X className="h-3 w-3" />
             </button>
           )}
         </div>
@@ -388,28 +423,28 @@ export function AdvancedRuleBuilder({ onComplete, initialRule }: { onComplete: (
     }
 
     return (
-      <div key={path.join("-") || "root"} className={cn("flex flex-col gap-2.5", depth > 0 && "ml-4 pl-2 py-1")}>
+      <div key={path.join("-") || "root"} className={cn("flex flex-col gap-1.5", depth > 0 && "ml-3 pl-1.5 py-0.5")}>
         <div className="flex flex-wrap items-center gap-2 px-1">
           <CustomSelect
             value={node.type}
             onChange={(value) => updateAt(path, () => ({ ...node, type: value as "AND" | "OR" }))}
-            options={[{ label: "Match every condition (AND)", value: "AND" }, { label: "Match any condition (OR)", value: "OR" }]}
+            options={[{ label: "All of the following are true", value: "AND" }, { label: "Any of the following are true", value: "OR" }]}
           />
-          <span className="text-[10px] uppercase tracking-widest text-muted-foreground">{node.rules.length} item{node.rules.length === 1 ? "" : "s"}</span>
+          <span className="text-[9px] uppercase tracking-widest text-muted-foreground">{node.rules.length} item{node.rules.length === 1 ? "" : "s"}</span>
           {depth > 0 && (
-            <button type="button" onClick={() => removeAt(path)} className="ml-auto text-[10px] font-bold uppercase tracking-wider text-destructive/70 hover:text-destructive">Remove group</button>
+            <button type="button" onClick={() => removeAt(path)} className="ml-auto text-[9px] font-bold uppercase tracking-wider text-destructive/70 hover:text-destructive">Remove group</button>
           )}
         </div>
-        <div className="flex flex-col gap-1.5">
+        <div className="flex flex-col gap-1">
           {node.rules.map((child, index) => renderNode(child, [...path, index], depth + 1))}
         </div>
         <div className="flex items-center gap-2 px-1">
-          <button type="button" onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); appendTo(path, { type: "CONDITION", indicatorA: "RSI14", operator: "<", indicatorB: "30" }); }} className="flex items-center gap-1 rounded-lg px-2 py-1.5 text-[10px] font-bold uppercase tracking-wider text-foreground/60 hover:bg-foreground/5 hover:text-foreground">
-            <Plus className="h-3 w-3" /> Condition
+          <button type="button" onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); appendTo(path, { type: "CONDITION", indicatorA: "RSI14", operator: "<", indicatorB: "30" }); }} className="flex items-center gap-1 rounded px-1.5 py-1 text-[9px] font-bold uppercase tracking-wider text-foreground/60 hover:bg-foreground/5 hover:text-foreground">
+            <Plus className="h-2.5 w-2.5" /> Condition
           </button>
           {depth < 5 && (
-            <button type="button" onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); appendTo(path, { type: "AND", rules: [{ type: "CONDITION", indicatorA: "CLOSE", operator: ">", indicatorB: "SMA50" }] }); }} className="flex items-center gap-1 rounded-lg px-2 py-1.5 text-[10px] font-bold uppercase tracking-wider text-foreground/60 hover:bg-foreground/5 hover:text-foreground">
-              <Plus className="h-3 w-3" /> Group
+            <button type="button" onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); appendTo(path, { type: "AND", rules: [{ type: "CONDITION", indicatorA: "CLOSE", operator: ">", indicatorB: "SMA50" }] }); }} className="flex items-center gap-1 rounded px-1.5 py-1 text-[9px] font-bold uppercase tracking-wider text-foreground/60 hover:bg-foreground/5 hover:text-foreground">
+              <Plus className="h-2.5 w-2.5" /> Group
             </button>
           )}
         </div>
@@ -418,49 +453,41 @@ export function AdvancedRuleBuilder({ onComplete, initialRule }: { onComplete: (
   };
 
   return (
-    <div className="mx-auto flex w-[610px] shrink-0 flex-col gap-2.5 px-2 pb-1">
-      <div className="px-3 py-2.5">
-        <div className="grid grid-cols-[auto_minmax(130px,1fr)_auto_auto] items-center gap-x-2 gap-y-2 text-xs">
+    <div className="mx-auto flex w-[610px] shrink-0 flex-col gap-1 px-1 pb-1">
+      <div className="px-1 py-1">
+        <div className="grid grid-cols-[auto_1fr_auto_auto] items-center gap-x-2 gap-y-1 text-[11px]">
           <span className="font-semibold text-foreground/60">Scan</span>
-          <CustomSelect value={targetType} onChange={setTargetType} options={[
-            { label: "All screener targets", value: "ALL" },
-            { label: "Active suggestions", value: "SUGGESTIONS" },
-            { label: "Overnight watchlist", value: "OVERNIGHT" },
-            { label: "New custom watchlist", value: "CUSTOM" },
-          ]} />
+          <div>
+            <CustomSelect 
+               value={targetType} 
+               onChange={(val) => {
+                 setTargetType(val);
+                 if (val !== "CUSTOM") setOutputName("");
+               }} 
+               options={[
+                 { label: "All screener targets", value: "ALL" },
+                 { label: "Active suggestions", value: "SUGGESTIONS" },
+                 { label: "Overnight watchlist", value: "OVERNIGHT" },
+                 { label: "New custom watchlist...", value: "CUSTOM" },
+               ]}
+               editable={targetType === "CUSTOM"}
+               textValue={targetType === "CUSTOM" ? outputName : undefined}
+               onTextChange={targetType === "CUSTOM" ? (t) => { setOutputName(t); setValidationError(null); } : undefined}
+               placeholder={targetType === "CUSTOM" ? "Watchlist name" : ""}
+               disableFilter={true}
+               autoFocus={targetType === "CUSTOM"}
+            />
+          </div>
           <span className="justify-self-end font-semibold text-foreground/60">on</span>
-          <CustomSelect value={timeframe} onChange={setTimeframe} options={[
-            { label: "1 minute", value: "1m" },
-            { label: "5 minutes", value: "5m" },
-            { label: "15 minutes", value: "15m" },
-            { label: "1 hour", value: "1h" },
-            { label: "1 day", value: "1d" },
-          ]} />
-
-          <AnimatePresence initial={false}>
-            {targetType === "CUSTOM" && (
-              <motion.div
-                key="watchlist-name"
-                initial={{ height: 0, opacity: 0, y: -4 }}
-                animate={{ height: 34, opacity: 1, y: 0 }}
-                exit={{ height: 0, opacity: 0, y: -4 }}
-                transition={{ type: "spring", stiffness: 420, damping: 34, mass: 0.8 }}
-                className="col-span-4 overflow-hidden"
-              >
-                <input
-                  id="rule-watchlist-name"
-                  name="rule-watchlist-name"
-                  type="text"
-                  value={outputName}
-                  maxLength={100}
-                  onChange={(event) => { setOutputName(event.target.value); setValidationError(null); }}
-                  placeholder="Watchlist name"
-                  aria-label="Watchlist name"
-                  className="h-8 w-full rounded-md bg-background/45 px-3 text-center text-xs font-semibold text-foreground outline-none transition-colors placeholder:text-foreground/35 focus:bg-secondary/35"
-                />
-              </motion.div>
-            )}
-          </AnimatePresence>
+          <div>
+            <CustomSelect value={timeframe} onChange={setTimeframe} options={[
+              { label: "1 minute", value: "1m" },
+              { label: "5 minutes", value: "5m" },
+              { label: "15 minutes", value: "15m" },
+              { label: "1 hour", value: "1h" },
+              { label: "1 day", value: "1d" },
+            ]} />
+          </div>
 
           <span className="font-semibold text-foreground/60">Run</span>
           <div className="col-span-3 flex flex-wrap items-center gap-2">
@@ -480,13 +507,12 @@ export function AdvancedRuleBuilder({ onComplete, initialRule }: { onComplete: (
         </div>
       </div>
 
-      <div className="flex items-center justify-between px-3 py-2 text-[11px] font-medium text-muted-foreground">
-        <span className="min-w-0 truncate pr-3">{rulePreview}</span>
-        <span className="shrink-0 font-mono text-[10px] opacity-80">{conditionCount}/50</span>
+      <div className="flex items-center justify-between px-1 pt-1 text-[10px] font-medium text-muted-foreground">
+        <span className="shrink-0 font-mono opacity-80">{conditionCount}/50 conditions</span>
       </div>
 
       {/* Conditions Editor */}
-      <div ref={scrollRef} className="custom-scrollbar max-h-[42vh] overflow-y-auto px-2 py-2">
+      <div ref={scrollRef} className="custom-scrollbar max-h-[42vh] overflow-y-auto px-2 py-0 pb-1">
         {renderNode(conditions, [], 0)}
       </div>
 
@@ -500,9 +526,9 @@ export function AdvancedRuleBuilder({ onComplete, initialRule }: { onComplete: (
       </AnimatePresence>
 
       {/* Compact Footer */}
-      <div className="flex items-center justify-between pt-1">
-        <button type="button" onClick={onComplete} className="rounded-lg px-3 py-1.5 text-xs font-semibold text-muted-foreground hover:bg-foreground/5 hover:text-foreground">Cancel</button>
-        <button type="button" onClick={handleSave} disabled={createRuleMutation.isPending} className="group flex h-9 items-center gap-2 rounded-lg bg-primary px-4 text-xs font-semibold text-primary-foreground transition-all hover:opacity-90 disabled:opacity-50">
+      <div className="flex items-center justify-between pt-1 pb-1 px-2">
+        <button type="button" onClick={onComplete} className="rounded-xl px-4 py-2.5 text-xs font-semibold text-muted-foreground hover:bg-foreground/5 hover:text-foreground transition-colors">Cancel</button>
+        <button type="button" onClick={handleSave} disabled={createRuleMutation.isPending} className="group flex h-10 items-center gap-2 rounded-xl bg-primary px-5 text-xs font-semibold text-primary-foreground transition-all hover:opacity-90 disabled:opacity-50 active:scale-[0.98]">
           Review & Save
           <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
         </button>

@@ -489,7 +489,7 @@ async function analyzeSymbolMetrics(closed: any[]): Promise<void> {
       t.reasoning?.includes("technical")
     );
 
-    let techEdge: number | null = null;
+    let techEdge: number | null;
     if (techSignals.length >= 10) {
       const profitable = techSignals.filter(t => t.status.includes("TARGET")).length;
       techEdge = (profitable / techSignals.length) * 100;
@@ -499,7 +499,7 @@ async function analyzeSymbolMetrics(closed: any[]): Promise<void> {
 
     // Regime Align Calculation
     // "percentage of past trades taken in the current regime that were profitable for this symbol"
-    let regimeAlign: number | null = null;
+    let regimeAlign: number | null;
     const regimeTrades = trades.filter(t => t.marketRegime === currentRegime);
     if (regimeTrades.length >= 10) {
       const profitable = regimeTrades.filter(t => t.status.includes("TARGET")).length;

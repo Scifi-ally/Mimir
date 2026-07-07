@@ -53,7 +53,7 @@ async function run() {
       CONSTRAINT "fk_screener_target" FOREIGN KEY ("screener_id") REFERENCES "custom_screener"("id") ON DELETE cascade
     );
   `);
-  console.log("Tables created");
+  console.log("Successfully created/verified all screener tables.");
   process.exit(0);
 }
 run();

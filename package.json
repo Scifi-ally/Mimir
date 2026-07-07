@@ -1,6 +1,7 @@
 {
   "name": "workspace",
   "version": "0.0.0",
+  "workspaces": ["frontend", "backend", "db"],
   "license": "MIT",
   "scripts": {
     "build": "npm run typecheck && npm --prefix backend run build",
@@ -17,7 +18,11 @@
     "bot:stop": "bot.bat stop",
     "bot:status": "bot.bat status",
     "stop:servers": "bot.bat stop",
-    "stop": "bot.bat stop"
+    "stop": "bot.bat stop",
+    "build:prod": "npm run build:frontend && npm run build:backend",
+    "build:frontend": "npm --prefix frontend run build",
+    "build:backend": "npm --prefix backend run build",
+    "start:prod": "docker-compose up --build -d"
   },
   "private": true,
   "devDependencies": {

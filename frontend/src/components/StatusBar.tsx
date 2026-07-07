@@ -3,6 +3,21 @@ import { cn, fmtNum } from "@/lib/format";
 import type { SystemStatus, MarketRegime } from "@/types/api";
 import { ArrowUpRight, ArrowDownRight } from "lucide-react";
 import { Tooltip } from "@/components/mimir/tooltip";
+import { motion } from "framer-motion";
+
+function StatusLed({ status }: { status: "ok" | "warn" | "error" | "unknown" }) {
+  const color = status === "ok" ? "bg-green-500" : status === "warn" ? "bg-yellow-500" : status === "error" ? "bg-red-500" : "bg-neutral-500";
+  const shadow = status === "ok" ? "rgba(34,197,94,0.6)" : status === "warn" ? "rgba(234,179,8,0.6)" : status === "error" ? "rgba(239,68,68,0.6)" : "rgba(115,115,115,0.6)";
+  
+  return (
+    <motion.div 
+      animate={{ opacity: [0.4, 1, 0.4] }} 
+      transition={{ duration: 2.5, repeat: Infinity, ease: "easeInOut" }} 
+      className={cn("w-1.5 h-1.5 rounded-full shrink-0", color)} 
+      style={{ boxShadow: `0 0 8px ${shadow}` }} 
+    />
+  );
+}
 
 interface StatusBarProps {
   status: SystemStatus | undefined;
@@ -18,9 +33,12 @@ export const StatusBar = memo(function StatusBar({ status, regime, wsConnected, 
       <div className="flex shrink-0 items-center gap-4 sm:gap-6 text-foreground/70">
         <span className="flex items-center gap-1.5 cursor-help" title="AI Status: Health of Native Math Models">
           AI
-          <span className={cn("font-bold", status?.aiStatus?.toLowerCase().includes("healthy") ? "text-emerald-500" : "text-destructive")}>
-            {status?.aiStatus ? status.aiStatus : "UNKNOWN"}
-          </span>
+          <div className="flex items-center gap-1.5 bg-foreground/5 px-2 py-0.5 rounded-full border border-border/20">
+            <StatusLed status={status?.aiStatus?.toLowerCase().includes("healthy") ? "ok" : "error"} />
+            <span className={cn("font-bold text-[10px]", status?.aiStatus?.toLowerCase().includes("healthy") ? "text-emerald-500" : "text-destructive")}>
+              {status?.aiStatus ? status.aiStatus : "UNKNOWN"}
+            </span>
+          </div>
         </span>
         <Tooltip
           className="cursor-help flex items-center gap-1.5"
@@ -66,15 +84,21 @@ export const StatusBar = memo(function StatusBar({ status, regime, wsConnected, 
         </Tooltip>
         <span className="flex items-center gap-1.5 cursor-help" title="Scheduler: Background job status for scans and ticks">
           SCHEDULER
-          <span className={cn("font-bold", status?.schedulerRunning ? "text-green-500" : "text-red-500")}>
-            {status?.schedulerRunning ? "ON" : "OFF"}
-          </span>
+          <div className="flex items-center gap-1.5 bg-foreground/5 px-2 py-0.5 rounded-full border border-border/20">
+            <StatusLed status={status?.schedulerRunning ? "ok" : "error"} />
+            <span className={cn("font-bold text-[10px]", status?.schedulerRunning ? "text-green-500" : "text-red-500")}>
+              {status?.schedulerRunning ? "ON" : "OFF"}
+            </span>
+          </div>
         </span>
         <span className="flex items-center gap-1.5 cursor-help" title="Network: WebSocket real-time connection status">
           NETWORK
-          <span className={cn("font-bold", wsConnected ? "text-green-500" : "text-red-500")}>
-            {wsConnected ? "OK" : "ERR"}
-          </span>
+          <div className="flex items-center gap-1.5 bg-foreground/5 px-2 py-0.5 rounded-full border border-border/20">
+            <StatusLed status={wsConnected ? "ok" : "error"} />
+            <span className={cn("font-bold text-[10px]", wsConnected ? "text-green-500" : "text-red-500")}>
+              {wsConnected ? "OK" : "ERR"}
+            </span>
+          </div>
         </span>
       </div>
       

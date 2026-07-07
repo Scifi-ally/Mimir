@@ -17,12 +17,13 @@ type ScreenerRule = {
 export function CommandPalette({ onClose, onWidthChange }: { onClose: () => void, onWidthChange?: (width: number) => void }) {
   const initialSearch = useStore((s) => s.commandPaletteSearch);
   const initialTargetWatchlist = useStore((s) => s.commandPaletteTargetWatchlist);
+  const initialEditRuleId = useStore((s) => s.commandPaletteEditRuleId);
   const [search, setSearch] = useState(initialSearch || '');
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, symbol: string } | null>(null);
   const [targetWatchlist, setTargetWatchlist] = useState<number | null>(initialTargetWatchlist);
   
   // Rule builder state
-  const [isBuildingRule, setIsBuildingRule] = useState(initialSearch ? initialSearch.toLowerCase().startsWith('scan ') : false);
+  const [isBuildingRule, setIsBuildingRule] = useState(!!initialEditRuleId || (initialSearch ? initialSearch.toLowerCase().startsWith('scan ') : false));
   
   const queryClient = useQueryClient();
   const setSelectedSymbol = useStore((s) => s.setSelectedSymbol);
@@ -36,6 +37,11 @@ export function CommandPalette({ onClose, onWidthChange }: { onClose: () => void
     }
   });
   const customWatchlists = screeners.filter((s) => s.targetType === 'CUSTOM');
+  const editRule = useMemo(() => {
+    if (!initialEditRuleId) return undefined;
+    return screeners.find(s => s.id === initialEditRuleId);
+  }, [initialEditRuleId, screeners]);
+
   const batchSymbols = useMemo(() => {
     if (targetWatchlist === null || !search.includes(',')) return [];
     return Array.from(
@@ -134,12 +140,12 @@ export function CommandPalette({ onClose, onWidthChange }: { onClose: () => void
       <AnimatePresence>
         {contextMenu && (
           <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.95 }}
-            transition={{ duration: 0.15 }}
+            initial={{ opacity: 0, backdropFilter: 'blur(0px)' }}
+            animate={{ opacity: 1, backdropFilter: 'blur(12px)' }}
+            exit={{ opacity: 0, backdropFilter: 'blur(0px)' }}
+            transition={{ duration: 0.3 }}
             style={{ top: contextMenu.y, left: contextMenu.x }}
-            className="fixed z-[120] min-w-[200px] rounded-xl border border-border/50 bg-background/95 p-1.5 shadow-2xl backdrop-blur-xl"
+            className="fixed z-[120] min-w-[200px] rounded-xl border border-border/50 bg-background/95 p-1.5 shadow-2xl backdrop-blur-md"
           >
             <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">
               {contextMenu.symbol}
@@ -164,7 +170,6 @@ export function CommandPalette({ onClose, onWidthChange }: { onClose: () => void
             ) : (
               <div className="px-2 py-1 text-xs text-foreground/50 italic">No custom watchlists</div>
             )}
-            <div className="h-px bg-border/50 my-1 mx-2" />
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -191,24 +196,24 @@ export function CommandPalette({ onClose, onWidthChange }: { onClose: () => void
         }}
       >
           {!isBuildingRule ? (
-            <div className="flex items-center px-4 py-2.5">
-              <Search className="mr-3 h-4 w-4 shrink-0 text-muted-foreground" />
+            <div className="flex items-center px-4 py-3 relative">
+              <Search className="mr-3 h-5 w-5 shrink-0 text-foreground/50" />
               <Command.Input
                 id="command-palette-input"
                 name="command-palette-input"
                 aria-label="Search symbols"
                 autoFocus
-                placeholder={targetWatchlist !== null ? "Search or add comma-separated symbols..." : "Search symbols... (Try 'RELIANCE' or 'SBIN')"}
+                placeholder={targetWatchlist !== null ? "Search or add comma-separated symbols..." : "Search symbols... (Try 'RELIANCE')"}
                 value={search}
                 onValueChange={setSearch}
-                className="flex h-9 w-full rounded-md bg-transparent text-sm outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex h-12 w-full bg-transparent text-lg font-medium text-foreground outline-none placeholder:text-foreground/30 placeholder:font-normal disabled:cursor-not-allowed disabled:opacity-50"
               />
               {batchSymbols.length > 0 && (
                 <button
                   type="button"
                   onClick={handleAddBatchSymbols}
                   disabled={createTargetsMutation.isPending}
-                  className="ml-3 flex shrink-0 items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-xs font-bold text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="ml-3 flex shrink-0 items-center gap-1.5 rounded-full bg-foreground/10 px-4 py-1.5 text-xs font-semibold text-foreground transition-colors hover:bg-foreground/20 disabled:cursor-not-allowed disabled:opacity-60 border border-border"
                 >
                   <Plus className="h-3.5 w-3.5" />
                   Add Stocks
@@ -216,12 +221,10 @@ export function CommandPalette({ onClose, onWidthChange }: { onClose: () => void
               )}
             </div>
           ) : (
-            <div className="flex flex-col items-center justify-center gap-1 px-4 py-3 text-center">
-              <div className="flex items-center justify-center gap-2">
-                <Filter className="h-3.5 w-3.5 text-primary" />
-                <span className="text-[13px] font-semibold tracking-tight text-foreground">Screener Rule Builder</span>
+            <div className="flex flex-col items-center justify-center px-4 pt-4 pb-1.5 text-center">
+              <div className="flex items-center justify-center">
+                <span className="text-xs font-semibold tracking-tight text-foreground">Screener Rule Builder</span>
               </div>
-              <span className="text-[10px] font-medium tracking-wide text-muted-foreground/80">Configure scanner conditions</span>
             </div>
           )}
 
@@ -233,13 +236,13 @@ export function CommandPalette({ onClose, onWidthChange }: { onClose: () => void
               exit={{ opacity: 0, scale: 0.98, filter: "blur(4px)" }}
               transition={{ duration: 0.2 }}
             >
-              <AdvancedRuleBuilder onComplete={() => {
+              <AdvancedRuleBuilder initialRule={editRule} onComplete={() => {
                 setIsBuildingRule(false);
                 setSearch('');
               }} />
             </motion.div>
           ) : (
-            <Command.List className={`overflow-y-auto overflow-x-hidden max-h-[400px] ${searchResults?.items?.length ? 'p-2' : ''}`}>
+            <Command.List className={`overflow-y-auto overflow-x-hidden max-h-[400px] scrollbar-none ${searchResults?.items?.length ? 'p-2' : ''}`}>
               <Command.Empty className="hidden" />
 
               {isPending && search.length > 0 && (
@@ -274,7 +277,7 @@ export function CommandPalette({ onClose, onWidthChange }: { onClose: () => void
               )}
 
               {searchResults?.items && searchResults.items.length > 0 && (
-                <Command.Group heading="Symbols" className="px-2 text-xs font-semibold text-muted-foreground">
+                <Command.Group heading="Symbols" className="px-2 pt-2 text-[11px] font-semibold tracking-wider text-foreground/40 uppercase">
                   {searchResults.items.map((item: SymbolSearchResult) => {
                     return (
                       <Command.Item
@@ -284,14 +287,14 @@ export function CommandPalette({ onClose, onWidthChange }: { onClose: () => void
                           e.preventDefault();
                           setContextMenu({ x: e.clientX, y: e.clientY, symbol: item.symbol });
                         }}
-                        className="apple-hover flex cursor-pointer select-none items-center justify-between rounded-sm px-2 py-2 text-sm outline-none hover:bg-accent hover:text-accent-foreground aria-selected:bg-accent aria-selected:text-accent-foreground data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground mt-1"
+                        className="apple-hover flex cursor-pointer select-none items-center justify-between rounded-xl px-3 py-2.5 text-sm outline-none hover:bg-foreground/10 aria-selected:bg-foreground/10 aria-selected:text-foreground data-[selected=true]:bg-foreground/10 data-[selected=true]:text-foreground mt-1 transition-all duration-200"
                       >
-                        <div className="flex flex-1 items-center gap-2 min-w-0 mr-3">
-                          <span className="font-bold text-foreground font-mono tracking-tight shrink-0">{item.symbol}</span>
-                          <span className="text-muted-foreground truncate">{item.name}</span>
+                        <div className="flex flex-1 items-center gap-3 min-w-0 mr-3">
+                          <span className="font-semibold text-foreground font-mono tracking-tight shrink-0">{item.symbol}</span>
+                          <span className="text-foreground/50 truncate text-xs">{item.name}</span>
                         </div>
                         {item.sector && (
-                          <span className="text-[10px] uppercase tracking-wider text-muted-foreground/60 shrink-0">{item.sector}</span>
+                          <span className="text-[10px] uppercase tracking-widest font-medium text-foreground/30 shrink-0 border border-border/50 rounded-full px-2 py-0.5 bg-foreground/5">{item.sector}</span>
                         )}
                       </Command.Item>
                     );

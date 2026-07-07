@@ -15,7 +15,7 @@ const indicatorSchema = z.string().trim().min(1).max(50).transform((value) => va
 }, "Unsupported indicator or invalid period");
 
 const operatorSchema = z.enum([">", "<", ">=", "<=", "==", "!=", "CROSSES_ABOVE", "CROSSES_BELOW"]);
-const scheduleModeSchema = z.enum(["MARKET_OPEN", "MARKET_CLOSE", "EVERY_MINUTE", "TIME", "ON_DEMAND"]);
+const scheduleModeSchema = z.enum(["MARKET_OPEN", "MARKET_CLOSE", "EVERY_MINUTE", "TIME", "ON_DEMAND", "EVERY_CANDLE"]);
 const scheduleTimeSchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use HH:mm format");
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const ruleNodeSchema: z.ZodType<any> = z.lazy(() => z.union([
@@ -158,13 +158,17 @@ router.get("/screener/matches", async (_req, res, next) => {
   }
 });
 
+import { isAuthenticated } from "../upstox/auth";
+
 router.post("/screener/run", async (req, res, next) => {
   try {
+    if (!isAuthenticated()) {
+      return res.status(401).json({ error: "Upstox is not authenticated. Please connect your broker account to run the custom scanner." });
+    }
+
     const { screenerId } = req.body || {};
     
-    const beforeMatches = await db.select({ id: customScreenerMatchesTable.id }).from(customScreenerMatchesTable);
-    const beforeTargets = await db.select({ id: customScreenerTargetsTable.id }).from(customScreenerTargetsTable);
-    
+
     let activeQuery = db.select({ id: customScreenerTable.id })
       .from(customScreenerTable)
       .where(eq(customScreenerTable.status, "ACTIVE"));
@@ -178,18 +182,20 @@ router.post("/screener/run", async (req, res, next) => {
     const activeScreeners = await activeQuery;
 
     const { runCustomScreener } = await import("../analysis/custom_screener_engine");
-    await runCustomScreener(screenerId ? { screenerIds: [screenerId] } : undefined);
-
-    const afterMatches = await db.select({ id: customScreenerMatchesTable.id }).from(customScreenerMatchesTable);
-    const afterTargets = await db.select({ id: customScreenerTargetsTable.id }).from(customScreenerTargetsTable);
+    
+    // Run asynchronously to avoid blocking the HTTP request
+    runCustomScreener(screenerId ? { screenerIds: [screenerId] } : undefined).catch((err) => {
+      console.error({ err }, "Error running custom screener asynchronously");
+    });
 
     return res.json({
       success: true,
+      message: "Screener started in the background. Progress will be updated.",
       activeScreeners: activeScreeners.length,
-      newMatches: Math.max(0, afterMatches.length - beforeMatches.length),
-      newTargets: Math.max(0, afterTargets.length - beforeTargets.length),
-      totalMatches: afterMatches.length,
-      totalTargets: afterTargets.length,
+      newMatches: 0,
+      newTargets: 0,
+      totalMatches: 0,
+      totalTargets: 0,
       runAt: new Date().toISOString(),
     });
   } catch (err) {

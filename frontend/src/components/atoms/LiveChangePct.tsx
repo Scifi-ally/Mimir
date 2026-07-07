@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState } from 'react';
-import { useSymbolData } from '@/providers/MarketDataProvider';
+import { useSymbolData, marketDataStore } from '@/providers/MarketDataProvider';
 
 interface LiveChangePctProps {
   symbol: string;
@@ -14,6 +14,10 @@ export const LiveChangePct = memo(({ symbol, className, decimals = 2, fallback }
   const [flash, setFlash] = useState<'up' | 'down' | null>(null);
   
   useEffect(() => {
+    if (changePct == null && fallback != null) {
+      marketDataStore.updateFromRest(symbol, { change_pct: fallback });
+    }
+
     if (changePct == null || changePct === prevChange.current) return;
     if (prevChange.current != null) {
       setFlash(changePct > prevChange.current ? 'up' : 'down');
@@ -22,7 +26,7 @@ export const LiveChangePct = memo(({ symbol, className, decimals = 2, fallback }
       return () => clearTimeout(t);
     }
     prevChange.current = changePct;
-  }, [changePct]);
+  }, [symbol, changePct, fallback]);
   
   const displayChange = changePct ?? fallback;
   const sign = (displayChange ?? 0) > 0 ? '+' : '';
@@ -33,7 +37,8 @@ export const LiveChangePct = memo(({ symbol, className, decimals = 2, fallback }
       className={className}
       style={{ 
         color: flash ? (flash === 'up' ? '#22C55E' : '#EF4444') : color,
-        transition: 'color 400ms ease-out'
+        textShadow: flash === 'up' ? '0 0 12px rgba(34,197,94,0.6)' : flash === 'down' ? '0 0 12px rgba(239,68,68,0.6)' : 'none',
+        transition: flash ? 'none' : 'all 300ms ease-out'
       }}
     >
       {displayChange != null ? `${sign}${displayChange.toFixed(decimals)}%` : '—'}

@@ -1,3 +1,5 @@
+import { unpack } from "msgpackr";
+
 /**
  * Off-Thread Market Data Processing Worker
  * Decouples raw string parsing and tick batching from the main UI browser thread.
@@ -64,6 +66,22 @@ self.onmessage = (event: MessageEvent) => {
   const raw = event.data;
   startTimers();
 
+  if (raw instanceof ArrayBuffer || raw instanceof Uint8Array) {
+    try {
+      const msg = unpack(new Uint8Array(raw));
+      if (msg.event === "tick_update" && Array.isArray(msg.data)) {
+        msg.data.forEach((tick: Tick) => processTick(tick));
+      } else if (msg.channel === "market:tick") {
+        processTick(msg.data || msg);
+      } else {
+        self.postMessage({ ok: true, msg });
+      }
+    } catch {
+      self.postMessage({ ok: false, raw: "binary parse error" });
+    }
+    return;
+  }
+
   // If already parsed object (e.g., from main thread batch transfer)
   if (typeof raw === "object" && raw !== null) {
     if (raw.type === "BATCH_TICKS" && Array.isArray(raw.ticks)) {
@@ -88,7 +106,24 @@ self.onmessage = (event: MessageEvent) => {
   }
 };
 
-function processTick(tick: Tick): void {
+function processTick(inputTick: unknown): void {
+  let tick: Tick;
+  if (Array.isArray(inputTick)) {
+    // [symbol, ltp, volume, bid, ask, timestamp, change_pct]
+    tick = {
+      symbol: inputTick[0],
+      ltp: inputTick[1],
+      price: inputTick[1],
+      volume: inputTick[2],
+      bid: inputTick[3],
+      ask: inputTick[4],
+      timestamp: inputTick[5],
+      change_pct: inputTick[6]
+    };
+  } else {
+    tick = inputTick as Tick;
+  }
+
   if (!tick || !tick.symbol) return;
   
   totalTicksReceived++;

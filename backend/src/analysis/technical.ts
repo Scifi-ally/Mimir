@@ -65,6 +65,21 @@ export function computeEMA(values: number[], period: number): number[] {
   return result;
 }
 
+export function fastEMA(values: number[], period: number): number {
+  if (values.length === 0) return 0;
+  const k = 2 / (period + 1);
+  const seedPeriod = Math.min(period, values.length);
+  let ema = 0;
+  for (let i = 0; i < seedPeriod; i++) {
+    ema += values[i]!;
+  }
+  ema /= seedPeriod;
+  for (let i = seedPeriod; i < values.length; i++) {
+    ema = values[i]! * k + ema * (1 - k);
+  }
+  return ema;
+}
+
 // ── RSI (Wilder's smoothing over full history) ────────────────────────────────
 
 export function computeRSI(closes: number[], period = 14): number {
@@ -107,6 +122,27 @@ export function computeATR(candles: OHLCV[], period = 14): number {
   return atr;
 }
 
+export function fastATR(candles: OHLCV[], period = 14): number {
+  if (candles.length < 2) return 0;
+  let atr = 0;
+  const seedPeriod = Math.min(period, candles.length - 1);
+  for (let i = 1; i <= seedPeriod; i++) {
+    const h = candles[i]!.high;
+    const l = candles[i]!.low;
+    const pc = candles[i - 1]!.close;
+    atr += Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc));
+  }
+  atr /= seedPeriod;
+  for (let i = seedPeriod + 1; i < candles.length; i++) {
+    const h = candles[i]!.high;
+    const l = candles[i]!.low;
+    const pc = candles[i - 1]!.close;
+    const tr = Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc));
+    atr = (atr * (period - 1) + tr) / period;
+  }
+  return atr;
+}
+
 // ── ADX (proper Wilder's smoothing) ──────────────────────────────────────────
 
 export function computeADX(candles: OHLCV[], period = 14): number {
@@ -142,6 +178,56 @@ export function computeADX(candles: OHLCV[], period = 14): number {
   let adx = dxValues.slice(0, period).reduce((a, b) => a + b, 0) / period;
   for (let i = period; i < dxValues.length; i++) {
     adx = (adx * (period - 1) + dxValues[i]!) / period;
+  }
+  return Math.round(adx * 100) / 100;
+}
+
+export function fastADX(candles: OHLCV[], period = 14): number {
+  if (candles.length < period * 2 + 1) return 20;
+  let sTR = 0, sPlusDM = 0, sMinusDM = 0;
+  
+  for (let i = 1; i <= period; i++) {
+    const upMove = candles[i]!.high - candles[i - 1]!.high;
+    const downMove = candles[i - 1]!.low - candles[i]!.low;
+    sPlusDM += (upMove > downMove && upMove > 0 ? upMove : 0);
+    sMinusDM += (downMove > upMove && downMove > 0 ? downMove : 0);
+    sTR += Math.max(
+      candles[i]!.high - candles[i]!.low,
+      Math.abs(candles[i]!.high - candles[i - 1]!.close),
+      Math.abs(candles[i]!.low - candles[i - 1]!.close)
+    );
+  }
+
+  let adx = 0;
+  let adxCount = 0;
+
+  for (let i = period + 1; i < candles.length; i++) {
+    const upMove = candles[i]!.high - candles[i - 1]!.high;
+    const downMove = candles[i - 1]!.low - candles[i]!.low;
+    const pDM = (upMove > downMove && upMove > 0 ? upMove : 0);
+    const mDM = (downMove > upMove && downMove > 0 ? downMove : 0);
+    const tr = Math.max(
+      candles[i]!.high - candles[i]!.low,
+      Math.abs(candles[i]!.high - candles[i - 1]!.close),
+      Math.abs(candles[i]!.low - candles[i - 1]!.close)
+    );
+
+    sTR = sTR - sTR / period + tr;
+    sPlusDM = sPlusDM - sPlusDM / period + pDM;
+    sMinusDM = sMinusDM - sMinusDM / period + mDM;
+
+    const plusDI = sTR > 0 ? (sPlusDM / sTR) * 100 : 0;
+    const minusDI = sTR > 0 ? (sMinusDM / sTR) * 100 : 0;
+    const diSum = plusDI + minusDI;
+    const dx = diSum > 0 ? (Math.abs(plusDI - minusDI) / diSum) * 100 : 0;
+    
+    if (adxCount < period) {
+      adx += dx;
+      adxCount++;
+      if (adxCount === period) adx /= period;
+    } else {
+      adx = (adx * (period - 1) + dx) / period;
+    }
   }
   return Math.round(adx * 100) / 100;
 }
@@ -191,10 +277,28 @@ export function computeRollingVWAP(candles: OHLCV[], _period = 20): number[] {
     const typ = (c.high + c.low + c.close) / 3;
     cumVol += c.volume;
     cumTypVol += typ * c.volume;
-
     result.push(cumVol > 0 ? cumTypVol / cumVol : c.close);
   }
   return result;
+}
+
+export function fastRollingVWAP(candles: OHLCV[]): number {
+  if (candles.length === 0) return 0;
+  let cumVol = 0;
+  let cumTypVol = 0;
+  
+  const lastCandle = candles[candles.length - 1]!;
+  const lastDayStr = new Date(lastCandle.timestamp).toLocaleDateString("en-US", { timeZone: "Asia/Kolkata" });
+  
+  for (let i = candles.length - 1; i >= 0; i--) {
+    const c = candles[i]!;
+    const dayStr = new Date(c.timestamp).toLocaleDateString("en-US", { timeZone: "Asia/Kolkata" });
+    if (dayStr !== lastDayStr) break;
+    const typ = (c.high + c.low + c.close) / 3;
+    cumVol += c.volume;
+    cumTypVol += typ * c.volume;
+  }
+  return cumVol > 0 ? cumTypVol / cumVol : lastCandle.close;
 }
 
 // ── SuperTrend (10, 3) ───────────────────────────────────────────────────────
@@ -253,6 +357,53 @@ export function computeSuperTrend(candles: OHLCV[], period = 10, multiplier = 3)
   return result;
 }
 
+export function fastSuperTrend(candles: OHLCV[], period = 10, multiplier = 3): number {
+  if (candles.length < period) return candles.length ? candles[candles.length - 1]!.close : 0;
+
+  let atr = 0;
+  for (let i = 1; i <= period; i++) {
+    const h = candles[i]!.high;
+    const l = candles[i]!.low;
+    const pc = candles[i - 1]!.close;
+    atr += Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc));
+  }
+  atr /= period;
+
+  let isUpTrend = true;
+  let finalUpper = 0;
+  let finalLower = 0;
+
+  for (let i = period; i < candles.length; i++) {
+    const c = candles[i]!;
+    const prevC = candles[i - 1]!;
+    
+    // Update ATR incrementally
+    const h = c.high;
+    const l = c.low;
+    const pc = prevC.close;
+    const tr = Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc));
+    atr = (atr * (period - 1) + tr) / period;
+
+    const hl2 = (h + l) / 2;
+    const basicUpper = hl2 + multiplier * atr;
+    const basicLower = hl2 - multiplier * atr;
+
+    if (i === period) {
+      finalUpper = basicUpper;
+      finalLower = basicLower;
+      continue;
+    }
+
+    finalUpper = basicUpper < finalUpper || pc > finalUpper ? basicUpper : finalUpper;
+    finalLower = basicLower > finalLower || pc < finalLower ? basicLower : finalLower;
+
+    if (c.close > finalUpper) isUpTrend = true;
+    else if (c.close < finalLower) isUpTrend = false;
+  }
+  
+  return isUpTrend ? finalLower : finalUpper;
+}
+
 // ── VPVR POC ─────────────────────────────────────────────────────────────────
 
 export function calculateVPVR(candles: OHLCV[], buckets = 12): number {
@@ -300,28 +451,22 @@ export function buildSnapshot(candles: OHLCV[]): TechnicalSnapshot | null {
   const highs = candles.map(c => c.high);
   const lows = candles.map(c => c.low);
 
-  const ema9s = computeEMA(closes, 9);
-  const ema20s = computeEMA(closes, 20);
-  const ema50s = computeEMA(closes, 50);
-  const ema200s = computeEMA(closes, 200);
   const last = candles.length - 1;
-
   const close = closes[last]!;
-  const e9 = ema9s[last]!;
-  const e20 = ema20s[last]!;
-  const e50 = ema50s.length > last ? ema50s[last]! : close;
-  const e200 = ema200s.length > last ? ema200s[last]! : close;
 
-  const rsi14 = computeRSI(closes, 14);
-  const atr14 = computeATR(candles.slice(-60), 14);
-  const adx14 = computeADX(candles, 14);
+  // Use fast O(1) indicators
+  const e9 = fastEMA(closes, 9);
+  const e20 = fastEMA(closes, 20);
+  const e50 = closes.length > 50 ? fastEMA(closes, 50) : close;
+  const e200 = closes.length > 200 ? fastEMA(closes, 200) : close;
+
+  const rsi14 = computeRSI(closes, 14); // computeRSI is already O(1) memory
+  const atr14 = fastATR(candles.slice(-60), 14);
+  const adx14 = fastADX(candles, 14);
   const volRatio = computeVolumeRatio(volumes);
-  const vwaps = computeRollingVWAP(candles, 20);
-  const sts = computeSuperTrend(candles, 10, 3);
+  const vwap = fastRollingVWAP(candles);
+  const superTrend = fastSuperTrend(candles, 10, 3);
   const vpvrPOC = calculateVPVR(candles.slice(-100));
-
-  const vwap = vwaps[last]!;
-  const superTrend = sts[last]!;
 
   const high52w = Math.max(...highs.slice(-252));
   const low52w = Math.min(...lows.slice(-252));

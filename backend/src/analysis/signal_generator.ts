@@ -55,7 +55,7 @@ async function getAdaptiveWeights(): Promise<AdaptiveWeights> {
       .limit(1);
       
     if (row && row.insights) {
-      adaptiveWeightsCache = JSON.parse(row.insights);
+      adaptiveWeightsCache = { ...defaultWeights, ...JSON.parse(row.insights) };
       lastWeightFetch = Date.now();
       return adaptiveWeightsCache!;
     }
@@ -358,6 +358,7 @@ export async function runIntelligencePipeline(
     const aiResult = aiResults.get(result.symbol);
     const aiContributing =
       aiResult !== undefined &&
+      !aiResult.isFallback &&
       (aiResult.kronos.source === "model" || aiResult.chronos.source === "model");
       
     // Extract Sentiment
@@ -660,8 +661,8 @@ export async function runIntelligencePipeline(
     aiLatencyMs: aiEnd - aiStart,
     totalLatencyMs,
     aiServiceStatus: health.status,
-    aiMode: signals.length > 0 ? signals[0]!.aiMode : health.status === "unavailable" ? "Fallback Mode" : "AI Mode",
-    rankingProvider: signals.length > 0 ? signals[0]!.rankingProvider : health.status === "unavailable" ? "Technical Ranking" : "AI Ranking",
+    aiMode: signals.length > 0 ? signals[0]!.aiMode : (health.status === "unavailable" || health.status === "degraded") ? "Fallback Mode" : "AI Mode",
+    rankingProvider: signals.length > 0 ? signals[0]!.rankingProvider : (health.status === "unavailable" || health.status === "degraded") ? "Technical Ranking" : "AI Ranking",
     timestamp: new Date().toISOString(),
   };
 }

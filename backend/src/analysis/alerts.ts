@@ -1,4 +1,4 @@
-import { Redis } from "ioredis";
+import Redis from "ioredis";
 import { logger } from "../lib/logger";
 
 const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
@@ -113,7 +113,7 @@ export async function detectAlerts(
 export async function getAlertHistory(): Promise<AlertEvent[]> {
   try {
     const events = await redis.lrange(ALERTS_LIST_KEY, 0, 199);
-    return events.map(e => JSON.parse(e));
+    return events.map((e: string) => JSON.parse(e));
   } catch (err) {
     logger.error({ err }, "Failed to get alert history");
     return [];

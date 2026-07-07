@@ -3,7 +3,7 @@ import { logger } from "../lib/logger";
 import { getGlobalMacroState } from "./global_macro";
 import { fetchFIIDIIData } from "../market_data/fii_dii";
 import { fetchOptionChainData } from "../market_data/option_chain";
-import { buildSnapshot, type OHLCV } from "./technical";
+import { buildSnapshot, computeMACD, type OHLCV } from "./technical";
 
 export interface BatchInferenceCandidate {
   symbol: string;
@@ -14,6 +14,7 @@ export interface BatchInferenceCandidate {
 
 export interface BatchResult {
   symbol: string;
+  isFallback?: boolean;
   kronos: {
     bullish_probability: number;
     confidence: number;
@@ -126,7 +127,8 @@ export async function batchInference(
       if (response.data && Array.isArray(response.data.results)) {
         aiCircuitBreaker.recordSuccess();
         for (const res of response.data.results) {
-          aiResults.set(res.symbol, res);
+          const isFallback = res.kronos?.source === "fallback" || res.chronos?.source === "fallback" || res.kronos?.source === "error" || res.chronos?.source === "error";
+          aiResults.set(res.symbol, { ...res, isFallback });
         }
         return aiResults;
       }
@@ -227,6 +229,21 @@ export async function batchInference(
       detected_patterns.push("Oversold: Bounce Expected");
     }
 
+    // 3.5 MACD Histogram Slope Confluence
+    const closes = candles.map((c) => c.close);
+    const macdResults = computeMACD(closes);
+    if (macdResults.length >= 2) {
+      const lastMacd = macdResults[macdResults.length - 1];
+      const prevMacd = macdResults[macdResults.length - 2];
+      if (lastMacd && prevMacd && lastMacd.histogram > prevMacd.histogram && lastMacd.histogram > 0) {
+        drift += 0.0006;
+        detected_patterns.push("MACD Momentum Confluence: Positive Slope");
+      } else if (lastMacd && prevMacd && lastMacd.histogram < prevMacd.histogram && lastMacd.histogram < 0) {
+        drift -= 0.0006;
+        detected_patterns.push("MACD Momentum Confluence: Negative Slope");
+      }
+    }
+
     // Prevent impossible drifts
     drift = Math.max(-0.005, Math.min(0.005, drift));
 
@@ -302,6 +319,7 @@ export async function batchInference(
 
     aiResults.set(c.symbol, {
       symbol: c.symbol,
+      isFallback: true,
       kronos: {
         bullish_probability: prob,
         confidence: confidence,

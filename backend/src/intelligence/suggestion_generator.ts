@@ -67,7 +67,9 @@ export class SuggestionGenerator {
   generate(opportunity: RankedOpportunity): ActiveSuggestion {
     this.expireStale();
     const existing = this.suggestions.get(opportunity.instrumentKey);
-    if (existing && existing.expiresAt > Date.now()) return existing;
+    if (existing && existing.expiresAt > Date.now()) {
+      return { ...existing, isNew: false };
+    }
 
     const generatedAt = Date.now();
     const suggestion: ActiveSuggestion = {
@@ -84,6 +86,7 @@ export class SuggestionGenerator {
       reasoning: opportunity.rankReasoning,
       generatedAt,
       expiresAt: generatedAt + 20 * 60_000,
+      isNew: true,
     };
     this.suggestions.set(opportunity.instrumentKey, suggestion);
     return suggestion;

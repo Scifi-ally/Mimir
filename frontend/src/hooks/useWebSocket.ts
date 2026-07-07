@@ -5,10 +5,13 @@ import { useQueryClient } from "@tanstack/react-query";
 import { marketDataStore } from "@/providers/MarketDataProvider";
 
 let activeWsSocket: WebSocket | null = null;
+let pendingSymbols: string[] = [];
 
 export function subscribeWsSymbols(symbols: string[]) {
   if (activeWsSocket?.readyState === WebSocket.OPEN && symbols && symbols.length > 0) {
     activeWsSocket.send(JSON.stringify({ event: "subscribe_symbols", data: { symbols } }));
+  } else if (symbols && symbols.length > 0) {
+    pendingSymbols = Array.from(new Set([...pendingSymbols, ...symbols]));
   }
 }
 
@@ -22,9 +25,8 @@ export function useWebSocket() {
   const setScanState = useStore((s) => s.setScanState);
   const addScanLog = useStore((s) => s.addScanLog);
   const clearScanLogs = useStore((s) => s.clearScanLogs);
-  const setLatestAlert = useStore((s) => s.setLatestAlert);
-  const mergeIndices = useStore((s) => s.mergeIndices);
   const updateWatchlistCounts = useStore((s) => s.updateWatchlistCounts);
+  const mergeIndices = useStore((s) => s.mergeIndices);
   const selectedSymbol = useStore((s) => s.selectedSymbol);
   const queryClient = useQueryClient();
   const wsRef = useRef<WebSocket | null>(null);
@@ -62,6 +64,10 @@ export function useWebSocket() {
       clearPing();
       const nextSocketInt = new WebSocket(wsUrl("/ws/intelligence"));
       const nextSocketMd = new WebSocket(wsUrl("/ws/market-data"));
+      
+      nextSocketInt.binaryType = "arraybuffer";
+      nextSocketMd.binaryType = "arraybuffer";
+      
       socketInt = nextSocketInt;
       socketMd = nextSocketMd;
       wsRef.current = nextSocketMd; // Use MD socket for symbol subscriptions
@@ -90,6 +96,10 @@ export function useWebSocket() {
         checkConnected();
         lastMessageTimeMd = Date.now();
         nextSocketMd.send(JSON.stringify({ event: "subscribe", data: { topic: "ticks" } }));
+        if (pendingSymbols.length > 0) {
+          nextSocketMd.send(JSON.stringify({ event: "subscribe_symbols", data: { symbols: pendingSymbols } }));
+          pendingSymbols = [];
+        }
         nextSocketMd.send(JSON.stringify({ event: "subscribe", data: { topic: "monitoring" } }));
         subscribeSymbol(nextSocketMd);
       };
@@ -194,7 +204,11 @@ export function useWebSocket() {
               break;
             case "new_suggestion":
               void queryClient.invalidateQueries({ queryKey: ["suggestions"] });
-              setLatestAlert(`New ${event.data.direction} signal: ${event.data.symbol}`);
+              useStore.getState().showIsland({
+                title: `New ${event.data.direction} Signal`,
+                subtitle: event.data.symbol,
+                isNotification: true,
+              });
               break;
             case "suggestion_updated":
               void queryClient.invalidateQueries({ queryKey: ["suggestions"] });
@@ -204,11 +218,19 @@ export function useWebSocket() {
               break;
             case "alert":
               void queryClient.invalidateQueries({ queryKey: ["alerts"] });
-              setLatestAlert(`${event.data.symbol}: ${event.data.message}`);
+              useStore.getState().showIsland({
+                title: event.data.symbol || "Alert",
+                subtitle: event.data.message,
+                isNotification: true,
+              });
               break;
             case "system_alert":
               if (!event.data.message.toLowerCase().includes("connected to upstox")) {
-                setLatestAlert(event.data.message);
+                useStore.getState().showIsland({
+                  title: "System Notification",
+                  subtitle: event.data.message,
+                  isNotification: true,
+                });
               }
               break;
             case "session_state_changed":
@@ -279,7 +301,7 @@ export function useWebSocket() {
         worker.terminate();
       }
     };
-  }, [mergeIndices, queryClient, setLatestAlert, setScanState, setWsConnected, addScanLog, clearScanLogs, updateWatchlistCounts]);
+  }, [mergeIndices, queryClient, setScanState, setWsConnected, addScanLog, clearScanLogs, updateWatchlistCounts]);
 
   useEffect(() => {
     const ws = wsRef.current;

@@ -2,15 +2,16 @@ import { useEffect, useMemo, useState, startTransition, lazy, Suspense } from "r
 import { useHotkeys } from "react-hotkeys-hook";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
+import { cn } from "@/lib/format";
 import { TopBar } from "@/components/TopBar";
 import { PriceChart } from "@/components/PriceChart";
 import { WatchlistStack } from "@/components/WatchlistStack";
+import { ScreenerTargetsStack } from "@/components/ScreenerTargetsStack";
 import { DetailPanel } from "@/components/DetailPanel";
 import { StatusBar } from "@/components/StatusBar";
 const SuggestionsSlider = lazy(() => import("@/components/SuggestionsSlider").then(m => ({ default: m.SuggestionsSlider })));
 const PaperTradingPanel = lazy(() => import("@/components/PaperTradingPanel").then(m => ({ default: m.PaperTradingPanel })));
-import { Key } from "lucide-react";
-import { useWebSocket } from "@/hooks/useWebSocket";
+import { useWebSocket, subscribeWsSymbols } from "@/hooks/useWebSocket";
 import { useStore } from "@/store/useStore";
 import { api } from "@/lib/api";
 
@@ -31,6 +32,7 @@ export default function Dashboard() {
   const [chartMode, setChartMode] = useState<"actual" | "forecast">("actual");
   const [isSuggestionsOpen, setIsSuggestionsOpen] = useState(false);
   const [isPaperTradingOpen, setIsPaperTradingOpen] = useState(false);
+  const [sidebarTab, setSidebarTab] = useState<"watchlist" | "screener">("watchlist");
 
   const sessionQuery = useQuery({ queryKey: ["session"], queryFn: api.sessionState, refetchInterval: 10000 });
   const statusQuery = useQuery({ queryKey: ["status"], queryFn: api.systemStatus, refetchInterval: 10000 });
@@ -41,17 +43,16 @@ export default function Dashboard() {
   const regimeQuery = useQuery({ queryKey: ["regime"], queryFn: api.marketRegime, refetchInterval: 10000 });
   const monitoringQuery = useQuery({ queryKey: ["monitoring"], queryFn: api.intradayMonitoring, refetchInterval: 10000 });
   const indianContextQuery = useQuery({ queryKey: ["indian-context"], queryFn: api.indianContext, refetchInterval: 60000 });
-  const scanStatusQuery = useQuery({ queryKey: ["scanStatus"], queryFn: api.scanStatus, refetchInterval: 10000, enabled: scanState.scanning || Boolean(sessionQuery.data?.scanRunning) });
   const scanning = scanState.scanning || Boolean(sessionQuery.data?.scanRunning);
-  const activeCandidates = scanStatusQuery.data?.offhours?.activeCandidates || [];
+  const scanLogs = useStore((s) => s.scanLogs);
 
   const watchlistItems = useMemo(() => {
     if (scanning) {
-      return activeCandidates.map((log: any) => ({
+      return scanLogs.map((log) => ({
         symbol: log.symbol,
         name: log.symbol,
         category: "SCANNED",
-        condition: log.reason || "Live Scan Candidate",
+        condition: log.reason || log.status || "Live Scan Candidate",
         priority: 10,
       }));
     }
@@ -63,7 +64,7 @@ export default function Dashboard() {
       const bActive = activeSymbols.has(b.symbol) ? 1 : 0;
       return bActive - aActive;
     });
-  }, [watchlistQuery.data, scanning, activeCandidates, suggestionsQuery.data]);
+  }, [watchlistQuery.data, scanning, scanLogs, suggestionsQuery.data]);
 
   const watchlistSymbols = useMemo(() => {
     return watchlistItems.map(r => r.symbol);
@@ -96,6 +97,12 @@ export default function Dashboard() {
     }
   }, [watchlistItems, selectedSymbol, setSelectedSymbol]);
 
+  useEffect(() => {
+    if (wsConnected && watchlistSymbols.length > 0) {
+      subscribeWsSymbols(watchlistSymbols);
+    }
+  }, [watchlistSymbols, wsConnected]);
+
   // Clear stale selection if watchlist is empty, allowing indices to persist
   useEffect(() => {
     if (watchlistItems.length === 0 && selectedSymbol && !isIndex && !watchlistQuery.isPending) {
@@ -124,7 +131,7 @@ export default function Dashboard() {
     document.getElementsByTagName('head')[0].appendChild(link);
   }, [session]);
 
-  const setLatestAlert = useStore((s) => s.setLatestAlert);
+  const showIsland = useStore((s) => s.showIsland);
 
   // Global Keyboard Navigation
   useHotkeys("p", (e) => {
@@ -132,10 +139,13 @@ export default function Dashboard() {
     startTransition(() => setIsSuggestionsOpen(prev => !prev));
   }, { preventDefault: true });
 
+  const commandPaletteOpen = useStore((s) => s.commandPaletteOpen);
+
   useHotkeys(["up", "down", "left", "right"], (e) => {
+    if (commandPaletteOpen) return;
     e.preventDefault();
     if (watchlistItems.length === 0) return;
-    const currentIndex = watchlistItems.findIndex((item: any) => item.symbol === activeSymbol);
+    const currentIndex = watchlistItems.findIndex((item) => item.symbol === activeSymbol);
     
     let newIndex: number;
     if (e.key === "ArrowDown") {
@@ -150,7 +160,7 @@ export default function Dashboard() {
     
     const newSymbol = watchlistItems[newIndex]?.symbol;
     if (newSymbol) startTransition(() => setSelectedSymbol(newSymbol));
-  }, [watchlistItems, activeSymbol, setSelectedSymbol]);
+  }, [watchlistItems, activeSymbol, setSelectedSymbol, commandPaletteOpen]);
 
   // Token Expiry Alert Logic
   useEffect(() => {
@@ -159,15 +169,11 @@ export default function Dashboard() {
       const fifteenMins = 15 * 60 * 1000;
       if (msLeft > 0 && msLeft < fifteenMins) {
         const mins = Math.ceil(msLeft / 60000);
-        setLatestAlert(`⚠️ Upstox session expires in ${mins} minutes. Re-authorize soon!`);
+        showIsland({ isNotification: true, title: "Upstox Session Expiring", subtitle: `⚠️ Upstox session expires in ${mins} minutes. Re-authorize soon!`, showSuccessOnly: false });
       }
     }
-  }, [status?.upstoxTokenExpiry, setLatestAlert]);
+  }, [status?.upstoxTokenExpiry, showIsland]);
 
-
-
-
-  const showIsland = useStore((s) => s.showIsland);
 
   // Trigger success tick if we just returned from Upstox auth
   useEffect(() => {
@@ -182,32 +188,28 @@ export default function Dashboard() {
     }
   }, [status?.upstoxAuthenticated, showIsland]);
 
-  const authorizeUpstox = () => {
-    showIsland({
-      title: "Authorize Upstox",
-      subtitle: "Redirecting to Upstox login to grant access to trading capabilities and market data.",
-      icon: <Key className="w-8 h-8 text-destructive" />,
-      confirmText: "Authorize",
-      cancelText: "Cancel",
-      isDestructive: true,
-      onConfirm: async () => {
-        setAuthorizing(true);
-        setAuthError(null);
-        try {
-          const data = await api.authUrl();
-          if (data.alreadyAuthenticated) return true;
-          if (!data.url) throw new Error(data.error || "Authorization URL unavailable");
-          
-          localStorage.setItem("upstox_auth_pending", "true");
-          window.location.assign(data.url);
-          return false; // Prevent success tick, keep loader spinning until page unloads
-        } catch (error) {
-          setAuthError(error instanceof Error ? error.message : "Authorization failed");
-          setAuthorizing(false);
-          throw error; 
-        }
-      },
-    });
+  const authorizeUpstox = async () => {
+    setAuthorizing(true);
+    setAuthError(null);
+    try {
+      const data = await api.authUrl();
+      if (data.alreadyAuthenticated) {
+        setAuthorizing(false);
+        showIsland({
+          title: "",
+          subtitle: "",
+          showSuccessOnly: true,
+        });
+        return;
+      }
+      if (!data.url) throw new Error(data.error || "Authorization URL unavailable");
+      
+      localStorage.setItem("upstox_auth_pending", "true");
+      window.location.assign(data.url);
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Authorization failed");
+      setAuthorizing(false);
+    }
   };
 
   const apiError = authError || sessionQuery.error?.message || watchlistQuery.error?.message || null;
@@ -224,7 +226,6 @@ export default function Dashboard() {
         >
           <TopBar
           indices={indices}
-          session={session}
           status={status}
           wsConnected={wsConnected}
           onAuthorize={authorizeUpstox}
@@ -235,7 +236,7 @@ export default function Dashboard() {
           scanProgress={scanning && scanState.total > 0 ? (scanState.current / scanState.total) * 100 : 0}
           onOpenSuggestions={() => startTransition(() => setIsSuggestionsOpen(true))}
           onOpenPaperTrading={() => startTransition(() => setIsPaperTradingOpen(true))}
-          onSelectSymbol={(s) => startTransition(() => setSelectedSymbol(s))}
+          onSelectSymbol={(s: string) => startTransition(() => setSelectedSymbol(s))}
         />
         </motion.div>
 
@@ -269,25 +270,59 @@ export default function Dashboard() {
                       onChartModeChange={(m) => startTransition(() => setChartMode(m))} 
                       isMarketOpen={session?.isMarketOpen} 
                       suggestion={suggestions.find(s => s.symbol === activeSymbol)} 
-                      position={positions.find((p: any) => p.symbol === activeSymbol && p.status === "OPEN")}
+                      position={positions.find((p: import("@/types/api").PaperPosition) => p.symbol === activeSymbol && p.status === "OPEN")}
                       isAuthenticated={status?.upstoxAuthenticated}
                     />
                   </motion.div>
                 
                   <motion.div 
-                    className="flex-[40] w-full min-h-0 min-w-0 pt-2"
+                    className="flex-[40] w-full min-h-0 min-w-0 pt-2 flex flex-col"
                     initial={{ opacity: 0, y: 30, scale: 0.97, filter: "blur(10px)" }}
                     animate={{ opacity: 1, y: 0, scale: 1, filter: "blur(0px)" }}
                     transition={{ type: "spring", stiffness: 300, damping: 30, mass: 0.9, delay: 0.18 }}
                   >
-                    <WatchlistStack 
-                      items={watchlistItems} 
-                      monitored={monitoring?.monitoredStocks} 
-                      suggestions={suggestions} 
-                      selectedSymbol={activeSymbol} 
-                      sparklines={sparklinesQuery.data}
-                      onSelect={(s) => startTransition(() => setSelectedSymbol(s))} 
-                    />
+                    <div className="flex items-center justify-start mb-2 shrink-0">
+                      <div className="flex items-center p-0.5 bg-foreground/5 rounded-full relative">
+                        <button
+                          type="button"
+                          onClick={() => setSidebarTab("watchlist")}
+                          className={cn("relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors", sidebarTab === "watchlist" ? "text-background" : "text-muted-foreground hover:text-foreground")}
+                        >
+                          {sidebarTab === "watchlist" && (
+                            <motion.div layoutId="desktopTabIndicator" className="absolute inset-0 bg-foreground rounded-full" transition={{ type: "spring", bounce: 0.2, duration: 0.6 }} />
+                          )}
+                          <span className="relative z-10">Watchlist</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSidebarTab("screener")}
+                          className={cn("relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors", sidebarTab === "screener" ? "text-background" : "text-muted-foreground hover:text-foreground")}
+                        >
+                          {sidebarTab === "screener" && (
+                            <motion.div layoutId="desktopTabIndicator" className="absolute inset-0 bg-foreground rounded-full" transition={{ type: "spring", bounce: 0.2, duration: 0.6 }} />
+                          )}
+                          <span className="relative z-10">Screener</span>
+                        </button>
+                      </div>
+                    </div>
+                    <div className="flex-1 min-h-0 relative">
+                      {sidebarTab === "watchlist" ? (
+                        <WatchlistStack 
+                          items={watchlistItems} 
+                          monitored={monitoring?.monitoredStocks} 
+                          suggestions={suggestions} 
+                          selectedSymbol={activeSymbol} 
+                          sparklines={sparklinesQuery.data}
+                          onSelect={(s) => startTransition(() => setSelectedSymbol(s))} 
+                        />
+                      ) : (
+                        <ScreenerTargetsStack 
+                          selectedSymbol={activeSymbol} 
+                          sparklines={sparklinesQuery.data} 
+                          onSelect={(s) => startTransition(() => setSelectedSymbol(s))} 
+                        />
+                      )}
+                    </div>
                   </motion.div>
             </div>
 
@@ -317,12 +352,42 @@ export default function Dashboard() {
                 onChartModeChange={(m) => startTransition(() => setChartMode(m))} 
                 isMarketOpen={session?.isMarketOpen} 
                 suggestion={suggestions.find(s => s.symbol === activeSymbol)} 
-                position={positions.find((p: any) => p.symbol === activeSymbol && p.status === "OPEN")}
+                position={positions.find((p: import("@/types/api").PaperPosition) => p.symbol === activeSymbol && p.status === "OPEN")}
                 isAuthenticated={status?.upstoxAuthenticated} 
               />
             </div>
-            <div className="h-[400px]">
-              <WatchlistStack items={watchlistItems} monitored={monitoring?.monitoredStocks} suggestions={suggestions} selectedSymbol={activeSymbol} sparklines={sparklinesQuery.data} onSelect={(s) => startTransition(() => setSelectedSymbol(s))} />
+            <div className="h-[400px] flex flex-col">
+              <div className="flex items-center justify-start mb-2 shrink-0 mx-2">
+                <div className="flex items-center p-0.5 bg-foreground/5 rounded-full relative">
+                  <button
+                    type="button"
+                    onClick={() => setSidebarTab("watchlist")}
+                    className={cn("relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors", sidebarTab === "watchlist" ? "text-background" : "text-muted-foreground hover:text-foreground")}
+                  >
+                    {sidebarTab === "watchlist" && (
+                      <motion.div layoutId="mobileTabIndicator" className="absolute inset-0 bg-foreground rounded-full" transition={{ type: "spring", bounce: 0.2, duration: 0.6 }} />
+                    )}
+                    <span className="relative z-10">Watchlist</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSidebarTab("screener")}
+                    className={cn("relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors", sidebarTab === "screener" ? "text-background" : "text-muted-foreground hover:text-foreground")}
+                  >
+                    {sidebarTab === "screener" && (
+                      <motion.div layoutId="mobileTabIndicator" className="absolute inset-0 bg-foreground rounded-full" transition={{ type: "spring", bounce: 0.2, duration: 0.6 }} />
+                    )}
+                    <span className="relative z-10">Screener</span>
+                  </button>
+                </div>
+              </div>
+              <div className="flex-1 min-h-0 relative">
+                {sidebarTab === "watchlist" ? (
+                  <WatchlistStack items={watchlistItems} monitored={monitoring?.monitoredStocks} suggestions={suggestions} selectedSymbol={activeSymbol} sparklines={sparklinesQuery.data} onSelect={(s) => startTransition(() => setSelectedSymbol(s))} />
+                ) : (
+                  <ScreenerTargetsStack selectedSymbol={activeSymbol} sparklines={sparklinesQuery.data} onSelect={(s) => startTransition(() => setSelectedSymbol(s))} />
+                )}
+              </div>
             </div>
             <div className="h-[400px]">
               <DetailPanel suggestions={suggestions} selectedSymbol={activeSymbol} session={session} />

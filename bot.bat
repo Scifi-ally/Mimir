@@ -28,24 +28,27 @@ set "PROJECT_DIR=%CD%"
 popd
 
 if not exist "%PROJECT_DIR%\.codex-logs" mkdir "%PROJECT_DIR%\.codex-logs" >nul 2>&1
+if exist "%PROJECT_DIR%\.codex-logs\menu_top.txt" del /f /q "%PROJECT_DIR%\.codex-logs\menu_top.txt" >nul 2>&1
 
 set "ACTION=%~1"
 if /i "%ACTION%"=="start" goto start
 if /i "%ACTION%"=="stop" goto stop
 if /i "%ACTION%"=="status" goto status
 if /i "%ACTION%"=="restart" goto restart
-if "%ACTION%"=="" goto toggle
+if /i "%ACTION%"=="tunnel" goto tunnel
+if /i "%ACTION%"=="tunnel-stop" goto tunnel_stop
+if "%ACTION%"=="" goto menu
 
-echo !C_CYAN!Usage: bot [start^|stop^|status^|restart]!C_RESET!
+echo !C_CYAN!Usage: bot [start^|stop^|status^|restart^|tunnel ^<port^>^|tunnel-stop]!C_RESET!
 exit /b 1
 
 :print_banner
 echo.
 echo.
-echo  !C_PURPLE! \\    // !C_RESET!
-echo  !C_BLUE!  \\  //  !C_RESET!  !C_WHITE!!C_BOLD!UPSTOX TRADING BOT!C_RESET!
-echo  !C_CYAN!   \\//   !C_RESET!  !C_GRAY!Intelligent Market Analysis Engine!C_RESET!
-echo  !C_CYAN!    \/    !C_RESET!  !C_DIM!!C_GRAY!v2.0!C_RESET!
+echo  !C_PURPLE! /\    /\ !C_RESET!
+echo  !C_BLUE! //\  /\\ !C_RESET!  !C_WHITE!!C_BOLD!MIMIR!C_RESET!
+echo  !C_CYAN! // \/ \\ !C_RESET!  !C_GRAY!Intelligent Market Analysis Engine!C_RESET!
+echo  !C_CYAN! //    \\ !C_RESET!  !C_DIM!!C_GRAY!v2.0!C_RESET!
 echo.
 exit /b 0
 
@@ -121,8 +124,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%scripts\run-det
 echo !C_GRAY!    +-- !C_DIM!Starting frontend...!C_RESET!
 powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%scripts\run-detached.ps1" -FilePath "!NODE_CMD!" -ArgumentList "%PROJECT_DIR%\node_modules\vite\bin\vite.js preview" -WorkingDirectory "%PROJECT_DIR%\frontend" -PidFile "!FRONTEND_PID_FILE!" -LogOut "!FRONTEND_PID_FILE!.out.log" -LogErr "!FRONTEND_PID_FILE!.err.log"
 
-:: Start Tailscale Funnel in the background completely detached
-powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%scripts\run-detached.ps1" -FilePath "C:\Program Files\Tailscale\tailscale.exe" -ArgumentList "funnel 3000" -WorkingDirectory "%PROJECT_DIR%" -PidFile "%SCRIPT_DIR%.codex-logs\trade.tailscale.pid" -LogOut "%SCRIPT_DIR%.codex-logs\trade.tailscale.out.log" -LogErr "%SCRIPT_DIR%.codex-logs\trade.tailscale.err.log"
+:: Start Cloudflare Tunnel in the background (generates a fresh random URL)
+set "CF_CMD=%PROJECT_DIR%\.portable\cloudflared.exe"
+if exist "!CF_CMD!" (
+    echo !C_GRAY!    +-- !C_DIM!Starting Cloudflare tunnel...!C_RESET!
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%scripts\run-detached.ps1" -FilePath "!CF_CMD!" -ArgumentList "tunnel --url http://localhost:3000" -WorkingDirectory "%PROJECT_DIR%" -PidFile "%SCRIPT_DIR%.codex-logs\trade.tunnel.pid" -LogOut "%SCRIPT_DIR%.codex-logs\trade.tunnel.out.log" -LogErr "%SCRIPT_DIR%.codex-logs\trade.tunnel.err.log"
+)
 
 :: Wait for ports to become active to verify launch success
 set "BACKEND_OK=0"
@@ -157,15 +164,64 @@ if "%BACKEND_OK%"=="0" (
     echo !C_GREEN!  [OK] !C_WHITE!Frontend!C_RESET!!C_GRAY!            http://localhost:3000!C_RESET!
 )
 
-for /f "delims=" %%a in ('powershell -NoProfile -Command "((& 'C:\Program Files\Tailscale\tailscale.exe' status --json 2>$null) | ConvertFrom-Json).Self.DNSName.TrimEnd('.')" 2^>nul') do set "TS_DNS=%%a"
+:: Extract cloudflared tunnel URL from stderr log (it prints there)
+set "CF_URL="
+for /l %%i in (1,1,15) do (
+    if "!CF_URL!"=="" (
+        for /f "tokens=*" %%a in ('powershell -NoProfile -Command "if (Test-Path '%SCRIPT_DIR%.codex-logs\trade.tunnel.err.log') { (Get-Content '%SCRIPT_DIR%.codex-logs\trade.tunnel.err.log' -ErrorAction SilentlyContinue | Select-String 'https://\S+trycloudflare\.com' | Select-Object -First 1).Matches[0].Value }" 2^>nul') do set "CF_URL=%%a"
+        if "!CF_URL!"=="" ping -n 2 127.0.0.1 >nul
+    )
+)
 
-if not "!TS_DNS!"=="" (
-    echo !C_PURPLE!  [OK] !C_WHITE!Public Web!C_RESET!!C_GRAY!          https://!TS_DNS!!C_RESET!
+if not "!CF_URL!"=="" (
+    echo !C_PURPLE!  [OK] !C_WHITE!Public Web!C_RESET!!C_GRAY!          !CF_URL!!C_RESET!
 )
 
 echo.
 echo !C_GRAY!  --------------------------------------!C_RESET!
-echo !C_DIM!!C_GRAY!  Use !C_WHITE!bot stop!C_GRAY! to shut down!C_RESET!
+echo !C_DIM!!C_GRAY!  !C_WHITE!bot stop!C_GRAY! shut down  !C_WHITE!bot tunnel!C_GRAY! new link  !C_WHITE!bot tunnel-stop!C_GRAY! kill tunnel!C_RESET!
+goto :eof
+
+:tunnel
+set "TUNNEL_PORT=%~2"
+if "%TUNNEL_PORT%"=="" set "TUNNEL_PORT=3000"
+set "CF_CMD=%PROJECT_DIR%\.portable\cloudflared.exe"
+if not exist "!CF_CMD!" (
+    echo !C_RED!  [X] cloudflared not found at .portable\cloudflared.exe!C_RESET!
+    goto :eof
+)
+echo !C_YELLOW!  ^> Generating new tunnel link on port %TUNNEL_PORT%...!C_RESET!
+:: Kill existing tunnel
+call :killPidFromFile "%SCRIPT_DIR%.codex-logs\trade.tunnel.pid" "Cloudflare Tunnel"
+taskkill /im cloudflared.exe /f >nul 2>&1
+if exist "%SCRIPT_DIR%.codex-logs\trade.tunnel.err.log" del /f /q "%SCRIPT_DIR%.codex-logs\trade.tunnel.err.log" >nul 2>&1
+ping -n 2 127.0.0.1 >nul
+:: Start new tunnel
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%scripts\run-detached.ps1" -FilePath "!CF_CMD!" -ArgumentList "tunnel --url http://localhost:%TUNNEL_PORT%" -WorkingDirectory "%PROJECT_DIR%" -PidFile "%SCRIPT_DIR%.codex-logs\trade.tunnel.pid" -LogOut "%SCRIPT_DIR%.codex-logs\trade.tunnel.out.log" -LogErr "%SCRIPT_DIR%.codex-logs\trade.tunnel.err.log"
+:: Wait for URL to appear in logs
+set "CF_URL="
+for /l %%i in (1,1,20) do (
+    if "!CF_URL!"=="" (
+        for /f "tokens=*" %%a in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "if (Test-Path '%SCRIPT_DIR%.codex-logs\trade.tunnel.err.log') { (Get-Content '%SCRIPT_DIR%.codex-logs\trade.tunnel.err.log' -ErrorAction SilentlyContinue | Select-String 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' | Select-Object -First 1).Matches[0].Value }" 2^>nul') do set "CF_URL=%%a"
+        if "!CF_URL!"=="" ping -n 2 127.0.0.1 >nul
+    )
+)
+if not "!CF_URL!"=="" (
+    echo !C_GREEN!  [OK] !C_WHITE!New Tunnel!C_RESET!!C_GRAY!           !CF_URL! -> localhost:%TUNNEL_PORT%!C_RESET!
+) else (
+    echo !C_RED!  [X] Tunnel failed — check .codex-logs\trade.tunnel.err.log!C_RESET!
+)
+goto :eof
+
+:tunnel_stop
+echo !C_YELLOW!  ^> Stopping tunnel...!C_RESET!
+call :killPidFromFile "%SCRIPT_DIR%.codex-logs\trade.tunnel.pid" "Cloudflare Tunnel"
+taskkill /im cloudflared.exe /f >nul 2>&1
+if exist "C:\Program Files\Tailscale\tailscale.exe" (
+    "C:\Program Files\Tailscale\tailscale.exe" funnel reset >nul 2>&1
+    "C:\Program Files\Tailscale\tailscale.exe" serve reset >nul 2>&1
+)
+echo !C_GREEN!  [OK] Tunnel stopped.!C_RESET!
 goto :eof
 
 :restart
@@ -204,9 +260,10 @@ if exist "%PROJECT_DIR%\.portable\pgsql\bin\pg_ctl.exe" (
     "%PROJECT_DIR%\.portable\pgsql\bin\pg_ctl.exe" stop -D "%PROJECT_DIR%\.portable\pgsql\data" >nul 2>&1
 )
 
-:: Kill Tailscale funnel
-call :killPidFromFile "%SCRIPT_DIR%.codex-logs\trade.tailscale.pid" "Tailscale Funnel"
-taskkill /fi "windowtitle eq Tailscale Funnel*" >nul 2>&1
+:: Kill Cloudflare tunnel
+call :killPidFromFile "%SCRIPT_DIR%.codex-logs\trade.tunnel.pid" "Cloudflare Tunnel"
+taskkill /im cloudflared.exe /f >nul 2>&1
+if exist "C:\Program Files\Tailscale\tailscale.exe" "C:\Program Files\Tailscale\tailscale.exe" serve reset >nul 2>&1
 :: Terminate any remaining zombie node/python processes from the project
 call node "%SCRIPT_DIR%scripts\kill-zombies.mjs" >nul 2>&1
 
@@ -301,3 +358,43 @@ for /l %%i in (1,1,30) do (
     ping -n 2 127.0.0.1 >nul
 )
 exit /b 0
+
+:menu
+call :isRunning
+echo.
+echo !C_GRAY!  ======================================!C_RESET!
+if "%RUNNING%"=="1" (
+    echo     !C_GREEN!Status: [RUNNING]!C_RESET! Bot is active.
+) else (
+    echo     !C_RED!Status: [STOPPED]!C_RESET! Bot is not running.
+)
+echo !C_GRAY!  ======================================!C_RESET!
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%scripts\menu.ps1" -Running "!BOT_RUNNING!"
+set "MENU_OPT=!errorlevel!"
+
+if "!MENU_OPT!"=="0" goto :eof
+if "!MENU_OPT!"=="6" (
+    call :tunnel_stop
+    goto menu
+)
+if "!MENU_OPT!"=="5" (
+    call :tunnel
+    goto menu
+)
+if "!MENU_OPT!"=="4" (
+    call :status
+    goto menu
+)
+if "!MENU_OPT!"=="3" (
+    call :restart
+    goto menu
+)
+if "!MENU_OPT!"=="2" (
+    call :stop
+    goto menu
+)
+if "!MENU_OPT!"=="1" (
+    call :start
+    goto menu
+)
+goto menu

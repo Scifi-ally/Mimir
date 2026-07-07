@@ -1,0 +1,124 @@
+name: Mimir System Health Check
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  schedule:
+    - cron: '0 0 * * *' # Run daily at midnight UTC
+
+jobs:
+  test-suite:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: mimir
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgres://postgres:password@localhost:5432/mimir
+      REDIS_URL: redis://localhost:6379
+      NODE_ENV: test
+      UPSTOXBOT_ADMIN_TOKEN: ci-admin-token
+      PORT: 5000
+      API_URL: http://localhost:5000
+      UPSTOX_API_KEY: ci_stub_key
+      UPSTOX_API_SECRET: ci_stub_secret
+      # Creating a fake JWT for the preflight check so it doesn't fail expiration checks
+      UPSTOX_ACCESS_TOKEN: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjI1MzQwMjMwMDB9.invalid_signature
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install Backend Dependencies
+        working-directory: ./backend
+        run: npm ci
+
+      - name: Install Frontend Dependencies
+        working-directory: ./frontend
+        run: npm ci
+
+      - name: Install Playwright Browsers
+        working-directory: ./frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Apply DB Migrations
+        working-directory: ./backend
+        run: npm run db:push
+
+      - name: Mock AI Service & Upstox Profile
+        # We start a small express server to stub AI and Upstox for the preflight checks
+        run: |
+          cat << 'EOF' > mock-services.js
+          const express = require('express');
+          const app = express();
+          
+          app.get('/health', (req, res) => res.json({ status: 'ready', model_loaded: true }));
+          app.listen(8001, () => console.log('Mock AI Service on 8001'));
+          
+          const upstox = express();
+          upstox.get('/v2/user/profile', (req, res) => res.json({ data: { user_id: 'CI_USER' } }));
+          upstox.listen(8002, () => console.log('Mock Upstox on 8002'));
+          EOF
+          npm i express
+          node mock-services.js &
+          echo "AI_SERVICE_URL=http://localhost:8001" >> $GITHUB_ENV
+          
+      - name: Start Backend Server
+        working-directory: ./backend
+        run: npm run dev &
+        
+      - name: Wait for Backend Server
+        run: |
+          echo "Waiting for backend on port 5000..."
+          timeout 30s bash -c 'until curl -s http://localhost:5000/health; do sleep 1; done'
+
+      - name: Run Preflight Check
+        working-directory: ./backend
+        run: npm run test:preflight
+
+      - name: Run Backend Tests
+        working-directory: ./backend
+        run: npm run test:all
+
+      - name: Start Frontend Server
+        working-directory: ./frontend
+        run: npm run dev &
+
+      - name: Wait for Frontend Server
+        run: |
+          echo "Waiting for frontend on port 3000..."
+          timeout 30s bash -c 'until curl -s http://localhost:3000; do sleep 1; done'
+
+      - name: Run Playwright UI & E2E Tests
+        working-directory: ./frontend
+        run: npm run test:all

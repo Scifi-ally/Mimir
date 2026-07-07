@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo, useId } from "react";
 import { motion } from "framer-motion";
 import {
   CandlestickSeries,
@@ -10,17 +10,16 @@ import {
   type IChartApi,
   type ISeriesApi,
 } from "lightweight-charts";
-import { useQuery, keepPreviousData } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { cn, fmtNum, fmtPct } from "@/lib/format";
 import { Card, CardHeader, CardContent } from "@/components/mimir/card";
-import { LivePrice } from "@/components/atoms/LivePrice";
-import { LiveChangePct } from "@/components/atoms/LiveChangePct";
 import { api } from "@/lib/api";
+import { marketDataStore } from "@/providers/MarketDataProvider";
 import type { Candle, SymbolForecast, Suggestion } from "@/types/api";
 
 const TIMEFRAMES = [
   { label: "1D", days: 5, interval: "1minute" }, // 5 days to ensure we hit a trading session even on long weekends
-  { label: "1W", days: 7, interval: "30minute" },
+  { label: "1W", days: 7, interval: "15minute" },
   { label: "1M", days: 30, interval: "60minute" },
   { label: "1Y", days: 365, interval: "day" },
 ] as const;
@@ -33,7 +32,7 @@ interface PriceChartProps {
   onChartModeChange: (mode: "actual" | "forecast") => void;
   isMarketOpen?: boolean;
   suggestion?: Suggestion | null;
-  position?: any;
+  position?: import("@/types/api").PaperPosition | null;
   isAuthenticated?: boolean;
 }
 
@@ -41,7 +40,8 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
   const [timeframe, setTimeframe] = useState<(typeof TIMEFRAMES)[number]>(TIMEFRAMES[0]); // Default to 1D
   const [showEma, setShowEma] = useState(true);
   const [showVwap, setShowVwap] = useState(true);
-  const [crosshairData, setCrosshairData] = useState<{open:number, high:number, low:number, close:number, volume:number} | null>(null);
+  const legendRef = useRef<HTMLDivElement>(null);
+  const chartId = useId();
 
   const activeTf = chartMode === "forecast" ? PROJECTION_LOOKBACK : timeframe;
   const currentChartKey = `${symbol}-${activeTf.label}-${chartMode}`;
@@ -53,7 +53,6 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
     staleTime: 60000 * 5, // 5 minutes
     gcTime: 60000 * 15, // 15 minutes
     refetchInterval: 60000, // 1 minute
-    placeholderData: keepPreviousData as any,
   });
 
   const { data: forecastData } = useQuery<SymbolForecast>({
@@ -61,10 +60,9 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
     queryFn: () => api.forecast(symbol),
     enabled: Boolean(symbol),
     refetchInterval: 10000,
-    placeholderData: keepPreviousData as any,
   });
 
-  const candles = candleData?.candles ?? [];
+  const candles = useMemo(() => candleData?.candles ?? [], [candleData?.candles]);
   const forecast = forecastData?.available ? forecastData : null;
   const loading = isCandlesLoading;
   const error = isCandlesError ? "Unavailable" : null;
@@ -88,13 +86,15 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
   const volumeRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const lastFitKey = useRef<string>("");
 
-  const entryLineRef = useRef<any>(null);
-  const stopLineRef = useRef<any>(null);
-  const targetLineRef = useRef<any>(null);
+  const entryLineRef = useRef<import("lightweight-charts").IPriceLine | null>(null);
+  const stopLineRef = useRef<import("lightweight-charts").IPriceLine | null>(null);
+  const targetLineRef = useRef<import("lightweight-charts").IPriceLine | null>(null);
 
-  const posEntryLineRef = useRef<any>(null);
-  const posStopLineRef = useRef<any>(null);
-  const posTargetLineRef = useRef<any>(null);
+  const posEntryLineRef = useRef<import("lightweight-charts").IPriceLine | null>(null);
+  const posStopLineRef = useRef<import("lightweight-charts").IPriceLine | null>(null);
+  const posTargetLineRef = useRef<import("lightweight-charts").IPriceLine | null>(null);
+  const aiTargetLineRef = useRef<import("lightweight-charts").IPriceLine | null>(null);
+  const liveBarRef = useRef<{ time: Time; open: number; high: number; low: number; close: number } | null>(null);
 
 
   // displayPrice and changePct removed to use LivePrice and LiveChangePct
@@ -118,14 +118,19 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
         attributionLogo: false,
       },
       grid: { vertLines: { visible: false }, horzLines: { visible: false } },
-      rightPriceScale: { borderVisible: false },
+      rightPriceScale: { 
+        borderVisible: false,
+        autoScale: true,
+        scaleMargins: {
+          top: 0.1,
+          bottom: 0.2,
+        },
+      },
       leftPriceScale: { visible: false, borderVisible: false },
       timeScale: { 
         borderVisible: false, 
         timeVisible: true, 
         secondsVisible: false,
-        fixRightEdge: false,
-        rightOffset: 10,
         shiftVisibleRangeOnNewBar: true,
       },
       crosshair: {
@@ -149,6 +154,7 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
       priceLineVisible: false,
       lastValueVisible: false,
       visible: false,
+      autoscaleInfoProvider: () => null,
     });
     lowerRef.current = chart.addSeries(LineSeries, {
       color: isLightInitial ? "rgba(0, 0, 0, 0.25)" : "rgba(255, 255, 255, 0.25)",
@@ -157,6 +163,7 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
       priceLineVisible: false,
       lastValueVisible: false,
       visible: false,
+      autoscaleInfoProvider: () => null,
     });
     upper90Ref.current = chart.addSeries(LineSeries, {
       color: isLightInitial ? "rgba(0, 0, 0, 0.1)" : "rgba(255, 255, 255, 0.1)",
@@ -165,6 +172,7 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
       priceLineVisible: false,
       lastValueVisible: false,
       visible: false,
+      autoscaleInfoProvider: () => null,
     });
     lower10Ref.current = chart.addSeries(LineSeries, {
       color: isLightInitial ? "rgba(0, 0, 0, 0.1)" : "rgba(255, 255, 255, 0.1)",
@@ -173,6 +181,7 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
       priceLineVisible: false,
       lastValueVisible: false,
       visible: false,
+      autoscaleInfoProvider: () => null,
     });
     medianRef.current = chart.addSeries(LineSeries, {
       color: isLightInitial ? "rgba(0, 0, 0, 0.9)" : "rgba(255, 255, 255, 0.9)",
@@ -180,18 +189,21 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
       priceLineVisible: false,
       lastValueVisible: false,
       visible: false,
+      autoscaleInfoProvider: () => null,
     });
     emaRef.current = chart.addSeries(LineSeries, {
       color: "rgba(250, 204, 21, 0.5)", // muted yellow for visibility
       lineWidth: 1,
       priceLineVisible: false,
       lastValueVisible: false,
+      autoscaleInfoProvider: () => null,
     });
     vwapRef.current = chart.addSeries(LineSeries, {
       color: "rgba(59, 130, 246, 0.7)", // blue for VWAP
       lineWidth: 1,
       priceLineVisible: false,
       lastValueVisible: false,
+      autoscaleInfoProvider: () => null,
     });
     volumeRef.current = chart.addSeries(HistogramSeries, {
       priceFormat: { type: "volume" },
@@ -210,31 +222,36 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
     chartRef.current = chart;
 
     chart.subscribeCrosshairMove((param) => {
+      if (!legendRef.current) return;
       if (
         param.point === undefined ||
         !param.time ||
         param.point.x < 0 ||
         param.point.x > containerRef.current!.clientWidth ||
         param.point.y < 0 ||
-        param.point.y > containerRef.current!.clientHeight
+        param.point.y > containerRef.current!.clientHeight ||
+        !candleRef.current
       ) {
-        setCrosshairData(null);
+        legendRef.current.style.display = 'none';
         return;
       }
 
-      const data = param.seriesData.get(candleRef.current!);
-      const volData = param.seriesData.get(volumeRef.current!);
-      if (data) {
-        setCrosshairData({
-          open: (data as any).open,
-          high: (data as any).high,
-          low: (data as any).low,
-          close: (data as any).close,
-          volume: volData ? (volData as any).value : 0,
-        });
-      } else {
-        setCrosshairData(null);
+      const data = param.seriesData.get(candleRef.current) as any;
+      if (!data) {
+        legendRef.current.style.display = 'none';
+        return;
       }
+
+      const volData = volumeRef.current ? param.seriesData.get(volumeRef.current) as any : null;
+
+      legendRef.current.style.display = 'flex';
+      legendRef.current.innerHTML = `
+        <span class="text-foreground"><span class="text-muted-foreground mr-1">O</span>${fmtNum(data.open)}</span>
+        <span class="text-foreground"><span class="text-muted-foreground mr-1">H</span>${fmtNum(data.high)}</span>
+        <span class="text-foreground"><span class="text-muted-foreground mr-1">L</span>${fmtNum(data.low)}</span>
+        <span class="text-foreground"><span class="text-muted-foreground mr-1">C</span>${fmtNum(data.close)}</span>
+        <span class="text-foreground ml-2"><span class="text-muted-foreground mr-1">Vol</span>${fmtNum(volData ? volData.value : 0)}</span>
+      `;
     });
 
     return () => {
@@ -276,15 +293,17 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
     if (!candleRef.current || !medianRef.current || !upperRef.current || !lowerRef.current || !upper90Ref.current || !lower10Ref.current || !emaRef.current || !vwapRef.current || !volumeRef.current) return;
 
     // Sanitize candles to ensure strictly increasing time
+    const sortedCandles = [...candles].sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
     const uniqueLiveCandles = [];
     let lastTime = 0;
-    for (const c of candles) {
+    for (const c of sortedCandles) {
       const time = Math.floor(Date.parse(c.ts) / 1000);
-      if (time > lastTime) {
+      if (time > lastTime && Number.isFinite(c.close) && c.close > 0 && Number.isFinite(c.open) && c.open > 0) {
         uniqueLiveCandles.push({ ...c, parsedTime: time as Time });
         lastTime = time;
       }
     }
+    liveBarRef.current = null;
 
     const formatted = uniqueLiveCandles.map((c) => {
       const open = Number.isFinite(c.open) ? c.open : Number.isFinite(c.close) ? c.close : 0;
@@ -345,15 +364,23 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
       lower10Ref.current.setData([]);
     }
     
-    // Suggestion price lines
+    // Clean up all existing price lines
     if (entryLineRef.current) candleRef.current.removePriceLine(entryLineRef.current);
     if (stopLineRef.current) candleRef.current.removePriceLine(stopLineRef.current);
     if (targetLineRef.current) candleRef.current.removePriceLine(targetLineRef.current);
+    if (posEntryLineRef.current) candleRef.current.removePriceLine(posEntryLineRef.current);
+    if (posStopLineRef.current) candleRef.current.removePriceLine(posStopLineRef.current);
+    if (posTargetLineRef.current) candleRef.current.removePriceLine(posTargetLineRef.current);
+    if (aiTargetLineRef.current) candleRef.current.removePriceLine(aiTargetLineRef.current);
     entryLineRef.current = null;
     stopLineRef.current = null;
     targetLineRef.current = null;
+    posEntryLineRef.current = null;
+    posStopLineRef.current = null;
+    posTargetLineRef.current = null;
+    aiTargetLineRef.current = null;
 
-    if (suggestion) {
+    if (candles.length > 0 && suggestion) {
       entryLineRef.current = candleRef.current.createPriceLine({
         price: suggestion.entryPrice,
         color: '#3b82f6',
@@ -380,17 +407,9 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
       });
     }
 
-    // Position price lines
-    if (posEntryLineRef.current) candleRef.current.removePriceLine(posEntryLineRef.current);
-    if (posStopLineRef.current) candleRef.current.removePriceLine(posStopLineRef.current);
-    if (posTargetLineRef.current) candleRef.current.removePriceLine(posTargetLineRef.current);
-    posEntryLineRef.current = null;
-    posStopLineRef.current = null;
-    posTargetLineRef.current = null;
-
-    if (position) {
+    if (candles.length > 0 && position) {
       posEntryLineRef.current = candleRef.current.createPriceLine({
-        price: position.entryPrice,
+        price: parseFloat(position.avgEntryPrice || "0"),
         color: position.direction === 'BUY' ? '#3b82f6' : '#f59e0b',
         lineWidth: 2,
         lineStyle: 0, // Solid line for active position
@@ -398,7 +417,7 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
         title: `POS ${position.direction}`,
       });
       posStopLineRef.current = candleRef.current.createPriceLine({
-        price: position.stopLoss,
+        price: parseFloat(position.trailingStopLoss || "0"),
         color: '#ef4444',
         lineWidth: 2,
         lineStyle: 2,
@@ -406,25 +425,33 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
         title: 'POS SL',
       });
       posTargetLineRef.current = candleRef.current.createPriceLine({
-        price: position.target1,
+        price: position.direction === 'BUY' 
+          ? parseFloat(position.avgEntryPrice || "0") * 1.05 
+          : parseFloat(position.avgEntryPrice || "0") * 0.95,
         color: '#22c55e',
         lineWidth: 2,
         lineStyle: 2,
         axisLabelVisible: true,
         title: 'POS TGT',
       });
-      const basePrice = candles[candles.length - 1].close;
-      const targetPrice = basePrice * (1 + ((forecast as any).forecastReturnPct || 0) / 100);
-      const fReturn = (forecast as any).forecastReturnPct || 0;
-      
-      targetLineRef.current = candleRef.current.createPriceLine({
-        price: targetPrice,
-        color: (forecast as any).trend === 'UP' ? 'rgba(34, 197, 94, 0.5)' : 'rgba(239, 68, 68, 0.5)',
-        lineWidth: 1,
-        lineStyle: 2,
-        axisLabelVisible: true,
-        title: `AI TGT (${fReturn > 0 ? '+' : ''}${fReturn.toFixed(1)}%)`,
-      });
+    }
+
+    if (candles.length > 0) {
+      const liveData = marketDataStore.get(symbol);
+      const basePrice = liveData?.ltp || forecast?.lastClose || candles[candles.length - 1].close;
+      if (forecast && forecast.forecastReturnPct !== undefined) {
+        const targetPrice = basePrice * (1 + (forecast.forecastReturnPct || 0) / 100);
+        const fReturn = forecast.forecastReturnPct || 0;
+        
+        aiTargetLineRef.current = candleRef.current.createPriceLine({
+          price: targetPrice,
+          color: fReturn > 0 ? 'rgba(34, 197, 94, 0.5)' : fReturn < 0 ? 'rgba(239, 68, 68, 0.5)' : 'rgba(163, 163, 163, 0.5)',
+          lineWidth: 1,
+          lineStyle: 2,
+          axisLabelVisible: true,
+          title: `AI TGT (${fReturn > 0 ? '+' : ''}${fReturn.toFixed(1)}%)`,
+        });
+      }
     }
 
     // Color median based on trend
@@ -444,105 +471,130 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
     upper90Ref.current.applyOptions({ visible: showProj });
     lower10Ref.current.applyOptions({ visible: showProj });
     
+    // Adjust boundaries dynamically based on mode
+    chartRef.current?.timeScale().applyOptions({
+      fixRightEdge: chartMode === "actual",
+      rightOffset: chartMode === "actual" ? 0 : 20,
+    });
+
     // Always fit content on data load/update so X-axis doesn't squish or extend infinitely
     if (lastFitKey.current !== loadedChartKey && loadedChartKey === currentChartKey && candles.length > 0) {
-      // Use a tiny timeout to ensure the synchronous setData calls are fully processed by the DOM
+      // Use a slightly longer timeout (180ms) so the loading overlay finishes fading out before fitContent animates left-to-right
       setTimeout(() => {
-        chartRef.current?.timeScale().fitContent();
-      }, 10);
-      lastFitKey.current = loadedChartKey;
+        const timeScale = chartRef.current?.timeScale();
+        if (timeScale) {
+          timeScale.fitContent();
+        }
+        lastFitKey.current = currentChartKey;
+      }, 180);
     }
-
   }, [candles, forecast, showEma, showVwap, chartMode, suggestion, position, currentChartKey, loadedChartKey]);
 
   useEffect(() => {
-    if (candles.length === 0) return;
+    if (candles.length === 0 || !symbol) return;
     let prevLtp: number | null = null;
     
-    import("@/providers/MarketDataProvider").then(({ marketDataStore }) => {
-      const unsub = marketDataStore.subscribe(symbol, () => {
-        const data = marketDataStore.get(symbol);
-        const tickLtp = data.ltp;
-        if (!candleRef.current || !volumeRef.current || !tickLtp || tickLtp === prevLtp) return;
-        prevLtp = tickLtp;
-          
-        const lastCandle = candles[candles.length - 1];
-        if (!lastCandle) return;
-
-        const time = Math.floor(Date.parse(lastCandle.ts) / 1000) as Time;
+    const unsub = marketDataStore.subscribe(symbol, () => {
+      const data = marketDataStore.get(symbol);
+      const tickLtp = data?.ltp;
+      if (!candleRef.current || !volumeRef.current || !tickLtp || tickLtp <= 0 || !Number.isFinite(tickLtp) || tickLtp === prevLtp) return;
         
-        candleRef.current.update({
-          time,
-          open: lastCandle.open,
-          high: Math.max(Number.isFinite(lastCandle.high) ? lastCandle.high : tickLtp, tickLtp),
-          low: Math.min(Number.isFinite(lastCandle.low) ? lastCandle.low : tickLtp, tickLtp),
-          close: tickLtp,
-        });
+      const lastCandle = candles[candles.length - 1];
+      if (!lastCandle || lastCandle.close <= 0) return;
 
-        volumeRef.current.update({
+      // Ignore bad exchange ticks or spikes (>25% move in 1 tick) that distort chart scaling
+      if (tickLtp < lastCandle.close * 0.75 || tickLtp > lastCandle.close * 1.35) return;
+      prevLtp = tickLtp;
+
+      const lastCandleSec = Math.floor(Date.parse(lastCandle.ts) / 1000);
+      const nowSec = Math.floor(Date.now() / 1000);
+      const intervalSec = activeTf.interval === "1minute" ? 60 : activeTf.interval === "15minute" ? 900 : activeTf.interval === "60minute" ? 3600 : 86400;
+      
+      // If now is in a new bar period beyond lastCandle, advance the timestamp so we append rather than corrupt historical bars
+      let targetTime = lastCandleSec;
+      if (nowSec - lastCandleSec >= intervalSec) {
+        targetTime = Math.floor(nowSec / intervalSec) * intervalSec;
+      }
+      const time = targetTime as Time;
+      const isOpenNewBar = targetTime > lastCandleSec;
+      
+      if (!liveBarRef.current || liveBarRef.current.time !== time) {
+        const barOpen = isOpenNewBar ? tickLtp : lastCandle.open;
+        liveBarRef.current = {
           time,
-          value: Math.max(lastCandle.volume, data.volume || 0),
-          color: tickLtp >= lastCandle.open ? "rgba(34,197,94,0.3)" : "rgba(239,68,68,0.3)",
-        });
+          open: barOpen,
+          high: isOpenNewBar ? tickLtp : Math.max(Number.isFinite(lastCandle.high) ? lastCandle.high : tickLtp, tickLtp),
+          low: isOpenNewBar ? tickLtp : Math.min(Number.isFinite(lastCandle.low) ? lastCandle.low : tickLtp, tickLtp),
+          close: tickLtp,
+        };
+      } else {
+        liveBarRef.current.high = Math.max(liveBarRef.current.high, tickLtp);
+        liveBarRef.current.low = Math.min(liveBarRef.current.low, tickLtp);
+        liveBarRef.current.close = tickLtp;
+      }
+      
+      candleRef.current.update({
+        time: liveBarRef.current.time,
+        open: liveBarRef.current.open,
+        high: liveBarRef.current.high,
+        low: liveBarRef.current.low,
+        close: liveBarRef.current.close,
       });
-      // Store unsub somehow? useEffect cleanup can't easily wait for import. 
-      // But we can store it in a ref and clean it up.
-      // Wait, let's just use the hook `useSymbolData`? We don't want to re-render the whole chart!
-      // I'll attach unsub to the window object or ref for cleanup.
-      (chartRef as any)._unsub = unsub;
+
+      volumeRef.current.update({
+        time: liveBarRef.current.time,
+        value: isOpenNewBar ? (data.volume || 1) : Math.max(lastCandle.volume, data.volume || 0),
+        color: tickLtp >= liveBarRef.current.open ? "rgba(34,197,94,0.3)" : "rgba(239,68,68,0.3)",
+      });
     });
 
     return () => {
-      if ((chartRef as any)._unsub) {
-        (chartRef as any)._unsub();
-      }
+      unsub();
     };
-  }, [symbol, candles]);
+  }, [symbol, candles, activeTf.interval]);
 
   const projMeta = chartMode === "forecast" && forecast;
-
-  const fallbackPrice = candles.length > 0 ? candles[candles.length - 1]!.close : null;
-  const fallbackChangePct = candles.length > 0 ? ((candles[candles.length - 1]!.close - candles[0]!.close) / candles[0]!.close) * 100 : null;
 
   return (
     <Card className="flex h-full min-h-0 flex-col overflow-hidden border-0 bg-transparent">
       <CardHeader className="flex shrink-0 flex-col sm:flex-row items-start sm:items-center justify-between gap-2 p-3 pb-1">
         <div className="flex min-w-0 items-center gap-3">
-          <h2 className="truncate text-lg font-bold text-foreground">{symbol || "—"}</h2>
-          <div className="flex items-baseline gap-2">
-            <LivePrice symbol={symbol} decimals={2} fallback={fallbackPrice} className="text-base font-semibold tabular-nums text-foreground" />
-            <LiveChangePct symbol={symbol} decimals={2} fallback={fallbackChangePct} className="text-xs font-medium tabular-nums" />
-          </div>
           {projMeta && (
-            <>
-              <span className="text-border">|</span>
-              <span className="text-xs font-medium text-foreground/70">
-                {forecast!.trend}{" "}
-                <strong className={(forecast!.forecastReturnPct ?? 0) >= 0 ? "text-bull" : "text-bear"}>
-                  {fmtPct(forecast!.forecastReturnPct ?? null)}
-                </strong>
-              </span>
-            </>
+            <span className="text-xs font-medium text-foreground/70">
+              {forecast!.trend}{" "}
+              <strong className={(forecast!.forecastReturnPct ?? 0) >= 0 ? "text-bull" : "text-bear"}>
+                {fmtPct(forecast!.forecastReturnPct ?? null)}
+              </strong>
+            </span>
           )}
         </div>
         <div className="flex shrink-0 items-center gap-4 w-full sm:w-auto justify-between sm:justify-end overflow-x-auto pb-1 [&::-webkit-scrollbar]:hidden">
           {chartMode === "actual" && (
             <div className="flex items-center gap-3 text-xs font-bold text-foreground/70">
+            <div className="flex bg-foreground/5 rounded-full p-0.5 items-center">
               {TIMEFRAMES.map((tf) => (
                 <button
                   key={tf.label}
                   type="button"
                   onClick={() => setTimeframe(tf)}
                   className={cn(
-                    "transition-colors duration-150 pb-0.5 border-b-2",
+                    "relative px-2.5 py-1 text-[10px] font-bold rounded-full transition-colors",
                     timeframe.label === tf.label
-                      ? "text-foreground border-foreground"
-                      : "text-foreground/50 border-transparent hover:text-foreground"
+                      ? "text-background"
+                      : "text-foreground/50 hover:text-foreground"
                   )}
                 >
-                  {tf.label}
+                  {timeframe.label === tf.label && (
+                    <motion.div
+                      layoutId={`activeTimeframe-${chartId}`}
+                      className="absolute inset-0 bg-foreground rounded-full"
+                      transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
+                    />
+                  )}
+                  <span className="relative z-10">{tf.label}</span>
                 </button>
               ))}
+            </div>
               <div className="mx-2 h-4 w-[1px] bg-border/20" />
               <button
                 type="button"
@@ -571,52 +623,64 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
             </div>
           )}
           <div className="flex items-center gap-3 text-xs font-bold text-foreground/70 pl-3">
+          <div className="flex bg-foreground/5 rounded-full p-0.5 items-center pl-1">
             <button
               type="button"
               onClick={() => onChartModeChange("actual")}
               className={cn(
-                "transition-colors duration-150 pb-0.5 border-b-2",
+                "relative px-2.5 py-1 text-[10px] font-bold rounded-full transition-colors",
                 chartMode === "actual"
-                  ? "text-foreground border-foreground"
-                  : "text-foreground/50 border-transparent hover:text-foreground"
+                  ? "text-background"
+                  : "text-foreground/50 hover:text-foreground"
               )}
             >
-              Price
+              {chartMode === "actual" && (
+                <motion.div
+                  layoutId={`activeChartMode-${chartId}`}
+                  className="absolute inset-0 bg-foreground rounded-full"
+                  transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
+                />
+              )}
+              <span className="relative z-10">Price</span>
             </button>
             <button
               type="button"
               onClick={() => onChartModeChange("forecast")}
               disabled={!forecast}
               className={cn(
-                "transition-colors duration-150 pb-0.5 border-b-2",
+                "relative px-2.5 py-1 text-[10px] font-bold rounded-full transition-colors",
                 chartMode === "forecast"
-                  ? "text-foreground border-foreground"
-                  : "text-foreground/50 border-transparent hover:text-foreground",
+                  ? "text-background"
+                  : "text-foreground/50 hover:text-foreground",
                 !forecast && "opacity-30 cursor-not-allowed"
               )}
             >
-              Projection
+              {chartMode === "forecast" && (
+                <motion.div
+                  layoutId={`activeChartMode-${chartId}`}
+                  className="absolute inset-0 bg-foreground rounded-full"
+                  transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
+                />
+              )}
+              <span className="relative z-10">Projection</span>
             </button>
+          </div>
           </div>
         </div>
       </CardHeader>
 
       <CardContent className="relative min-h-[300px] flex-1 p-0 overflow-hidden">
-        <motion.div 
+        <div 
           ref={containerRef} 
-          className="absolute inset-0 h-full w-full"
-          animate={{ opacity: loading ? 0.2 : 1 }}
-          transition={{ duration: 0.4 }}
+          className={cn("absolute inset-0 h-full w-full transition-opacity duration-300", loading ? "opacity-20" : "opacity-100")}
         />
         
-        {crosshairData && !loading && (
-          <div className="absolute top-2 left-2 z-10 flex flex-wrap gap-2 text-[10px] sm:text-xs font-mono font-medium text-muted-foreground bg-background/80 backdrop-blur-sm px-2 py-1 rounded shadow-sm pointer-events-none">
-            <span className="text-foreground"><span className="text-muted-foreground mr-1">O</span>{fmtNum(crosshairData.open)}</span>
-            <span className="text-foreground"><span className="text-muted-foreground mr-1">H</span>{fmtNum(crosshairData.high)}</span>
-            <span className="text-foreground"><span className="text-muted-foreground mr-1">L</span>{fmtNum(crosshairData.low)}</span>
-            <span className="text-foreground"><span className="text-muted-foreground mr-1">C</span>{fmtNum(crosshairData.close)}</span>
-            <span className="text-foreground ml-2"><span className="text-muted-foreground mr-1">Vol</span>{fmtNum(crosshairData.volume)}</span>
-          </div>
+        {!loading && (
+          <div 
+            ref={legendRef}
+            style={{ display: 'none' }}
+            className="absolute top-2 left-2 z-10 flex-wrap gap-2 text-[10px] sm:text-xs font-mono font-medium text-muted-foreground bg-background/80 backdrop-blur-sm px-2 py-1 rounded shadow-sm pointer-events-none"
+          />
         )}
 
         {chartMode === "forecast" && forecast?.medianForecast && !loading && (
@@ -647,7 +711,7 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 0.3 }}
+            transition={{ duration: 0.15 }}
           >
             <motion.div 
               className="flex flex-col items-center gap-2"
@@ -717,7 +781,14 @@ function calcEma(data: { time: Time; value: number }[], period: number) {
 function calcVwap(candles: Candle[]) {
   let cumVol = 0;
   let cumVolPrice = 0;
+  let prevDay = -1;
   return candles.map((c) => {
+    const day = new Date(c.ts).getDate();
+    if (day !== prevDay) {
+      cumVol = 0;
+      cumVolPrice = 0;
+      prevDay = day;
+    }
     const safeHigh = Number.isFinite(c.high) ? c.high : c.close || 0;
     const safeLow = Number.isFinite(c.low) ? c.low : c.close || 0;
     const safeClose = Number.isFinite(c.close) ? c.close : 0;

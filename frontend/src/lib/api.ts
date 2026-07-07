@@ -13,7 +13,7 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   });
 
   const text = await res.text();
-  let body: any = null;
+  let body: unknown = null;
   try {
     body = text ? JSON.parse(text) : null;
   } catch (err) {
@@ -23,11 +23,14 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   if (!res.ok) {
-    if (res.status === 503 && body && "fallback" in body) {
+    if (res.status === 503 && body && typeof body === "object" && "fallback" in body) {
       return body.fallback as T;
     }
-    const errMsg = body?.error || body?.message || text.slice(0, 50) || `Request failed (${res.status})`;
-    throw new Error(errMsg);
+    const typedBody = body as { error?: string; message?: string };
+    if (typedBody?.error || typedBody?.message) {
+      throw new Error(typedBody.error || typedBody.message || `API Error: ${res.status}`);
+    }
+    throw new Error(text.slice(0, 50) || `Request failed (${res.status})`);
   }
 
   return body as T;
@@ -68,15 +71,17 @@ export const api = {
   watchlistToday: () => apiFetch<import("@/types/api").Watchlist>("/api/watchlist/today"),
   activeSuggestions: (symbol?: string) => 
     apiFetch<import("@/types/api").Suggestion[]>(`/api/suggestions/active${symbol ? `?symbol=${encodeURIComponent(symbol)}` : ""}`)
-      .then(res => z.array(SuggestionSchema as any).parse(res) as import("@/types/api").Suggestion[]),
+      .then(res => z.array(SuggestionSchema as z.ZodTypeAny).parse(res) as import("@/types/api").Suggestion[]),
   todaySuggestions: () => apiFetch<import("@/types/api").Suggestion[]>("/api/suggestions/today")
-    .then(res => z.array(SuggestionSchema as any).parse(res) as import("@/types/api").Suggestion[]),
+    .then(res => z.array(SuggestionSchema as z.ZodTypeAny).parse(res) as import("@/types/api").Suggestion[]),
+  historySuggestions: () => apiFetch<{ data: import("@/types/api").Suggestion[], total: number }>("/api/suggestions/history?limit=100")
+    .then(res => ({ ...res, data: z.array(SuggestionSchema as z.ZodTypeAny).parse(res.data) as import("@/types/api").Suggestion[] })),
   dashboardIndices: () =>
     apiFetch<import("@/types/api").DashboardIndices & { degraded?: boolean; reason?: string }>(
       "/api/market/dashboard-indices",
     ),
   marketRegime: () => apiFetch<import("@/types/api").MarketRegime>("/api/market/regime").then(res => MarketRegimeSchema.parse(res)),
-  marketMacro: () => apiFetch<any>("/api/market/macro"),
+  marketMacro: () => apiFetch<unknown>("/api/market/macro"),
   intradayMonitoring: () =>
     apiFetch<IntradayMonitoring>("/api/system/intraday-monitoring").then(normalizeMonitoringPayload),
   scanStatus: () => apiFetch<import("@/types/api").ScanStatus>("/api/system/offhours-scan"),
@@ -99,7 +104,7 @@ export const api = {
       { method: "POST", body: JSON.stringify({ force: true }) },
     ),
   stopScan: () =>
-    apiFetch<{ message: string; status: any }>("/api/system/offhours-scan/stop", {
+    apiFetch<{ message: string; status: unknown }>("/api/system/offhours-scan/stop", {
       method: "POST",
     }),
   runFullScan: () =>
@@ -141,10 +146,10 @@ export const api = {
       `/api/system/symbols?q=${encodeURIComponent(query)}&limit=${limit}`,
     ),
   paperTrading: {
-    account: () => apiFetch<any>("/api/paper/account"),
-    positions: () => apiFetch<any[]>("/api/paper/positions"),
-    history: () => apiFetch<any[]>("/api/paper/history"),
-    reset: () => apiFetch<any>("/api/paper/reset", { method: "POST" }),
+    account: () => apiFetch<import("@/types/api").PaperAccount>("/api/paper/account"),
+    positions: () => apiFetch<import("@/types/api").PaperPosition[]>("/api/paper/positions"),
+    history: () => apiFetch<import("@/types/api").PaperPosition[]>("/api/paper/history"),
+    reset: () => apiFetch<{ success: boolean; message: string }>("/api/paper/reset", { method: "POST" }),
   },
   sparklines: (symbols: string[]) => {
     if (!symbols.length) return Promise.resolve({});
@@ -160,7 +165,7 @@ export const api = {
       { symbol, history: [] }
     );
   },
-  indianContext: () => apiFetchSoft<any>("/api/market/indian-context", {
+  indianContext: () => apiFetchSoft<unknown>("/api/market/indian-context", {
     fiiDii: null,
     niftyOptionChain: null,
     usdInr: null,
@@ -169,5 +174,5 @@ export const api = {
     eventRiskActive: false
   }),
   get paper() { return this.paperTrading; },
-  alertsHistory: () => apiFetch<unknown[]>("/api/alerts/history"),
+  alertsHistory: () => apiFetch<import("@/types/api").AlertRecord[]>("/api/alerts/history"),
 };

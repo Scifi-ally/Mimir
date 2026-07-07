@@ -85,6 +85,7 @@
   * {
     @apply border-border;
     box-sizing: border-box;
+    font-family: "Geist Mono", monospace !important;
   }
   
   html,
@@ -97,9 +98,16 @@
   body {
     margin: 0;
     @apply bg-background text-foreground;
-    font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+  }
+
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+  .scrollbar-none {
+    -ms-overflow-style: none;  /* IE and Edge */
+    scrollbar-width: none;  /* Firefox */
   }
   
   ::selection {
@@ -124,6 +132,106 @@
   }
 }
 
+@layer components {
+  /* Lightweight bespoke micro-interactions for specific icons */
+  svg.lucide {
+    transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1), color 0.2s ease, opacity 0.2s ease;
+    will-change: transform;
+  }
+  
+  /* Generic press effect */
+  button:active svg.lucide,
+  a:active svg.lucide,
+  [role="button"]:active svg.lucide {
+    transform: scale(0.9);
+    transition-duration: 0.1s;
+  }
+
+  /* Specific Icon Hover Animations */
+  
+  /* Spinners */
+  button:hover .lucide-settings, button:hover .lucide-settings-2, 
+  button:hover .lucide-sun, button:hover .lucide-loader-2 {
+    animation: icon-spin 2s linear infinite;
+  }
+  button:hover .lucide-history, button:hover .lucide-rotate-ccw {
+    animation: icon-spin-reverse 2s linear infinite;
+  }
+  
+  /* Bouncers & Shakers */
+  button:hover .lucide-bell, button:hover .lucide-alert-circle {
+    animation: icon-wiggle 0.5s ease-in-out infinite;
+  }
+  button:hover .lucide-trash-2, button:hover .lucide-trash {
+    animation: icon-shake 0.4s ease-in-out;
+  }
+  
+  /* Heartbeat / Activity */
+  button:hover .lucide-activity, button:hover .lucide-zap {
+    animation: icon-heartbeat 0.8s ease-in-out infinite;
+  }
+  
+  /* Directional */
+  button:hover .lucide-arrow-right, button:hover .lucide-chevron-right {
+    transform: translateX(3px);
+  }
+  button:hover .lucide-arrow-left, button:hover .lucide-chevron-left {
+    transform: translateX(-3px);
+  }
+  button:hover .lucide-trending-up, button:hover .lucide-arrow-up-right {
+    transform: translate(2px, -2px);
+  }
+  button:hover .lucide-trending-down, button:hover .lucide-arrow-down-right {
+    transform: translate(2px, 2px);
+  }
+  
+  /* Rotators */
+  button:hover .lucide-plus, button:hover .lucide-x {
+    transform: rotate(90deg) scale(1.1);
+  }
+  button:hover .lucide-moon, button:hover .lucide-key, button:hover .lucide-key-round {
+    transform: rotate(-15deg);
+  }
+
+  /* Pop / Scale */
+  button:hover .lucide-play, button:hover .lucide-target, button:hover .lucide-check-circle, button:hover .lucide-check-circle-2, button:hover .lucide-wallet {
+    transform: scale(1.15);
+  }
+
+  /* Sparkles */
+  button:hover .lucide-sparkles, button:hover .lucide-flame {
+    animation: icon-flicker 0.6s ease-in-out infinite;
+  }
+}
+
+@keyframes icon-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+@keyframes icon-spin-reverse {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(-360deg); }
+}
+@keyframes icon-wiggle {
+  0%, 100% { transform: rotate(-10deg); }
+  50% { transform: rotate(10deg); }
+}
+@keyframes icon-shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-2px) rotate(-5deg); }
+  75% { transform: translateX(2px) rotate(5deg); }
+}
+@keyframes icon-heartbeat {
+  0%, 100% { transform: scale(1); }
+  25% { transform: scale(1.15); }
+  50% { transform: scale(1); }
+  75% { transform: scale(1.15); }
+}
+@keyframes icon-flicker {
+  0%, 100% { transform: scale(1) rotate(0deg); opacity: 1; }
+  50% { transform: scale(1.1) rotate(5deg); opacity: 0.8; }
+}
+
 @keyframes pulse-dot {
   0%,
   100% {
@@ -141,9 +249,8 @@
 
 
 ::-webkit-scrollbar {
-  display: none;
-  width: 0;
-  height: 0;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
@@ -151,7 +258,12 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: transparent;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
 }
 
 /* Custom visible scrollbar for specific areas */
@@ -199,8 +311,8 @@
     --input: #e4e4e7;
     --ring: #000000;
     
-    --island-bg: #000000;
-    --island-text: #ffffff;
+    --island-bg: #ffffff;
+    --island-text: #000000;
   }
 }
 
@@ -298,4 +410,22 @@ html {
   .animate-shimmer {
     animation: none !important;
   }
+}
+
+@layer utilities {
+  .scrollbar-none {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+::-webkit-scrollbar {
+  display: none;
+}
+* {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }

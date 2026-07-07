@@ -174,7 +174,7 @@ export function WatchlistStack({ items, monitored, suggestions, selectedSymbol, 
         const colIndex = Math.floor(index / 3);
         try {
           virtualizer.scrollToIndex(colIndex, { align: "auto" });
-        } catch (e) {
+        } catch {
           // ignore scroll errors during render
         }
       }
@@ -267,7 +267,7 @@ export function WatchlistStack({ items, monitored, suggestions, selectedSymbol, 
                   {colRows.map((row) => (
                     <WatchlistCard
                       key={row.symbol}
-                      row={row as any}
+                      row={row as unknown as React.ComponentProps<typeof WatchlistCard>["row"]}
                       selected={selectedSymbol === row.symbol}
                       onSelect={onSelect}
                       sparkline={sparklines?.[row.symbol]}

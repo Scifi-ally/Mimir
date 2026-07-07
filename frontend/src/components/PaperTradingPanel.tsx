@@ -22,28 +22,7 @@ const staggerItem: Variants = {
   show: { opacity: 1, y: 0, scale: 1, filter: "blur(0px)", transition: { type: "spring", stiffness: 260, damping: 24, mass: 0.8 } }
 };
 
-interface PaperAccount {
-  id: number;
-  balance: string;
-  startingBalance: string;
-  allocatedMargin: string;
-  livePnl: string;
-  equity: string;
-}
-
-interface PaperPosition {
-  id: number;
-  symbol: string;
-  direction: string;
-  quantity: number;
-  avgEntryPrice: string;
-  status: string;
-  unrealizedPnl: string;
-  realizedPnl: string;
-  trailingStopLoss?: string;
-  createdAt: string;
-  closedAt?: string;
-}
+import type { PaperAccount, PaperPosition } from "@/types/api";
 
 export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClose?: () => void }) {
   const [account, setAccount] = useState<PaperAccount | null>(null);
@@ -77,6 +56,7 @@ export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClo
     fetchData();
     const interval = setInterval(fetchData, 5000);
     return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
   const handleReset = () => {
@@ -135,7 +115,7 @@ export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClo
             animate={{ y: 0, x: "-50%", scale: 1 }}
             exit={{ y: "100%", x: "-50%", scale: 0.95 }}
             transition={{ type: "spring", stiffness: 400, damping: 30, mass: 0.8 }}
-            className="fixed left-1/2 bottom-0 z-[70] flex flex-col bg-background/80 backdrop-blur-2xl saturate-150 ring-1 ring-white/10 text-foreground overflow-hidden h-[85vh] w-full max-w-4xl rounded-t-3xl shadow-[0_-8px_40px_-12px_rgba(0,0,0,0.5)]"
+            className="fixed left-1/2 bottom-0 z-[70] flex flex-col bg-background/95 backdrop-blur-md saturate-150 ring-1 ring-white/10 text-foreground overflow-hidden h-[85vh] w-full max-w-4xl rounded-t-3xl shadow-[0_-8px_40px_-12px_rgba(0,0,0,0.5)]"
           >
             {/* Header */}
             <div className="flex justify-between items-center px-8 pt-6 pb-4 border-b border-border/5 shrink-0">

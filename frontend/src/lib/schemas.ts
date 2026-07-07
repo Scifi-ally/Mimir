@@ -71,3 +71,28 @@ export type SessionState = z.infer<typeof SessionStateSchema>;
 export type MonitoredStock = z.infer<typeof MonitoredStockSchema>;
 export type Suggestion = z.infer<typeof SuggestionSchema>;
 export type MarketRegime = z.infer<typeof MarketRegimeSchema>;
+
+export const PaperAccountSchema = z.object({
+  id: z.string().or(z.number()),
+  userId: z.string().optional(),
+  balance: z.string(),
+  startingBalance: z.string().optional(),
+  allocatedMargin: z.string().optional(),
+  livePnl: z.string().optional(),
+  equity: z.string().optional(),
+  currency: z.string().optional(),
+  createdAt: z.string().optional(),
+});
+
+export const PaperOrderSchema = z.object({
+  id: z.string(),
+  symbol: z.string(),
+  direction: z.string(),
+  quantity: z.number(),
+  price: z.string(),
+  status: z.string(),
+  createdAt: z.string(),
+});
+
+export type PaperAccount = z.infer<typeof PaperAccountSchema>;
+export type PaperOrder = z.infer<typeof PaperOrderSchema>;

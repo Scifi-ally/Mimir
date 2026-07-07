@@ -93,6 +93,16 @@ export async function runCustomScreener(options: { screenerIds?: number[] } = {}
 
     // Fetch candles with controlled concurrency to respect rate limits
     const CONCURRENCY = 4;
+    let completed = 0;
+    let total = 0;
+    for (const symbolSet of timeframeSymbols.values()) {
+      total += symbolSet.size;
+    }
+    
+    if (total > 0) {
+      broadcast({ event: 'custom_screener', data: { type: 'screener_progress', progress: completed, total } } as unknown as Parameters<typeof broadcast>[0]);
+    }
+
     for (const [timeframe, symbolSet] of timeframeSymbols.entries()) {
       const symbols = Array.from(symbolSet);
       for (let batchStart = 0; batchStart < symbols.length; batchStart += CONCURRENCY) {
@@ -124,9 +134,18 @@ export async function runCustomScreener(options: { screenerIds?: number[] } = {}
             }
           } catch (err) {
             logger.warn({ err, symbol, timeframe }, "Failed to fetch candles for screener");
+          } finally {
+            completed++;
+            if (total > 0 && completed % Math.max(1, Math.floor(total / 20)) === 0) {
+              broadcast({ event: 'custom_screener', data: { type: 'screener_progress', progress: completed, total } } as unknown as Parameters<typeof broadcast>[0]);
+            }
           }
         }));
       }
+    }
+    
+    if (total > 0) {
+      broadcast({ event: 'custom_screener', data: { type: 'screener_progress', progress: completed, total } } as unknown as Parameters<typeof broadcast>[0]);
     }
 
     // Now evaluate rules

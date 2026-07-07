@@ -1,0 +1,14 @@
+**/node_modules
+**/dist
+**/.venv
+**/__pycache__
+**/*.pyc
+*.log
+backend/*.log
+frontend/*.log
+.env
+.env.local
+backend/.env
+backend/.env.local
+frontend/.env
+frontend/.env.local

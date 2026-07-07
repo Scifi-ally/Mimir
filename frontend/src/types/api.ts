@@ -1,6 +1,6 @@
-import type { SessionState, MonitoredStock, Suggestion, MarketRegime } from "../lib/schemas";
+import type { SessionState, MonitoredStock, Suggestion, MarketRegime, PaperAccount, PaperOrder } from "../lib/schemas";
 
-export type { SessionState, MonitoredStock, Suggestion, MarketRegime };
+export type { SessionState, MonitoredStock, Suggestion, MarketRegime, PaperAccount, PaperOrder };
 
 
 export interface SystemStatus {
@@ -188,7 +188,7 @@ export interface ScanProgress {
 }
 
 export interface PaperPosition {
-  id: string;
+  id: string | number;
   suggestionId?: string | null;
   symbol: string;
   direction: "BUY" | "SELL" | string;
@@ -200,4 +200,12 @@ export interface PaperPosition {
   trailingStopLoss?: string | null;
   createdAt: string;
   closedAt?: string | null;
+}
+
+export interface AlertRecord {
+  id: string;
+  symbol?: string | null;
+  type: string;
+  message: string;
+  createdAt: string;
 }

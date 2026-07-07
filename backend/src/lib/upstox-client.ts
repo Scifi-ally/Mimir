@@ -16,7 +16,7 @@ import {
 } from "./data_telemetry";
 
 const BASE_URL = "https://api.upstox.com/v2";
-const DEFAULT_TIMEOUT = 8000;
+const DEFAULT_TIMEOUT = 15000;
 const BATCH_SIZE = 50; // Max instruments per request
 const LOG_UPSTOX_PAYLOADS =
   (process.env["LOG_UPSTOX_PAYLOADS"] ?? "false").toLowerCase() === "true";
@@ -27,7 +27,8 @@ interface RetryConfig {
   maxDelayMs: number;
 }
 
-function normalizeCandlesNewestFirst(candles: unknown[][]): unknown[][] {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function normalizeCandlesNewestFirst(candles: any[][]): any[][] {
   const parsed = candles
     .map((row) => {
       const ts = typeof row?.[0] === "string" ? row[0] : null;
@@ -36,12 +37,14 @@ function normalizeCandlesNewestFirst(candles: unknown[][]): unknown[][] {
       if (!Number.isFinite(ms)) return null;
       return { row, ts, ms };
     })
-    .filter((x): x is { row: unknown[]; ts: string; ms: number } => Boolean(x));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .filter((x): x is { row: any[]; ts: string; ms: number } => Boolean(x));
 
   parsed.sort((a, b) => b.ms - a.ms);
 
   const seen = new Set<string>();
-  const deduped: unknown[][] = [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const deduped: any[][] = [];
   for (const item of parsed) {
     if (seen.has(item.ts)) continue;
     seen.add(item.ts);
@@ -151,6 +154,7 @@ export async function withRetry<T>(
         axiosErr.response.status !== 429
       ) {
         const status = axiosErr.response.status;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const errData = axiosErr.response.data as any;
         const isAuthErr =
           status === 401 ||
@@ -222,6 +226,7 @@ export async function withRetry<T>(
   );
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type QuoteData = any;
 
 export interface UpstoxApiClient {
@@ -348,6 +353,7 @@ export function createUpstoxClient(options?: {
               }
             }
           }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } catch (err: any) {
         logger.error({ err: err.message, batchLength: batch.length }, "Failed to fetch quotes for batch");
       }
@@ -504,7 +510,9 @@ export function createUpstoxClient(options?: {
           };
 
           const preferV3 = interval === "240minute" || interval === "week";
-          let candles: unknown[][] = [];
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          let candles: any[][] = [];
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           let lastError: any = null;
           try {
             candles = preferV3 ? await fetchV3() : await fetchV2();
@@ -571,8 +579,10 @@ export function createUpstoxClient(options?: {
       );
 
       // Cache and return
-      candleCache.set(cacheKey, data as unknown[][], cacheTimeMs);
-      return data as unknown[][];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      candleCache.set(cacheKey, data as any[][], cacheTimeMs);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return data as any[][];
     });
   }
 

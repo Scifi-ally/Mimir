@@ -52,12 +52,12 @@ describe("Intraday Monitor Pattern Detectors", () => {
       expect(detectPullbackComplete(ticks, "BUY")).toBe(false);
     });
 
-    it("should confirm BUY pullback when initialTrend < pullback < recovery", () => {
+    it("should confirm BUY pullback when initialTrend > pullback && pullback < recovery", () => {
       // initialTrend (0-3 avg), pullback (3-6 avg), recovery (6+ avg)
       const ticks = [
-        { price: 100, volume: 10 }, // initialTrend avg = 100
-        { price: 100, volume: 10 },
-        { price: 100, volume: 10 },
+        { price: 110, volume: 10 }, // initialTrend avg = 110
+        { price: 110, volume: 10 },
+        { price: 110, volume: 10 },
         { price: 105, volume: 10 }, // pullback avg = 105
         { price: 105, volume: 10 },
         { price: 105, volume: 10 },
@@ -67,11 +67,11 @@ describe("Intraday Monitor Pattern Detectors", () => {
       expect(detectPullbackComplete(ticks, "BUY")).toBe(true);
     });
 
-    it("should confirm SELL pullback when initialTrend > pullback > recovery", () => {
+    it("should confirm SELL pullback when initialTrend < pullback && pullback > recovery", () => {
       const ticks = [
-        { price: 110, volume: 10 }, // initialTrend avg = 110
-        { price: 110, volume: 10 },
-        { price: 110, volume: 10 },
+        { price: 100, volume: 10 }, // initialTrend avg = 100
+        { price: 100, volume: 10 },
+        { price: 100, volume: 10 },
         { price: 105, volume: 10 }, // pullback avg = 105
         { price: 105, volume: 10 },
         { price: 105, volume: 10 },

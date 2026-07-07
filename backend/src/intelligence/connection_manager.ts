@@ -39,12 +39,19 @@ export class UpstoxConnectionManager {
   async loadProtobufSchema(): Promise<void> {
     if (this.protobufRoot && this.FeedResponse) return;
     try {
-      const dirname = globalThis.__dirname || __dirname;
+      let dirname = "";
+      try {
+        dirname = typeof __dirname !== "undefined" ? __dirname : new URL('.', import.meta.url).pathname;
+      } catch {
+        dirname = process.cwd();
+      }
       const possiblePaths = [
         path.resolve(dirname, "MarketDataFeed.proto"),
         path.resolve(dirname, "src/intelligence/MarketDataFeed.proto"),
         path.resolve(process.cwd(), "src/intelligence/MarketDataFeed.proto"),
-        path.resolve(process.cwd(), "backend/src/intelligence/MarketDataFeed.proto")
+        path.resolve(process.cwd(), "src/market_data/MarketDataFeed.proto"),
+        path.resolve(process.cwd(), "backend/src/intelligence/MarketDataFeed.proto"),
+        path.resolve(process.cwd(), "backend/src/market_data/MarketDataFeed.proto")
       ];
       let protoPath: string | null = null;
       for (const p of possiblePaths) {
@@ -115,49 +122,82 @@ export class UpstoxConnectionManager {
         throw new Error("No authorized redirect URI returned in Upstox response");
       }
 
-      logger.info("Connecting to Upstox Market Data Feed WebSocket...");
-      this.ws = new WebSocket(wsUrl);
+      const connectWs = (url: string) => {
+        logger.info({ url: url.substring(0, 50) + "..." }, "Connecting to Upstox Market Data Feed WebSocket...");
+        const ws = new WebSocket(url, {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        });
+        this.ws = ws;
 
-      this.ws.on("open", async () => {
-        logger.info("Upstox WebSocket connected in Connection Manager");
-        this.isConnecting = false;
-        this.consecutiveFailures = 0;
-        this.reconnectAttempts = 0;
-        this.circuitBreakerCooldownUntil = 0;
-        this.publishStatus("connected", "upstox_ws");
-        
-        try {
-          const { syncMonitoredSubscriptions } = await import("../market_data/monitored_symbols");
-          await syncMonitoredSubscriptions();
-        } catch (err) {
-          logger.error({ err }, "Failed to sync monitored subscriptions on WS open, using cached subscriptions");
-          this.subscribeToAll();
-        }
-        this.startFallbackPolling();
-      });
+        ws.on("unexpected-response", (request, response) => {
+          if (response.statusCode === 301 || response.statusCode === 302 || response.statusCode === 307) {
+            const redirectUrl = response.headers.location;
+            if (redirectUrl) {
+              logger.info({ redirectUrl: redirectUrl.substring(0, 50) + "..." }, "Following WebSocket redirect");
+              
+              // Mark this socket as redirected so we don't trigger reconnect loops
+              (ws as WebSocket & { _isRedirecting?: boolean })._isRedirecting = true;
+              request.abort();
+              
+              connectWs(redirectUrl);
+            }
+          } else {
+            logger.error({ statusCode: response.statusCode }, "Unexpected server response during WebSocket handshake");
+            this.isConnecting = false;
+            this.publishStatus("failed", "upstox_ws", `Unexpected response: ${response.statusCode}`);
+          }
+        });
 
-      this.ws.on("message", (raw) => {
-        this.handleWsMessage(raw);
-      });
+        ws.on("open", async () => {
+          logger.info("Upstox WebSocket connected in Connection Manager");
+          this.isConnecting = false;
+          this.consecutiveFailures = 0;
+          this.reconnectAttempts = 0;
+          this.circuitBreakerCooldownUntil = 0;
+          this.publishStatus("connected", "upstox_ws");
+          
+          try {
+            const { syncMonitoredSubscriptions } = await import("../market_data/monitored_symbols");
+            await syncMonitoredSubscriptions();
+          } catch (err) {
+            logger.error({ err }, "Failed to sync monitored subscriptions on WS open, using cached subscriptions");
+            this.subscribeToAll();
+          }
+          this.startFallbackPolling();
+        });
 
-      this.ws.on("close", (code, reason) => {
-        const reasonStr = reason ? reason.toString() : "unknown close";
-        logger.warn({ code, reason: reasonStr }, "Upstox WebSocket disconnected");
-        this.isConnecting = false;
-        this.consecutiveFailures++;
-        if (this.consecutiveFailures >= this.circuitBreakerThreshold) {
-          this.circuitBreakerCooldownUntil = Date.now() + this.circuitBreakerCooldownMs;
-          logger.error({ cooldownMs: this.circuitBreakerCooldownMs }, "Upstox WS connection failures exceeded threshold. Circuit breaker tripped.");
-        }
-        this.publishStatus("disconnected", "upstox_ws", reasonStr);
-        this.scheduleReconnect();
-      });
+        ws.on("message", (raw) => {
+          this.handleWsMessage(raw);
+        });
 
-      this.ws.on("error", (err) => {
-        logger.error({ err }, "Upstox WebSocket error in Connection Manager");
-        this.isConnecting = false;
-        this.publishStatus("failed", "upstox_ws", err.message);
-      });
+        ws.on("close", (code, reason) => {
+          // Ignore close event if we are just following a redirect
+          if ((ws as WebSocket & { _isRedirecting?: boolean })._isRedirecting) return;
+          
+          const reasonStr = reason ? reason.toString() : "unknown close";
+          logger.warn({ code, reason: reasonStr }, "Upstox WebSocket disconnected");
+          this.isConnecting = false;
+          this.consecutiveFailures++;
+          if (this.consecutiveFailures >= this.circuitBreakerThreshold) {
+            this.circuitBreakerCooldownUntil = Date.now() + this.circuitBreakerCooldownMs;
+            logger.error({ cooldownMs: this.circuitBreakerCooldownMs }, "Upstox WS connection failures exceeded threshold. Circuit breaker tripped.");
+          }
+          this.publishStatus("disconnected", "upstox_ws", reasonStr);
+          this.scheduleReconnect();
+        });
+
+        ws.on("error", (err) => {
+          if ((ws as WebSocket & { _isRedirecting?: boolean })._isRedirecting) return;
+          
+          logger.error({ err }, "Upstox WebSocket error in Connection Manager");
+          this.isConnecting = false;
+          this.publishStatus("failed", "upstox_ws", err.message);
+        });
+      };
+
+      connectWs(wsUrl);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
@@ -218,7 +258,14 @@ export class UpstoxConnectionManager {
         return;
       }
 
-      const decoded = this.FeedResponse.decode(buffer);
+      let decoded;
+      try {
+        decoded = this.FeedResponse.decode(buffer);
+      } catch (decodeErr) {
+        logger.warn({ err: (decodeErr as Error).message, hex: Buffer.from(buffer).toString('hex') }, "Failed to decode/parse Upstox WS message");
+        return;
+      }
+      
       const message = this.FeedResponse.toObject(decoded, {
         longs: Number,
         enums: String,
@@ -234,6 +281,9 @@ export class UpstoxConnectionManager {
 
       for (const [key, feed] of Object.entries(message.feeds)) {
         if (!feed) continue;
+        const globalAny = global as typeof globalThis & { tickLogCount?: number };
+        if (!globalAny.tickLogCount) globalAny.tickLogCount = 0;
+        if (globalAny.tickLogCount++ < 5) console.log("LOG_TICK_DEBUG:", JSON.stringify(feed));
 
         const normalizedKey = key.trim().toUpperCase().replace(":", "|");
         const symbol = this.keyToSymbolMap.get(normalizedKey);
@@ -337,7 +387,7 @@ export class UpstoxConnectionManager {
     };
 
     sendBatches(indexKeys, "ltpc", "cm-idx");
-    sendBatches(equityKeys, "ltpc", "cm-eq");
+    sendBatches(equityKeys, "full", "cm-eq");
   }
 
   private scheduleReconnect() {
@@ -348,11 +398,28 @@ export class UpstoxConnectionManager {
     const attempt = this.reconnectAttempts;
     this.reconnectAttempts++;
 
-    const exponentialDelay = Math.min(maxDelay, baseDelay * Math.pow(2, attempt));
-    const jitter = Math.random() * 2000; // up to 2 seconds of random jitter
-    const delay = exponentialDelay + jitter;
+    let exponentialDelay = Math.min(maxDelay, baseDelay * Math.pow(2, attempt));
+    
+    // Check if it's NSE market hours (09:15 to 15:30 IST Mon-Fri)
+    const now = new Date();
+    const istTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+    const day = istTime.getDay();
+    const timeValue = istTime.getHours() * 100 + istTime.getMinutes();
+    
+    const isMarketHours = day >= 1 && day <= 5 && timeValue >= 915 && timeValue <= 1530;
+    
+    if (!isMarketHours) {
+      exponentialDelay = 300000; // Cap to 5 minutes during off-market hours
+    }
 
-    logger.info({ delayMs: Math.round(delay), attempt: attempt }, "Scheduling Upstox WS reconnect...");
+    if (process.env.NODE_ENV === "test" || process.env.VITEST) {
+      exponentialDelay = 100;
+    }
+
+    const jitter = Math.random() * 2000; // up to 2 seconds of random jitter
+    const delay = exponentialDelay + (isMarketHours && !(process.env.NODE_ENV === "test" || process.env.VITEST) ? jitter : 0);
+
+    logger.info({ delayMs: Math.round(delay), attempt: attempt, isMarketHours }, "Scheduling Upstox WS reconnect...");
 
     this.reconnectTimer = setTimeout(() => {
       void this.connect();

@@ -123,6 +123,7 @@ export interface ActiveSuggestion {
   reasoning: string[];
   generatedAt: number;
   expiresAt: number;
+  isNew?: boolean;
 }
 
 export interface BreadthSnapshot {

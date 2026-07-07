@@ -20,6 +20,8 @@ export type IslandConfig = {
   type?: "default" | "face-id";
   showSuccessOnly?: boolean;
   hideCancel?: boolean;
+  isNotification?: boolean;
+  duration?: number;
   onConfirm?: () => Promise<boolean | void> | boolean | void;
   onCancel?: () => void;
 };
@@ -44,7 +46,8 @@ interface AppStore {
   commandPaletteOpen: boolean;
   commandPaletteSearch: string;
   commandPaletteTargetWatchlist: number | null;
-  setCommandPaletteOpen: (open: boolean, search?: string, targetWatchlist?: number | null) => void;
+  commandPaletteEditRuleId: number | null;
+  setCommandPaletteOpen: (open: boolean, search?: string, targetWatchlist?: number | null, editRuleId?: number | null) => void;
   watchlistCounts: Record<string, number>;
   updateWatchlistCounts: (counts: Record<string, number>) => void;
 }
@@ -63,8 +66,6 @@ export const useStore = create<AppStore>()(
     })),
   scanLogs: [],
   addScanLog: (log) => set((state) => {
-    
-
     const lastLog = state.scanLogs[0];
     // If it's the exact same symbol and status, ignore it
     if (lastLog && lastLog.symbol === log.symbol && lastLog.status === log.status && lastLog.reason === log.reason) {
@@ -88,13 +89,16 @@ export const useStore = create<AppStore>()(
   showIsland: (config) => set({ islandConfig: config }),
   hideIsland: () => set({ islandConfig: null }),
   commandPaletteOpen: false,
-  commandPaletteSearch: '',
+  commandPaletteSearch: "",
   commandPaletteTargetWatchlist: null,
-  setCommandPaletteOpen: (open, search = '', targetWatchlist = null) => set({
-    commandPaletteOpen: open,
-    commandPaletteSearch: search,
-    commandPaletteTargetWatchlist: targetWatchlist,
-  }),
+  commandPaletteEditRuleId: null,
+  setCommandPaletteOpen: (open, search = "", targetWatchlist = null, editRuleId = null) =>
+    set({
+      commandPaletteOpen: open,
+      commandPaletteSearch: search,
+      commandPaletteTargetWatchlist: targetWatchlist,
+      commandPaletteEditRuleId: editRuleId,
+    }),
   watchlistCounts: {},
   updateWatchlistCounts: (counts) => set((state) => ({ watchlistCounts: { ...state.watchlistCounts, ...counts } })),
     }),

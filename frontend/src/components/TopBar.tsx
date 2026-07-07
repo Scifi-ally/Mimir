@@ -1,16 +1,14 @@
-import { KeyRound, Moon, Sun, Play, BarChart2, Wallet, Plus } from "lucide-react";
+import { KeyRound, Moon, Sun, Play, BarChart2, Wallet, Plus, Loader2 } from "lucide-react";
 import { useState, useEffect, useRef, memo } from "react";
 import { motion } from "framer-motion";
 import { flushSync } from "react-dom";
 import { cn, fmtNum, fmtPct } from "@/lib/format";
 import { Button } from "@/components/mimir/button";
-import { Separator } from "@/components/mimir/separator";
-import type { DashboardIndices, SessionState, SystemStatus } from "@/types/api";
+import type { DashboardIndices, SystemStatus } from "@/types/api";
 import { useStore } from "@/store/useStore";
 
 interface TopBarProps {
   indices: DashboardIndices | null;
-  session: SessionState | undefined;
   status: SystemStatus | undefined;
   wsConnected: boolean;
   onAuthorize: () => void;
@@ -29,7 +27,6 @@ import { api } from "@/lib/api";
 
 export const TopBar = memo(function TopBar({
   indices,
-  session,
   status,
   wsConnected,
   onAuthorize,
@@ -42,20 +39,11 @@ export const TopBar = memo(function TopBar({
   onOpenPaperTrading,
   onSelectSymbol,
 }: TopBarProps) {
-  const marketLabel = session?.isMarketOpen
-    ? "Market Open"
-    : session?.session === "PRE_MARKET"
-      ? "Pre-Market"
-      : session?.session === "POST_MARKET_SCAN"
-        ? "Scanning"
-        : session?.opensIn
-          ? `Market Closed (Opens in ${session.opensIn})`
-          : "Market Closed";
 
   const [isLight, setIsLight] = useState(false);
   const [startingScan, setStartingScan] = useState(false);
   const [stoppingScan, setStoppingScan] = useState(false);
-  const setLatestAlert = useStore((s) => s.setLatestAlert);
+
   const showIsland = useStore((s) => s.showIsland);
 
   useEffect(() => {
@@ -75,9 +63,9 @@ export const TopBar = memo(function TopBar({
     } catch (err) {
       setStartingScan(false);
       if (err instanceof Error) {
-        setLatestAlert(`Scan Failed: ${err.message}`);
+        showIsland({ isNotification: true, title: "Scan Failed", subtitle: err.message, showSuccessOnly: false });
       } else {
-        setLatestAlert("Scan Failed");
+        showIsland({ isNotification: true, title: "Scan Failed", subtitle: "An unknown error occurred", showSuccessOnly: false });
       }
     }
   };
@@ -98,7 +86,7 @@ export const TopBar = memo(function TopBar({
             // Invalidate queries if queryClient is available or let WS handle it, 
             // but setting scanState to false immediately fixes the stuck UI.
           } catch (err) {
-            setLatestAlert(`Failed to stop scan: ${err instanceof Error ? err.message : "Unknown error"}`);
+            showIsland({ isNotification: true, title: "Failed to stop scan", subtitle: err instanceof Error ? err.message : "Unknown error", showSuccessOnly: false });
           } finally {
             setStoppingScan(false);
           }
@@ -161,19 +149,13 @@ export const TopBar = memo(function TopBar({
     <>
       <header 
         className={cn(
-          "sticky top-0 z-50 flex shrink-0 flex-col justify-center bg-background/70 backdrop-blur-2xl saturate-150 border-0 px-4 sm:px-6 py-2"
+          "sticky top-0 z-50 flex shrink-0 flex-col justify-center bg-background/90 backdrop-blur-md border-0 px-4 sm:px-6 py-2"
         )}
       >
         <div className="flex flex-col w-full gap-2">
           {/* Top Row: Core Indices & Actions */}
-          <div className="flex w-full items-center justify-between gap-4 sm:gap-6 overflow-x-auto whitespace-nowrap [&::-webkit-scrollbar]:hidden pb-1">
+          <div className="flex w-full items-center justify-between gap-4 sm:gap-6 whitespace-nowrap pb-1">
             <div className="flex shrink-0 items-center gap-x-4 pr-2 py-1 relative">
-          <span className="flex shrink-0 items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-foreground/70" title={marketLabel}>
-            <span className={cn("h-1.5 w-1.5 rounded-full", session?.isMarketOpen ? "bg-bull animate-pulse-dot shadow-[0_0_8px_rgba(34,197,94,0.8)]" : "bg-bear shadow-[0_0_8px_rgba(239,68,68,0.5)]")} />
-            Mimir
-          </span>
-
-          <Separator orientation="vertical" className="hidden sm:block h-3 shrink-0 bg-border/20" />
 
           <div className="hidden sm:flex shrink-0 items-center gap-4 text-[11px] font-medium text-foreground/70">
             <IndexMetric label="NIFTY 50" ltp={indices?.nifty50.ltp} changePct={indices?.nifty50.changePct} storeKey="nifty" onSelect={() => onSelectSymbol?.("NIFTY 50")} />
@@ -189,9 +171,14 @@ export const TopBar = memo(function TopBar({
             <span className="truncate">
               <span className="hidden sm:inline">{watchlistDate}</span>
             </span>
-            {activeSignals > 0 && (
+            {activeSignals > 0 && !scanning && (
               <span className="font-semibold text-bull whitespace-nowrap">
                 {activeSignals} active signals
+              </span>
+            )}
+            {scanning && (
+              <span className="font-semibold text-accent animate-pulse whitespace-nowrap">
+                Scanning market...
               </span>
             )}
           </div>
@@ -280,11 +267,20 @@ export const TopBar = memo(function TopBar({
               )}
               title="Authorize Upstox"
             >
-              <KeyRound className={cn("h-4 w-4", status?.upstoxAuthenticated ? "text-bull" : "text-current")} />
-              {status?.upstoxAuthenticated && status.upstoxTokenExpiry ? (
-                <span className="hidden sm:inline"><TokenExpiryDisplay expiry={status.upstoxTokenExpiry} /></span>
+              {authorizing ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin text-current" />
+                  <span className="hidden sm:inline">Redirecting...</span>
+                </>
               ) : (
-                <span className="hidden sm:inline">Authorize Upstox</span>
+                <>
+                  <KeyRound className={cn("h-4 w-4", status?.upstoxAuthenticated ? "text-bull" : "text-current")} />
+                  {status?.upstoxAuthenticated && status.upstoxTokenExpiry ? (
+                    <span className="hidden sm:inline"><TokenExpiryDisplay expiry={status.upstoxTokenExpiry} /></span>
+                  ) : (
+                    <span className="hidden sm:inline">Authorize Upstox</span>
+                  )}
+                </>
               )}
             </Button>
             </motion.div>
@@ -332,13 +328,13 @@ function IndexMetric({
   const pctRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
-    let prevTick: any = null;
+    let prevTick: unknown = null;
     const unsub = useStore.subscribe((state) => {
       const tick = state.indices[storeKey!];
       if (!tick || tick === prevTick) return;
       prevTick = tick;
         if (priceRef.current && tick.ltp != null) {
-          priceRef.current.textContent = fmtNum(tick.ltp, isVix ? 2 : 0);
+          priceRef.current.textContent = fmtNum(tick.ltp, 2);
         }
         if (pctRef.current && !isVix && tick.changePct != null) {
           pctRef.current.textContent = fmtPct(tick.changePct);
@@ -354,7 +350,7 @@ function IndexMetric({
     <button type="button" onClick={onSelect} className="flex shrink-0 items-baseline gap-1.5 whitespace-nowrap cursor-pointer hover:bg-foreground/5 px-1.5 py-0.5 rounded transition-colors">
       <span className="text-foreground/70">{label}</span>
       <strong ref={priceRef} className="text-foreground tabular-nums">
-        {ltp != null ? fmtNum(ltp, isVix ? 2 : 0) : "—"}
+        {ltp != null ? fmtNum(ltp, 2) : "—"}
       </strong>
       {!isVix && (
         <strong ref={pctRef} className={cn(tone, "tabular-nums")}>

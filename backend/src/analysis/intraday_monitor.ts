@@ -16,10 +16,11 @@ import { logger } from "../lib/logger";
 import { stateStore } from "../lib/redis_state";
 import { db } from "../../db/src";
 import { suggestionsTable, overnightWatchlistTable } from "../../db/src";
-import { desc, eq, and } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { getLatestPrice, getTickData } from "../market_data/tick_feeder";
 import { broadcast } from "../ws/websocket_server";
 import { createServerEvent } from "../ws/events";
+import { intelligenceBus } from "../intelligence/event_bus";
 import { assessRisk } from "./risk_engine";
 import { buildSnapshot } from "./technical";
 import type { SetupCandidate, TechnicalSnapshot } from "./technical";
@@ -470,9 +471,11 @@ export function detectPullbackComplete(
   const recovery = prices.slice(6).reduce((a, b) => a + b) / prices.slice(6).length;
 
   if (direction === "BUY") {
-    return initialTrend < pullback && pullback < recovery;
+    // Initial up-trend, followed by a dip, followed by a recovery upward
+    return initialTrend > pullback && pullback < recovery;
   } else {
-    return initialTrend > pullback && pullback > recovery;
+    // Initial down-trend, followed by a bounce, followed by a recovery downward
+    return initialTrend < pullback && pullback > recovery;
   }
 }
 
@@ -622,6 +625,29 @@ function estimateAdxFromPrices(prices: number[]): number {
   return Math.min(100, (avgMove / range) * 100);
 }
 
+let activeSuggestionsCache: { symbols: Set<string>; timestamp: number } = {
+  symbols: new Set(),
+  timestamp: 0,
+};
+
+async function getActiveSymbolsSet(): Promise<Set<string>> {
+  const now = Date.now();
+  if (now - activeSuggestionsCache.timestamp < 30000 && activeSuggestionsCache.symbols.size > 0) {
+    return activeSuggestionsCache.symbols;
+  }
+  try {
+    const rows = await db
+      .select({ symbol: suggestionsTable.symbol })
+      .from(suggestionsTable)
+      .where(eq(suggestionsTable.status, "ACTIVE"));
+    const symbols = new Set(rows.map((r) => r.symbol));
+    activeSuggestionsCache = { symbols, timestamp: now };
+    return symbols;
+  } catch {
+    return activeSuggestionsCache.symbols;
+  }
+}
+
 /**
  * Generate intraday suggestion when signal is confirmed
  */
@@ -630,21 +656,11 @@ async function generateIntraDaySuggestion(
   currentPrice: number,
 ): Promise<void> {
   const monitored = monitoredStocks.get(symbol);
-  if (!monitored || monitored.signalGenerated) return;
+  if (!monitored || monitored.signalGenerated || currentPrice <= 0) return;
 
   try {
-    const [existingActive] = await db
-      .select({ id: suggestionsTable.id })
-      .from(suggestionsTable)
-      .where(
-        and(
-          eq(suggestionsTable.symbol, symbol),
-          eq(suggestionsTable.status, "ACTIVE"),
-        ),
-      )
-      .limit(1);
-
-    if (existingActive) {
+    const activeSymbols = await getActiveSymbolsSet();
+    if (activeSymbols.has(symbol)) {
       monitored.signalGenerated = true;
       await stateStore.saveMonitoredStock(symbol, monitored).catch(() => {});
       return;
@@ -673,7 +689,7 @@ async function generateIntraDaySuggestion(
       stopLoss,
       target1,
       target2,
-      riskReward: 2.0,
+      riskReward: 1.5,
       reasoning: `Intraday signal: ${monitored.watchlistEntry.condition}`,
       confluence: [monitored.watchlistEntry.category],
     };
@@ -743,6 +759,7 @@ async function generateIntraDaySuggestion(
       return;
     }
 
+    activeSuggestionsCache.symbols.add(symbol);
     monitored.signalGenerated = true;
     await stateStore.saveMonitoredStock(symbol, monitored).catch(() => {});
 
@@ -757,7 +774,27 @@ async function generateIntraDaySuggestion(
         setupType: "INTRADAY_SIGNAL",
         riskReward: riskAssessment.riskReward,
       }),
+      "suggestions",
     );
+
+    intelligenceBus.publish("suggestionGenerated", {
+      suggestion: {
+        id: inserted.id,
+        instrumentKey: `NSE_EQ|${symbol}`,
+        symbol,
+        direction,
+        setup: "INTRADAY_SIGNAL",
+        confidence: 80,
+        entry: currentPrice,
+        stopLoss,
+        target: target1,
+        target1,
+        riskReward: riskAssessment.riskReward,
+        reasoning: [`Intraday signal: ${monitored.watchlistEntry.condition}`],
+        generatedAt: Date.now(),
+        expiresAt: Date.now() + 20 * 60_000,
+      } as any
+    });
 
     logger.info(
       {

@@ -138,16 +138,16 @@ class MarketDataStore {
   updateFromRest(symbol: string, quote: any): void {
     const existing = this.data.get(symbol) ?? this.getDefaultData(symbol);
     // Only update price if no WebSocket data (REST is lower priority)
-    if (existing.source !== 'websocket') {
-      this.data.set(symbol, {
-        ...existing,
-        ltp: quote.ltp ?? existing.ltp,
-        change_pct: quote.change_pct ?? existing.change_pct,
-        source: 'rest',
-        is_transitioning: false,
-      });
-      this.notify(symbol);
-    }
+    const shouldUpdatePrice = existing.source !== 'websocket';
+    
+    this.data.set(symbol, {
+      ...existing,
+      ltp: shouldUpdatePrice ? (quote.ltp ?? existing.ltp) : existing.ltp,
+      change_pct: quote.change_pct ?? existing.change_pct,
+      source: shouldUpdatePrice ? 'rest' : existing.source,
+      is_transitioning: shouldUpdatePrice ? false : existing.is_transitioning,
+    });
+    this.notify(symbol);
   }
   
   markTransitioning(symbol: string): void {

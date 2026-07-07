@@ -2,11 +2,24 @@ import { useEffect } from "react";
 import Dashboard from "@/pages/Dashboard";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { DynamicIsland } from "@/components/DynamicIsland";
+
 import { useStore } from "@/store/useStore";
 
 export default function App() {
   const setCommandPaletteOpen = useStore((s) => s.setCommandPaletteOpen);
   const commandPaletteOpen = useStore((s) => s.commandPaletteOpen);
+  const latestAlert = useStore((s) => s.latestAlert);
+  const showIsland = useStore((s) => s.showIsland);
+
+  useEffect(() => {
+    if (latestAlert) {
+      showIsland({
+        title: "System Notification",
+        subtitle: latestAlert,
+        isNotification: true,
+      });
+    }
+  }, [latestAlert, showIsland]);
 
   useEffect(() => {
     const down = (e: KeyboardEvent) => {

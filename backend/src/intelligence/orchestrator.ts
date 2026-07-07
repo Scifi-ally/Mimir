@@ -174,7 +174,9 @@ class ScannerOrchestrator {
             // Generate suggestions for top 5 ranked opportunities
             for (const opportunity of ranked.slice(0, 5)) {
               const suggestion = this.suggestions.generate(opportunity);
-              intelligenceBus.publish("suggestionGenerated", { suggestion });
+              if (suggestion.isNew) {
+                intelligenceBus.publish("suggestionGenerated", { suggestion });
+              }
             }
           } catch (err) {
             logger.warn({ err }, "AI Ranking task failed");
@@ -182,11 +184,63 @@ class ScannerOrchestrator {
         }, 2000);
       }),
 
-      // Cache suggestions to Redis and subscribe to live ticks
-      intelligenceBus.subscribe("suggestionGenerated", ({ suggestion }) => {
+      // Cache suggestions to Redis, persist to DB, and subscribe to live ticks
+      intelligenceBus.subscribe("suggestionGenerated", async ({ suggestion }) => {
         void cacheJson(`intelligence:suggestion:${suggestion.instrumentKey}`, suggestion, 30 * 60);
         void syncMonitoredSubscriptions();
         
+        // Persist to database and broadcast to frontend
+        try {
+          const { db, suggestionsTable } = await import("../../db/src");
+          const [inserted] = await db
+            .insert(suggestionsTable)
+            .values({
+              symbol: suggestion.symbol,
+              name: suggestion.symbol,
+              exchange: "NSE",
+              direction: suggestion.direction,
+              tradeType: "INTRADAY",
+              setupType: suggestion.setup,
+              entryPrice: suggestion.entry.toString(),
+              stopLoss: suggestion.stopLoss.toString(),
+              target1: suggestion.target.toString(),
+              target2: null,
+              riskReward: suggestion.riskReward.toString(),
+              quantity: 1,
+              maxRiskInr: Math.abs(suggestion.entry - suggestion.stopLoss).toString(),
+              stopDistancePct: (Math.abs(suggestion.entry - suggestion.stopLoss) / suggestion.entry * 100).toString(),
+              marketRegime: this.breadth.getSnapshot()?.regime ?? "UNKNOWN",
+              reasoning: suggestion.reasoning ? suggestion.reasoning.join("; ") : "",
+              validityTill: new Date(suggestion.expiresAt).toISOString(),
+              status: "ACTIVE",
+              atr: (Math.abs(suggestion.entry - suggestion.stopLoss) / 1.5).toString(),
+              highestPrice: suggestion.entry.toString(),
+              lowestPrice: suggestion.entry.toString(),
+              signalFactors: null,
+            })
+            .returning();
+
+          if (inserted) {
+            broadcast(
+              createServerEvent.newSuggestion({
+                id: inserted.id,
+                symbol: inserted.symbol,
+                direction: suggestion.direction as "BUY" | "SELL",
+                entryPrice: suggestion.entry,
+                stopLoss: suggestion.stopLoss,
+                target1: suggestion.target,
+                setupType: suggestion.setup,
+                riskReward: suggestion.riskReward,
+                scanSessionId: undefined,
+              }),
+              "suggestions"
+            );
+            logger.info({ symbol: suggestion.symbol, id: inserted.id }, "Real-time suggestion persisted and broadcasted");
+          }
+        } catch (err) {
+          logger.warn({ err, symbol: suggestion.symbol }, "Failed to persist real-time suggestion to database");
+        }
+
         // Detect compositeScore alerts
         detectAlerts(suggestion.symbol, {
           compositeScore: suggestion.confidence / 10 // Confidence is Math.round(compositeScore * 10)
@@ -203,6 +257,8 @@ class ScannerOrchestrator {
     // Connect WebSocket — subscribe to monitored watchlist only (not full universe)
     await syncMonitoredSubscriptions();
     await upstoxConnectionManager.connect();
+    
+    // Tick distribution engine self-starts its intervals on instantiation
 
     this.startTimers();
     this.status = "running";
