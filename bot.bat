@@ -124,7 +124,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%scripts\run-det
 echo !C_GRAY!    +-- !C_DIM!Starting frontend...!C_RESET!
 powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%scripts\run-detached.ps1" -FilePath "!NODE_CMD!" -ArgumentList "%PROJECT_DIR%\node_modules\vite\bin\vite.js preview" -WorkingDirectory "%PROJECT_DIR%\frontend" -PidFile "!FRONTEND_PID_FILE!" -LogOut "!FRONTEND_PID_FILE!.out.log" -LogErr "!FRONTEND_PID_FILE!.err.log"
 
-:: Start Cloudflare Tunnel in the background (generates a fresh random URL)
+:: Start Cloudflare Tunnel in the background (preferred over Ngrok to ensure uninterrupted WebSocket telemetry without interstitial auth prompts)
 set "CF_CMD=%PROJECT_DIR%\.portable\cloudflared.exe"
 if exist "!CF_CMD!" (
     echo !C_GRAY!    +-- !C_DIM!Starting Cloudflare tunnel...!C_RESET!

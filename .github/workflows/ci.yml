@@ -17,14 +17,8 @@ jobs:
         with:
           node-version: 22
 
-      - name: Install root dependencies
-        run: npm ci
-
-      - name: Install backend dependencies
-        run: npm --prefix backend ci --legacy-peer-deps
-
-      - name: Install frontend dependencies
-        run: npm --prefix frontend ci
+      - name: Install workspace dependencies
+        run: npm ci --legacy-peer-deps
 
       - name: Typecheck
         run: npm run typecheck
