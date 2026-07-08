@@ -14,7 +14,11 @@ const options = {
   },
   outExtension: { '.js': '.mjs' },
   sourcemap: true,
-  packages: 'external',
+  external: [
+    'axios', 'cookie-parser', 'cors', 'dotenv', 'express', 'ioredis', 
+    'msgpackr', 'node-cron', 'pg', 'pino', 'pino-http', 'protobufjs', 
+    'upstox-js-sdk', 'ws', 'yahoo-finance2', 'zod'
+  ],
   plugins: [esbuildPluginPino({ transports: ['pino-pretty'] })],
 };
 
