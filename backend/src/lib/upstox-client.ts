@@ -108,8 +108,11 @@ class GlobalRateLimiter {
         this.intervalStarted = now;
       }
       
-      // Upstox limit is 10/sec, we use 8 to be safe
-      if (this.reqsInLastSecond < 8) {
+      // Upstox limit is 10/sec per endpoint (V2 and V3).
+      // When market is closed, we deterministically load-balance across V2 and V3.
+      // A limit of 14 (7 to V2, 7 to V3) is completely safe and almost doubles throughput.
+      const safeLimit = isMarketOpen() ? 8 : 14;
+      if (this.reqsInLastSecond < safeLimit) {
         this.reqsInLastSecond++;
         const item = this.queue.shift();
         item?.resolve();
@@ -463,6 +466,8 @@ export function createUpstoxClient(options?: {
   /**
    * Fetch historical candles with caching
    */
+  let v3RoundRobin = false;
+
   async function fetchHistoricalCandles(
     instrumentKey: string,
     interval: "1minute" | "5minute" | "15minute" | "day" | "60minute" | "240minute" | "week",
@@ -509,10 +514,17 @@ export function createUpstoxClient(options?: {
             return v2Resp.data?.data?.candles ?? [];
           };
 
-          const preferV3 = interval === "240minute" || interval === "week";
+          let preferV3 = interval === "240minute" || interval === "week";
+          
+          if (!preferV3 && !isMarketOpen()) {
+            // Use deterministic round-robin to evenly split traffic 50/50.
+            // This prevents statistical clustering that random Math.random() caused, 
+            // guaranteeing we never exceed the 10/sec bucket for either endpoint.
+            v3RoundRobin = !v3RoundRobin;
+            preferV3 = v3RoundRobin;
+          }
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           let candles: any[][] = [];
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           let lastError: any = null;
           try {
             candles = preferV3 ? await fetchV3() : await fetchV2();
@@ -526,6 +538,11 @@ export function createUpstoxClient(options?: {
 
           if (candles.length === 0) {
             try {
+              if (lastError) {
+                // IMPORTANT: If we are falling back after a failure, we MUST go back 
+                // in the rate limit queue to respect the global limit!
+                await apiRateLimiter.wait(priority); 
+              }
               candles = preferV3 ? await fetchV2() : await fetchV3();
               lastError = null; // Clear primary error if fallback succeeded
             } catch (fallbackErr) {

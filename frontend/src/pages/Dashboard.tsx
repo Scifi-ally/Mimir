@@ -70,11 +70,20 @@ export default function Dashboard() {
     return watchlistItems.map(r => r.symbol);
   }, [watchlistItems]);
 
+  const [debouncedSymbols, setDebouncedSymbols] = useState<string[]>(watchlistSymbols);
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSymbols(watchlistSymbols);
+    }, 1500);
+    return () => clearTimeout(handler);
+  }, [watchlistSymbols]);
+
   const sparklinesQuery = useQuery({
-    queryKey: ["sparklines", watchlistSymbols],
-    queryFn: () => api.sparklines(watchlistSymbols),
+    queryKey: ["sparklines", debouncedSymbols],
+    queryFn: () => api.sparklines(debouncedSymbols),
     staleTime: 5 * 60 * 1000,
-    enabled: watchlistSymbols.length > 0
+    enabled: debouncedSymbols.length > 0
   });
 
   const session = sessionQuery.data;
