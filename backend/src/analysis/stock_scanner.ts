@@ -1499,7 +1499,6 @@ export async function scanStock(
           adjustedScore -= 0.45;
         }
 
-        // Relative strength modifier
         if (c.direction === "BUY") {
           if (rs60 > 1.1) adjustedScore += 0.5;
           else if (rs60 < 0.9) adjustedScore -= 0.5;
@@ -1513,25 +1512,24 @@ export async function scanStock(
         if (htfConf === "confirms") adjustedScore += 0.5;
         else if (htfConf === "contradicts") adjustedScore -= 0.8;
 
-        // Multi-timeframe confluence boost (if daily + weekly aligned)
+        // Multi-timeframe confluence boost
         if (
           mtfSignal.direction === c.direction &&
           mtfSignal.confluenceScore >= 66
         ) {
-          adjustedScore += 1.0; // +1.0 for strong multi-timeframe alignment
+          adjustedScore += 1.0; 
         } else if (
           mtfSignal.direction === c.direction &&
           mtfSignal.confluenceScore >= 50
         ) {
-          adjustedScore += 0.5; // +0.5 for partial alignment
+          adjustedScore += 0.5;
         } else if (
           mtfSignal.direction !== c.direction &&
           mtfSignal.confluenceScore >= 66
         ) {
-          adjustedScore -= 1.5; // -1.5 if strongly contradicts
+          adjustedScore -= 1.5; 
         }
 
-        // Hourly/4h crossover boost
         if (
           (mtfSignal.crossover1h || mtfSignal.crossover4h) &&
           mtfSignal.direction === c.direction
@@ -1539,12 +1537,15 @@ export async function scanStock(
           adjustedScore += 0.3;
         }
 
-        // Volume increase confirmation
         if (mtfSignal.volumeIncrease && c.direction === "BUY") {
           adjustedScore += 0.2;
         }
 
-        return { ...c, score: Math.min(Math.max(adjustedScore, 0), 10) };
+        // Cap normal score at 9.0 to leave room for the truly exceptional setups.
+        // We only allow scores above 9.0 if MTF confluence is exceptionally high.
+        const scoreCap = mtfSignal.confluenceScore >= 75 && mtfSignal.direction === c.direction ? 10 : 9.0;
+        
+        return { ...c, score: Math.min(Math.max(adjustedScore, 0), scoreCap) };
       })
       .filter((c): c is SetupCandidate => c !== null);
 
