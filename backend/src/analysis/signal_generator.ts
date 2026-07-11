@@ -29,7 +29,7 @@ import { getISTDateStr } from "../lib/ist-time";
 
 export interface AdaptiveWeights {
   tech: number;
-  kronos: number;
+  technicalRanking: number;
   chronos: number;
   rs: number;
   sector: number;
@@ -41,7 +41,7 @@ let adaptiveWeightsCache: AdaptiveWeights | null = null;
 let lastWeightFetch = 0;
 
 async function getAdaptiveWeights(): Promise<AdaptiveWeights> {
-  const defaultWeights = { tech: 0.25, kronos: 0.15, chronos: 0.10, rs: 0.15, sector: 0.15, regime: 0.10, sentiment: 0.10 };
+  const defaultWeights = { tech: 0.25, technicalRanking: 0.15, chronos: 0.10, rs: 0.15, sector: 0.15, regime: 0.10, sentiment: 0.10 };
   
   if (adaptiveWeightsCache && Date.now() - lastWeightFetch < 60 * 60 * 1000) {
     return adaptiveWeightsCache;
@@ -85,7 +85,7 @@ export interface IntelligenceSignal {
   // Rule intelligence. ai* names are retained for API compatibility.
   aiScore: number;            // 0-100 composite rule score
   confidence: number;         // 0-100 final confidence
-  kronosScore: number;        // 0-100 pattern quality score
+  patternScore: number;        // 0-100 pattern quality score
   chronosScore: number;       // 0-100 directional forecast score
   technicalScore: number;     // 0-100 technical score
   sentimentScore: number;     // 0-100 news sentiment score
@@ -154,7 +154,7 @@ export interface PipelineResult {
 
 function computeFinalConfidence(
   technicalScore: number,
-  kronosScore: number,
+  patternScore: number,
   chronosScore: number,
   relativeStrength: number,
   sectorStrength: number,
@@ -171,7 +171,7 @@ function computeFinalConfidence(
     technicalScore * weights.tech +
     rsNormalized * weights.rs +
     sectorNormalized * weights.sector +
-    kronosScore * weights.kronos +
+    patternScore * weights.technicalRanking +
     chronosScore * weights.chronos +
     regimeScore * weights.regime +
     sentimentScore * weights.sentiment;
@@ -189,7 +189,7 @@ function computeFallbackConfidence(
   const rsNormalized = Math.max(0, Math.min(100, ((rsVsNifty60d - 0.8) / 0.4) * 100));
   const sectorNormalized = Math.max(0, Math.min(100, ((sectorStrength + 2) / 4) * 100));
 
-  const techWeight = weights.tech + weights.kronos + weights.chronos + weights.sentiment;
+  const techWeight = weights.tech + weights.technicalRanking + weights.chronos + weights.sentiment;
 
   const confidence =
     technicalScore * techWeight +
@@ -359,7 +359,7 @@ export async function runIntelligencePipeline(
     const aiContributing =
       aiResult !== undefined &&
       !aiResult.isFallback &&
-      (aiResult.kronos.source === "model" || aiResult.chronos.source === "model");
+      (aiResult.technicalRanking.source === "model" || aiResult.chronos.source === "model");
       
     // Extract Sentiment
     const sentimentScore = aiResult?.sentiment_score ?? 50;
@@ -369,7 +369,7 @@ export async function runIntelligencePipeline(
 
     // Compute scores
     const technicalScore = Math.round(Math.min(100, (result.score / 10) * 100));
-    const kronosScore = aiResult?.kronos.bullish_probability ?? 0;
+    const patternScore = aiResult?.technicalRanking.bullish_probability ?? 0;
     const chronosScore = aiResult
       ? mapChronosToScore(aiResult.chronos, result.setup.direction)
       : 0;
@@ -382,7 +382,7 @@ export async function runIntelligencePipeline(
     let confidence = aiContributing
       ? computeFinalConfidence(
           technicalScore,
-          kronosScore,
+          patternScore,
           chronosScore,
           features.rsVsNifty60d,
           sectorStrength,
@@ -461,15 +461,15 @@ export async function runIntelligencePipeline(
     const sectorVal = features.sectorStrength;
     const sectorNormalized = Math.max(0, Math.min(100, ((sectorVal + 2) / 4) * 100));
 
-    const techCont = technicalScore * (aiContributing ? adaptiveWeights.tech : (adaptiveWeights.tech + adaptiveWeights.kronos + adaptiveWeights.chronos));
+    const techCont = technicalScore * (aiContributing ? adaptiveWeights.tech : (adaptiveWeights.tech + adaptiveWeights.technicalRanking + adaptiveWeights.chronos));
     const rsCont = rsNormalized * adaptiveWeights.rs;
     const sectorCont = sectorNormalized * adaptiveWeights.sector;
-    const kronosCont = kronosScore * adaptiveWeights.kronos;
+    const patternCont = patternScore * adaptiveWeights.technicalRanking;
     const chronosCont = chronosScore * adaptiveWeights.chronos;
     const regimeCont = regimeScore * adaptiveWeights.regime;
 
     const dynamicReasoning = aiContributing
-      ? `[LEARNING ENABLED] Reasons: Relative Strength +${rsCont.toFixed(1)}, Sector Rank +${sectorCont.toFixed(1)}, Volume Expansion +${features.volumeRatio ? ((features.volumeRatio - 1) * 100).toFixed(0) : "0"}%, Nifty50GPT Pattern Score +${kronosCont.toFixed(1)}, Chronos Forecast Score +${chronosCont.toFixed(1)}, Total Composite Score ${confidence}. Contributions: Tech Quality +${techCont.toFixed(1)}, RS +${rsCont.toFixed(1)}, Sector +${sectorCont.toFixed(1)}, Nifty50GPT +${kronosCont.toFixed(1)}, Chronos +${chronosCont.toFixed(1)}, Regime +${regimeCont.toFixed(1)}.`
+      ? `[LEARNING ENABLED] Reasons: Relative Strength +${rsCont.toFixed(1)}, Sector Rank +${sectorCont.toFixed(1)}, Volume Expansion +${features.volumeRatio ? ((features.volumeRatio - 1) * 100).toFixed(0) : "0"}%, Nifty50GPT Pattern Score +${patternCont.toFixed(1)}, Chronos Forecast Score +${chronosCont.toFixed(1)}, Total Composite Score ${confidence}. Contributions: Tech Quality +${techCont.toFixed(1)}, RS +${rsCont.toFixed(1)}, Sector +${sectorCont.toFixed(1)}, Nifty50GPT +${patternCont.toFixed(1)}, Chronos +${chronosCont.toFixed(1)}, Regime +${regimeCont.toFixed(1)}.`
       : `[LEARNING ENABLED] Reasons: Relative Strength +${rsCont.toFixed(1)}, Sector Rank +${sectorCont.toFixed(1)}, Volume Expansion +${features.volumeRatio ? ((features.volumeRatio - 1) * 100).toFixed(0) : "0"}%, Technical Score ${technicalScore}, Total Composite Score ${confidence}. Contributions: Tech Quality +${techCont.toFixed(1)}, RS +${rsCont.toFixed(1)}, Sector +${sectorCont.toFixed(1)}, Regime +${regimeCont.toFixed(1)}.`;
 
     // ── Confidence threshold check ────────────────────────────────────
@@ -578,7 +578,7 @@ export async function runIntelligencePipeline(
 
       aiScore,
       confidence,
-      kronosScore: Math.round(kronosScore),
+      patternScore: Math.round(patternScore),
       chronosScore: Math.round(chronosScore),
       technicalScore,
       sentimentScore: Math.round(sentimentScore),
@@ -597,7 +597,7 @@ export async function runIntelligencePipeline(
 
       reasoning: dynamicReasoning,
       confluence: result.setup.confluence,
-      aiPatterns: aiResult?.kronos.detected_patterns ?? [],
+      aiPatterns: aiResult?.technicalRanking.detected_patterns ?? [],
       aiMode,
       rankingProvider,
       scannerType: result.category,
@@ -608,7 +608,7 @@ export async function runIntelligencePipeline(
         snap,
         features,
         aiContributing,
-        kronosScore,
+        patternScore,
         chronosScore,
         technicalScore,
         regimeScore,
@@ -709,7 +709,7 @@ function calculateSignalFactors(
   snap: TechnicalSnapshot,
   features: FeatureVector,
   aiContributing: boolean,
-  kronosScore: number,
+  patternScore: number,
   chronosScore: number,
   technicalScore: number,
   regimeScore: number,
@@ -727,7 +727,7 @@ function calculateSignalFactors(
   const rsContrib = Math.round(rsNormalized * (aiContributing ? 0.20 : 0.30));
   const sectorContrib = Math.round(sectorNormalized * (aiContributing ? 0.15 : 0.20));
   const regimeContrib = Math.round(regimeScore * 0.10);
-  const kronosContrib = aiContributing ? Math.round(kronosScore * 0.15) : 0;
+  const patternContrib = aiContributing ? Math.round(patternScore * 0.15) : 0;
   const chronosContrib = aiContributing ? Math.round(chronosScore * 0.10) : 0;
 
   // Sub-breakdowns of technical indicators
@@ -776,9 +776,9 @@ function calculateSignalFactors(
       contribution: regimeContrib,
       align: learningMetric?.regimeAlign ? parseFloat(learningMetric.regimeAlign) : null,
     },
-    kronos: aiContributing ? {
-      score: Math.round(kronosScore),
-      contribution: kronosContrib,
+    technicalRanking: aiContributing ? {
+      score: Math.round(patternScore),
+      contribution: patternContrib,
     } : null,
     chronos: aiContributing ? {
       score: Math.round(chronosScore),

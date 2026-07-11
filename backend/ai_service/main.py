@@ -1,7 +1,7 @@
 """
 AI Inference Microservice — FastAPI on port 8001.
 
-• Loads Kronos-small and Chronos-Bolt-Tiny **once** at startup.
+• Loads Technical Pattern Engine and Chronos-Bolt-Tiny **once** at startup.
 • Provides batch and single-model inference endpoints.
 • Graceful degradation: if a model fails to load the service still starts
   and returns rule-based fallback scores.
@@ -28,7 +28,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 
-from models import kronos, chronos_service
+from models import technical_pattern_engine, chronos_service
 from sentiment import analyze_sentiment
 
 # ---------------------------------------------------------------------------
@@ -153,13 +153,13 @@ class RuntimeDiagnostics:
 
 
 def _build_health_snapshot() -> Dict[str, Any]:
-    kronos_status = kronos.get_status()
+    technical_engine_status = technical_pattern_engine.get_status()
     chronos_status = chronos_service.get_status()
     runtime = RuntimeDiagnostics.collect()
 
     ai_enabled = bool(
-        kronos_status.get("loaded")
-        and kronos_status.get("healthy")
+        technical_engine_status.get("loaded")
+        and technical_engine_status.get("healthy")
         and chronos_status.get("loaded")
         and chronos_status.get("healthy")
     )
@@ -169,7 +169,7 @@ def _build_health_snapshot() -> Dict[str, Any]:
 
     model_load_times = [
         value
-        for value in [kronos_status.get("load_time_ms"), chronos_status.get("load_time_ms")]
+        for value in [technical_engine_status.get("load_time_ms"), chronos_status.get("load_time_ms")]
         if isinstance(value, (int, float))
     ]
     total_model_load_time_ms = round(sum(model_load_times), 2) if model_load_times else None
@@ -183,7 +183,7 @@ def _build_health_snapshot() -> Dict[str, Any]:
         "inference_device": runtime["inference_device"],
         "onnx_providers": runtime["onnx_providers"],
         "last_health_check_ts": runtime["checked_at"],
-        "last_successful_inference_ts": kronos_status.get("last_successful_inference_ts")
+        "last_successful_inference_ts": technical_engine_status.get("last_successful_inference_ts")
         or chronos_status.get("last_successful_inference_ts"),
     }
 
@@ -193,7 +193,7 @@ def _build_health_snapshot() -> Dict[str, Any]:
         "ranking_provider": ranking_provider,
         "uptime_seconds": round(time.time() - _start_time, 2),
         "models": {
-            "kronos": kronos_status,
+            "technical_engine": technical_engine_status,
             "chronos": chronos_status,
         },
         "hardware": runtime,
@@ -258,9 +258,9 @@ async def lifespan(app: FastAPI):
             logger.exception("Failed to load sentiment model")
 
         try:
-            kronos.load_model()
+            technical_pattern_engine.load_model()
         except Exception:
-            logger.exception("Failed to load Kronos model")
+            logger.exception("Failed to load Technical Pattern Engine")
 
         try:
             chronos_service.load_model()
@@ -343,7 +343,7 @@ class BatchRequest(BaseModel):
     candidates: List[CandidateRequest] = Field(..., min_length=1, max_length=200)
 
 
-class KronosRequest(BaseModel):
+class TechnicalRankingRequest(BaseModel):
     ohlcv: List[List[float]] = Field(..., min_length=2)
     features: Optional[Dict[str, Any]] = Field(default_factory=dict)
 
@@ -353,7 +353,7 @@ class ChronosRequest(BaseModel):
     steps: Optional[int] = Field(5, ge=1, le=30)
 
 
-class KronosResponse(BaseModel):
+class TechnicalRankingResponse(BaseModel):
     bullish_probability: float
     confidence: float
     detected_patterns: List[str]
@@ -370,7 +370,7 @@ class ChronosResponse(BaseModel):
 
 class CandidateScore(BaseModel):
     symbol: str
-    kronos: KronosResponse
+    kronos: TechnicalRankingResponse
     chronos: ChronosResponse
     sentiment_score: float = Field(default=0.0, description="News sentiment score -1.0 to 1.0")
     world_sentiment_score: float = Field(default=0.0, description="World politics sentiment score -1.0 to 1.0")
@@ -419,14 +419,14 @@ async def health():
     )
 
 
-@app.post("/inference/kronos", response_model=KronosResponse, tags=["Inference"])
-async def infer_kronos(req: KronosRequest):
-    """Single Kronos inference on OHLCV data."""
+@app.post("/inference/technical_ranking", response_model=TechnicalRankingResponse, tags=["Inference"])
+async def infer_technical_ranking(req: TechnicalRankingRequest):
+    """Single Technical Pattern Engine inference on OHLCV data."""
     t0 = time.time()
     try:
-        result = kronos.infer(req.ohlcv, req.features or {})
+        result = technical_pattern_engine.infer(req.ohlcv, req.features or {})
         InferenceStats.record((time.time() - t0) * 1000)
-        return KronosResponse(
+        return TechnicalRankingResponse(
             bullish_probability=result.bullish_probability,
             confidence=result.confidence,
             detected_patterns=result.detected_patterns,
@@ -435,7 +435,7 @@ async def infer_kronos(req: KronosRequest):
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     except Exception as exc:
-        logger.exception("Kronos inference error")
+        logger.exception("Technical Pattern Engine inference error")
         raise HTTPException(status_code=500, detail=f"Inference failed: {exc}")
 
 
@@ -460,11 +460,11 @@ async def infer_chronos(req: ChronosRequest):
         raise HTTPException(status_code=500, detail=f"Inference failed: {exc}")
 
 
-def _compute_composite_score(kr: kronos.KronosResult, cr: chronos_service.ChronosResult, sentiment_dict: Dict[str, float]) -> float:
+def _compute_composite_score(kr: technical_pattern_engine.TechnicalPatternResult, cr: chronos_service.ChronosResult, sentiment_dict: Dict[str, float]) -> float:
     """
-    Blend Kronos bullish probability, Chronos forecast, and news sentiment into a 0-100 score.
+    Blend Technical bullish probability, Chronos forecast, and news sentiment into a 0-100 score.
     """
-    kronos_component = kr.bullish_probability * 50
+    technical_component = kr.bullish_probability * 50
 
     import math
     chronos_raw = 1 / (1 + math.exp(-cr.forecast_return_pct))  # 0..1
@@ -475,7 +475,7 @@ def _compute_composite_score(kr: kronos.KronosResult, cr: chronos_service.Chrono
     # Advanced Sentiment Component using blended composite
     sentiment_component = sentiment_dict.get('composite', 0.0) * 5.0
 
-    score = kronos_component + chronos_component + confidence_component + sentiment_component
+    score = technical_component + chronos_component + confidence_component + sentiment_component
     
     # Macro Crash Risk Penalty
     world_score = sentiment_dict.get('world_score', 0.0)
@@ -488,7 +488,7 @@ def _compute_composite_score(kr: kronos.KronosResult, cr: chronos_service.Chrono
 
 @app.post("/inference/batch", response_model=BatchResponse, tags=["Inference"])
 async def infer_batch(req: BatchRequest):
-    """Batch inference — runs Kronos + Chronos for each candidate and returns
+    """Batch inference — runs Technical Pattern Engine + Chronos for each candidate and returns
     a composite AI score (0-100)."""
     t0 = time.time()
     
@@ -504,20 +504,20 @@ async def infer_batch(req: BatchRequest):
 
                 # Run heavy inference in separate threads to avoid blocking the event loop
                 kr, cr = await asyncio.gather(
-                    asyncio.to_thread(kronos.infer, cand.ohlcv, cand.features or {}),
+                    asyncio.to_thread(technical_pattern_engine.infer, cand.ohlcv, cand.features or {}),
                     asyncio.to_thread(chronos_service.infer, closes)
                 )
                 
                 # Sentiment is now fully async via httpx
                 sentiment_dict = await analyze_sentiment(cand.symbol)
                 if isinstance(sentiment_dict, float):
-                    sentiment_dict = {"symbol_score": sentiment_dict, "world_score": 0.0, "composite": sentiment_dict}
+                    sentiment_dict = {"symbol_specific_score": sentiment_dict, "market_wide_score": 0.0, "world_score": 0.0, "composite": sentiment_dict}
 
                 composite = _compute_composite_score(kr, cr, sentiment_dict)
 
                 return CandidateScore(
                     symbol=cand.symbol,
-                    kronos=KronosResponse(
+                    technical_ranking=TechnicalRankingResponse(
                         bullish_probability=kr.bullish_probability,
                         confidence=kr.confidence,
                         detected_patterns=kr.detected_patterns,
@@ -530,7 +530,7 @@ async def infer_batch(req: BatchRequest):
                         forecast_return_pct=cr.forecast_return_pct,
                         source=cr.source,
                     ),
-                    sentiment_score=sentiment_dict.get("symbol_score", 0.0),
+                    sentiment_score=sentiment_dict.get("symbol_specific_score", 0.0),
                     world_sentiment_score=sentiment_dict.get("world_score", 0.0),
                     composite_score=composite,
                 )
@@ -538,7 +538,7 @@ async def infer_batch(req: BatchRequest):
                 logger.error("Batch inference failed for %s: %s", cand.symbol, exc)
                 return CandidateScore(
                     symbol=cand.symbol,
-                    kronos=KronosResponse(
+                    technical_ranking=TechnicalRankingResponse(
                         bullish_probability=0.5,
                         confidence=0.0,
                         detected_patterns=[],

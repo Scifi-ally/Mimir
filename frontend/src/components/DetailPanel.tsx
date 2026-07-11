@@ -41,7 +41,7 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
   const insightsQuery = useQuery({
     queryKey: ["symbol-insights", selectedSymbol],
     queryFn: () => api.symbolInsights(selectedSymbol),
-    enabled: Boolean(selectedSymbol.trim()),
+    enabled: Boolean(selectedSymbol && typeof selectedSymbol === 'string' && selectedSymbol.trim()),
     placeholderData: keepPreviousData,
     retry: false,
     refetchInterval: 10000,
@@ -341,10 +341,10 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
                      })()
                    } color="text-foreground" />
                    <MatrixRow onClick={() => setSelectedMetric("pricePattern")} label="Price Pattern" tooltip="Specific candlestick or structural patterns identified on the chart." value={
-                     forecast?.kronosPatterns && forecast.kronosPatterns.length > 0 ? (
+                     forecast?.technicalPatterns && forecast.technicalPatterns.length > 0 ? (
                        <span className="flex items-center gap-1.5 bg-orange-500/10 text-orange-500 px-2 py-0.5 rounded min-w-0 text-[10px] break-words">
                          <Flame className="h-3 w-3 shrink-0" />
-                         <span>{forecast.kronosPatterns[0].replace(/_/g, " ")}</span>
+                         <span>{forecast.technicalPatterns[0].replace(/_/g, " ")}</span>
                        </span>
                      ) : (selectedSignal?.setupType || scan?.setupType) && (selectedSignal?.setupType || scan?.setupType) !== "LIQUIDITY_SWEEP" ? (
                        <span className="flex items-center gap-1.5 bg-orange-500/10 text-orange-500 px-2 py-0.5 rounded min-w-0 text-[10px] break-words">
@@ -354,10 +354,10 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
                      ) : scan?.condition ? (
                        <span className="text-foreground/80 font-medium break-words">{scan.condition}</span>
                      ) : "NONE"
-                   } color={(forecast?.kronosPatterns && forecast.kronosPatterns.length > 0) || ((selectedSignal?.setupType || scan?.setupType) && (selectedSignal?.setupType || scan?.setupType) !== "LIQUIDITY_SWEEP") ? "text-orange-500 font-bold" : "text-neutral-500"} />
-                   <MatrixRow onClick={() => setSelectedMetric("modelSource")} label="Model Source" tooltip="The AI model that generated the forecast." value={(() => {
-                     return forecast?.source ? forecast.source.toUpperCase().replace("NIFTY50GPT", "GPT-50") : "ENSEMBLE";
-                   })()} color="text-orange-400" />
+                   } color={(forecast?.technicalPatterns && forecast.technicalPatterns.length > 0) || ((selectedSignal?.setupType || scan?.setupType) && (selectedSignal?.setupType || scan?.setupType) !== "LIQUIDITY_SWEEP") ? "text-orange-500 font-bold" : "text-neutral-500"} />
+                   <MatrixRow onClick={() => setSelectedMetric("modelSource")} label="Analysis Source" tooltip="Whether this is real model output or a heuristic fallback engine." value={(() => {
+                     return forecast?.isFallback ? "HEURISTIC FALLBACK" : "AI MODEL";
+                   })()} color={forecast?.isFallback ? "text-yellow-500 font-bold" : "text-green-500 font-bold"} />
                  </div>
               </motion.div>
             )}
@@ -483,9 +483,9 @@ function MetricDetailView({ metricId, onBack, insights, forecast, selectedSignal
       content = (
         <div className="flex flex-col gap-3 text-xs text-foreground/90">
           <p className="leading-relaxed text-muted-foreground text-[11px]">Technical Pattern Engine recognition scanning across 1D and 1H timeframes. It detects classical chart formations (like Head & Shoulders, Flags, Triangles) and complex candlestick structures to predict imminent volatility expansions.</p>
-          {forecast?.kronosPatterns && forecast.kronosPatterns.length > 0 ? (
+          {forecast?.technicalPatterns && forecast.technicalPatterns.length > 0 ? (
              <div className="flex flex-col gap-1.5">
-               {forecast.kronosPatterns.map((p: string) => (
+               {forecast.technicalPatterns.map((p: string) => (
                  <div key={p} className="text-orange-500 py-1 border-b border-border/10 font-bold uppercase tracking-wide text-xs">{p.replace(/_/g, " ")}</div>
                ))}
              </div>

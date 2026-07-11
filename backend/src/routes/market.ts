@@ -679,7 +679,7 @@ router.get("/market/movers", async (req, res) => {
   }
 });
 
-// GET /api/market/forecast?symbol=TCS — Chronos/Kronos AI forecast from live candles
+// GET /api/market/forecast?symbol=TCS — Chronos/Technical Ranking AI forecast from live candles
 router.get("/market/forecast", async (req, res) => {
   try {
     const rawSymbol = String(req.query.symbol ?? "").trim().toUpperCase();
@@ -732,7 +732,7 @@ router.get("/market/forecast", async (req, res) => {
     }
 
     const lastClose = context.candles[context.candles.length - 1]?.close ?? null;
-    const isFallback = Boolean(ai.isFallback || ai.chronos.source === "fallback" || ai.kronos.source === "fallback" || ai.kronos.source === "Advanced Stochastic Engine" || ai.chronos.source === "error" || ai.kronos.source === "error");
+    const isFallback = Boolean(ai.isFallback || ai.chronos.source === "fallback" || ai.technicalRanking.source === "fallback" || ai.technicalRanking.source === "Advanced Stochastic Engine" || ai.chronos.source === "error" || ai.technicalRanking.source === "error");
     res.json({
       symbol: stock.symbol,
       available: true,
@@ -742,7 +742,7 @@ router.get("/market/forecast", async (req, res) => {
       forecastReturnPct: ai.chronos.forecast_return_pct,
       medianForecast: ai.chronos.median_forecast,
       quantileForecasts: ai.chronos.quantile_forecasts,
-      kronos: ai.kronos,
+      technicalRanking: ai.technicalRanking,
       compositeScore: ai.composite_score,
       lastClose,
       fetchedAt: new Date().toISOString(),
@@ -899,9 +899,9 @@ router.get("/market/symbol-insights", async (req, res) => {
             compositeScore: ai.composite_score,
             trend: ai.chronos.trend,
             forecastReturnPct: ai.chronos.forecast_return_pct,
-            kronosPatterns: ai.kronos.detected_patterns,
+            technicalPatterns: ai.technicalRanking.detected_patterns,
             source: ai.chronos.source,
-            isFallback: Boolean(ai.isFallback || ai.chronos.source === "fallback" || ai.kronos.source === "fallback" || ai.kronos.source === "Advanced Stochastic Engine" || ai.chronos.source === "error" || ai.kronos.source === "error"),
+            isFallback: Boolean(ai.isFallback || ai.chronos.source === "fallback" || ai.technicalRanking.source === "fallback" || ai.technicalRanking.source === "Advanced Stochastic Engine" || ai.chronos.source === "error" || ai.technicalRanking.source === "error"),
             techEdge: metrics.techEdge,
             regimeAlign: metrics.regimeAlign,
           }
@@ -909,7 +909,7 @@ router.get("/market/symbol-insights", async (req, res) => {
             compositeScore: 0,
             trend: "UNKNOWN",
             forecastReturnPct: 0,
-            kronosPatterns: [],
+            technicalPatterns: [],
             source: "none",
             isFallback: false,
             techEdge: metrics.techEdge,

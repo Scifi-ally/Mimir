@@ -4,9 +4,10 @@
   "workspaces": ["frontend", "backend", "db"],
   "license": "MIT",
   "scripts": {
-    "build": "npm run typecheck && npm --prefix backend run build",
+    "build": "npm --prefix frontend run build && npm --prefix backend run build",
     "typecheck": "npm --prefix backend run typecheck",
-    "test": "npm --prefix backend test",
+    "test": "npm --prefix backend test && npm --prefix frontend test",
+    "test:ui": "npm --prefix frontend run test:ui",
     "dev": "npm run dev:backend & npm run dev:frontend",
     "dev:backend": "npm --prefix backend run dev",
     "dev:frontend": "npm --prefix frontend run dev",

@@ -298,12 +298,12 @@ function clamp(n: number, min: number, max: number) {
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function calculateAdaptiveWeights(closed: any[]): Promise<void> {
-  const defaultWeights = { tech: 0.30, kronos: 0.15, chronos: 0.10, rs: 0.20, sector: 0.15, regime: 0.10 };
+  const defaultWeights = { tech: 0.30, technicalRanking: 0.15, chronos: 0.10, rs: 0.20, sector: 0.15, regime: 0.10 };
   
   if (closed.length < 10) return;
 
   let techWins = 0, techTotal = 0;
-  let kronosWins = 0, kronosTotal = 0;
+  let patternWins = 0, patternTotal = 0;
   let chronosWins = 0, chronosTotal = 0;
 
   for (const trade of closed) {
@@ -311,16 +311,16 @@ async function calculateAdaptiveWeights(closed: any[]): Promise<void> {
     const reasoning = trade.reasoning || "";
     
     const techMatch = reasoning.match(/T:([0-9]+)/);
-    const kronosMatch = reasoning.match(/K:([0-9]+)/);
+    const technicalRankingMatch = reasoning.match(/K:([0-9]+)/);
     const chronosMatch = reasoning.match(/C:([0-9]+)/);
 
     if (techMatch && parseInt(techMatch[1]!) > 70) {
       techTotal++;
       if (isWin) techWins++;
     }
-    if (kronosMatch && parseInt(kronosMatch[1]!) > 70) {
-      kronosTotal++;
-      if (isWin) kronosWins++;
+    if (technicalRankingMatch && parseInt(technicalRankingMatch[1]!) > 70) {
+      patternTotal++;
+      if (isWin) patternWins++;
     }
     if (chronosMatch && parseInt(chronosMatch[1]!) > 70) {
       chronosTotal++;
@@ -329,27 +329,27 @@ async function calculateAdaptiveWeights(closed: any[]): Promise<void> {
   }
 
   const techPower = techTotal > 5 ? techWins / techTotal : 0.5;
-  const kronosPower = kronosTotal > 5 ? kronosWins / kronosTotal : 0.5;
+  const patternPower = patternTotal > 5 ? patternWins / patternTotal : 0.5;
   const chronosPower = chronosTotal > 5 ? chronosWins / chronosTotal : 0.5;
 
   const techShift = clamp((techPower - 0.5) * 0.15, -0.08, 0.08);
-  const kronosShift = clamp((kronosPower - 0.5) * 0.15, -0.08, 0.08);
+  const patternShift = clamp((patternPower - 0.5) * 0.15, -0.08, 0.08);
   const chronosShift = clamp((chronosPower - 0.5) * 0.15, -0.08, 0.08);
 
   const newWeights = {
     tech: clamp(defaultWeights.tech + techShift, 0.20, 0.40),
-    kronos: clamp(defaultWeights.kronos + kronosShift, 0.05, 0.25),
+    technicalRanking: clamp(defaultWeights.technicalRanking + patternShift, 0.05, 0.25),
     chronos: clamp(defaultWeights.chronos + chronosShift, 0.05, 0.20),
     rs: defaultWeights.rs,
     sector: defaultWeights.sector,
     regime: defaultWeights.regime,
   };
 
-  const sum = newWeights.tech + newWeights.kronos + newWeights.chronos + newWeights.rs + newWeights.sector + newWeights.regime;
+  const sum = newWeights.tech + newWeights.technicalRanking + newWeights.chronos + newWeights.rs + newWeights.sector + newWeights.regime;
   
   const normalizedWeights = {
     tech: newWeights.tech / sum,
-    kronos: newWeights.kronos / sum,
+    technicalRanking: newWeights.technicalRanking / sum,
     chronos: newWeights.chronos / sum,
     rs: newWeights.rs / sum,
     sector: newWeights.sector / sum,

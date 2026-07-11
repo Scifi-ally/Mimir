@@ -53,3 +53,11 @@ venv/
 scripts/generate_internship_commits.ps1
 scripts/internship_push.ps1
 scripts/milestones.json
+
+# Generated and test artifacts
+backend/eslint_backend.json
+frontend/eslint_frontend.json
+frontend/playwright-report/
+frontend/test-results/
+backend/NSE.json.gz
+backend/complete.csv.gz

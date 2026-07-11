@@ -165,7 +165,8 @@ export interface SymbolInsights {
     compositeScore: number;
     trend: string;
     forecastReturnPct: number;
-    kronosPatterns: string[];
+    technicalPatterns: string[];
+    isFallback?: boolean;
     source: string;
     techEdge?: number | null;
     regimeAlign?: number | null;

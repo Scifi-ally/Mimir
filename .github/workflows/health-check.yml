@@ -2,9 +2,9 @@ name: Mimir System Health Check
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "master" ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "master" ]
   schedule:
     - cron: '0 0 * * *' # Run daily at midnight UTC
 
@@ -62,6 +62,13 @@ jobs:
       - name: Install Backend Dependencies
         working-directory: ./backend
         run: npm ci
+
+      - name: Check for committed generated files
+        run: |
+          if [ -f "backend/NSE.json.gz" ] || [ -f "backend/complete.csv.gz" ]; then
+            echo "Error: Generated data files should not be committed!"
+            exit 1
+          fi
 
       - name: Install Frontend Dependencies
         working-directory: ./frontend

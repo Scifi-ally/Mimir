@@ -245,7 +245,7 @@ export async function runCustomScreener(options: { screenerIds?: number[], runId
           status: "COMPLETED", 
           completedAt: new Date(),
           universeScanned: allScannedSymbols.size,
-          generatedCandidates: matchesToInsert.length,
+          generatedCandidates: 0,
           configHash: "engine-v2",
           metadata: { screenersEvaluated: activeScreeners.length }
         })

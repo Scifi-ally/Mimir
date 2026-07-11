@@ -697,7 +697,7 @@ export async function generateSuggestionsFromWatchlist(options?: {
           maxRiskInr: signal.maxRiskInr.toString(),
           stopDistancePct: signal.stopDistancePct.toString(),
           marketRegime: signal.regime,
-          reasoning: `[MODE:${signal.rankingProvider === "AI Ranking" ? "AI" : "TECH"}|CF:${signal.confidence.toFixed(0)}|AI:${signal.aiScore.toFixed(0)}|K:${signal.kronosScore.toFixed(0)}|C:${signal.chronosScore.toFixed(0)}|T:${signal.technicalScore.toFixed(0)}] [SENTIMENT: ${signal.sentimentScore > 60 ? "BULLISH" : signal.sentimentScore < 40 ? "BEARISH" : "NEUTRAL"}] ${signal.reasoning} Confluence: ${signal.confluence.slice(0, 2).join(", ")}.`,
+          reasoning: `[MODE:${signal.rankingProvider === "AI Ranking" ? "AI" : "TECH"}|CF:${signal.confidence.toFixed(0)}|AI:${signal.aiScore.toFixed(0)}|K:${signal.patternScore.toFixed(0)}|C:${signal.chronosScore.toFixed(0)}|T:${signal.technicalScore.toFixed(0)}] [SENTIMENT: ${signal.sentimentScore > 60 ? "BULLISH" : signal.sentimentScore < 40 ? "BEARISH" : "NEUTRAL"}] ${signal.reasoning} Confluence: ${signal.confluence.slice(0, 2).join(", ")}.`,
           validityTill,
           status: "ACTIVE",
           atr: signal.featureVector.atr14.toString(),

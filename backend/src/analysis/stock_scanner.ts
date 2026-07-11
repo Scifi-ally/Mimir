@@ -7,6 +7,64 @@ import type {
   SetupCandidate,
   TechnicalSnapshot,
 } from "./technical";
+
+export const SCORING_WEIGHTS = {
+  WEAK_HTF_CONTEXT_PENALTY: 0.4,
+  RS_STRONG_BOOST: 0.4,
+  RS_WEAK_PENALTY: 0.4,
+  HTF_CONFIRM_BOOST: 0.4,
+  HTF_CONTRADICT_PENALTY: 0.7,
+  MTF_STRONG_CONFLUENCE_BOOST: 0.8,
+  MTF_PARTIAL_CONFLUENCE_BOOST: 0.4,
+  MTF_CONTRADICT_PENALTY: 1.5,
+  MTF_CROSSOVER_BOOST: 0.2,
+  MTF_VOLUME_BOOST: 0.2,
+};
+
+export function applyScoringWeights(
+  baseScore: number,
+  direction: "BUY" | "SELL",
+  hasStrongHigherTfContext: boolean,
+  rs60: number,
+  htfConf: "confirms" | "contradicts" | "neutral",
+  mtfSignal: any
+): number {
+  let adjustedScore = baseScore;
+
+  if (!hasStrongHigherTfContext) {
+    adjustedScore -= SCORING_WEIGHTS.WEAK_HTF_CONTEXT_PENALTY;
+  }
+
+  if (direction === "BUY") {
+    if (rs60 > 1.1) adjustedScore += SCORING_WEIGHTS.RS_STRONG_BOOST;
+    else if (rs60 < 0.9) adjustedScore -= SCORING_WEIGHTS.RS_WEAK_PENALTY;
+  } else {
+    if (rs60 < 0.9) adjustedScore += SCORING_WEIGHTS.RS_STRONG_BOOST;
+    else if (rs60 > 1.1) adjustedScore -= SCORING_WEIGHTS.RS_WEAK_PENALTY;
+  }
+
+  if (htfConf === "confirms") adjustedScore += SCORING_WEIGHTS.HTF_CONFIRM_BOOST;
+  else if (htfConf === "contradicts") adjustedScore -= SCORING_WEIGHTS.HTF_CONTRADICT_PENALTY;
+
+  if (mtfSignal.direction === direction && mtfSignal.confluenceScore >= 66) {
+    adjustedScore += SCORING_WEIGHTS.MTF_STRONG_CONFLUENCE_BOOST; 
+  } else if (mtfSignal.direction === direction && mtfSignal.confluenceScore >= 50) {
+    adjustedScore += SCORING_WEIGHTS.MTF_PARTIAL_CONFLUENCE_BOOST;
+  } else if (mtfSignal.direction !== direction && mtfSignal.confluenceScore >= 66) {
+    adjustedScore -= SCORING_WEIGHTS.MTF_CONTRADICT_PENALTY; 
+  }
+
+  if ((mtfSignal.crossover1h || mtfSignal.crossover4h) && mtfSignal.direction === direction) {
+    adjustedScore += SCORING_WEIGHTS.MTF_CROSSOVER_BOOST;
+  }
+
+  if (mtfSignal.volumeIncrease && direction === "BUY") {
+    adjustedScore += SCORING_WEIGHTS.MTF_VOLUME_BOOST;
+  }
+
+  return Math.min(Math.max(adjustedScore, 0), 10.0);
+}
+
 import { scanWorkerPool } from "../workers/worker_pool";
 import {
   computeEMA, 
@@ -1495,60 +1553,17 @@ export async function scanStock(
         // When higher-timeframe history is temporarily insufficient from the
         // data provider, keep quality strict by applying a score haircut
         // instead of hard-dropping all candidates.
-        if (!hasStrongHigherTfContext) {
-          adjustedScore -= 0.45;
-        }
-
-        if (c.direction === "BUY") {
-          if (rs60 > 1.1) adjustedScore += 0.5;
-          else if (rs60 < 0.9) adjustedScore -= 0.5;
-        } else {
-          if (rs60 < 0.9) adjustedScore += 0.5;
-          else if (rs60 > 1.1) adjustedScore -= 0.5;
-        }
-
-        // Hourly confirmation modifier
         const htfConf = getHourlyConfirmation(hourlyCandles, c.direction);
-        if (htfConf === "confirms") adjustedScore += 0.5;
-        else if (htfConf === "contradicts") adjustedScore -= 0.8;
+        const finalScore = applyScoringWeights(
+          adjustedScore,
+          c.direction,
+          hasStrongHigherTfContext,
+          rs60,
+          htfConf,
+          mtfSignal
+        );
 
-        // Multi-timeframe confluence boost
-        if (
-          mtfSignal.direction === c.direction &&
-          mtfSignal.confluenceScore >= 66
-        ) {
-          adjustedScore += 1.0; 
-        } else if (
-          mtfSignal.direction === c.direction &&
-          mtfSignal.confluenceScore >= 50
-        ) {
-          adjustedScore += 0.5;
-        } else if (
-          mtfSignal.direction !== c.direction &&
-          mtfSignal.confluenceScore >= 66
-        ) {
-          adjustedScore -= 2.0; 
-        }
-
-        if (
-          (mtfSignal.crossover1h || mtfSignal.crossover4h) &&
-          mtfSignal.direction === c.direction
-        ) {
-          adjustedScore += 0.3;
-        }
-
-        if (mtfSignal.volumeIncrease && c.direction === "BUY") {
-          adjustedScore += 0.2;
-        }
-
-        // BRUTAL ADJUSTMENT: Scale down scores so that a baseline 10 becomes an 8.5 unless it has massive MTF bonuses.
-        adjustedScore = adjustedScore * 0.85;
-
-        // Cap normal score at 8.0 to leave room for the truly exceptional setups.
-        // We only allow scores above 8.0 if MTF confluence is exceptionally high (>=85).
-        const scoreCap = mtfSignal.confluenceScore >= 85 && mtfSignal.direction === c.direction ? 9.5 : 8.0;
-        
-        return { ...c, score: Math.min(Math.max(adjustedScore, 0), scoreCap) };
+        return { ...c, score: finalScore };
       })
       .filter((c): c is SetupCandidate => c !== null);
 

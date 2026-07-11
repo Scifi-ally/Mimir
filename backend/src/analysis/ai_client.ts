@@ -15,7 +15,7 @@ export interface BatchInferenceCandidate {
 export interface BatchResult {
   symbol: string;
   isFallback?: boolean;
-  kronos: {
+  technicalRanking: {
     bullish_probability: number;
     confidence: number;
     detected_patterns: string[];
@@ -103,7 +103,7 @@ export async function checkAIHealth(): Promise<HealthResponse> {
       ranking_provider: "Native Rankings",
       uptime_seconds: process.uptime(),
       models: {
-        kronos: { loaded: false, healthy: false },
+        technicalRanking: { loaded: false, healthy: false },
         chronos: { loaded: false, healthy: false }
       },
       hardware: { type: "Node.js Fallback" },
@@ -127,7 +127,7 @@ export async function batchInference(
       if (response.data && Array.isArray(response.data.results)) {
         aiCircuitBreaker.recordSuccess();
         for (const res of response.data.results) {
-          const isFallback = res.kronos?.source === "fallback" || res.chronos?.source === "fallback" || res.kronos?.source === "error" || res.chronos?.source === "error";
+          const isFallback = res.technicalRanking?.source === "fallback" || res.chronos?.source === "fallback" || res.technicalRanking?.source === "error" || res.chronos?.source === "error";
           aiResults.set(res.symbol, { ...res, isFallback });
         }
         return aiResults;
@@ -320,7 +320,7 @@ export async function batchInference(
     aiResults.set(c.symbol, {
       symbol: c.symbol,
       isFallback: true,
-      kronos: {
+      technicalRanking: {
         bullish_probability: prob,
         confidence: confidence,
         detected_patterns,

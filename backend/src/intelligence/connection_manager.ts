@@ -3,7 +3,7 @@ import path from "node:path";
 import fs from "node:fs";
 import protobuf from "protobufjs";
 import axios from "axios";
-import { UPSTOX_API_URL } from "../upstox/config";
+
 import { logger } from "../lib/logger";
 import { getAccessToken } from "../upstox/auth";
 import { loadBalancer } from "./load_balancer";

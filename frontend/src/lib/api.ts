@@ -4,13 +4,12 @@ import { z } from "zod";
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const token = localStorage.getItem("mimir_admin_token");
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    ...init?.headers,
-  };
-  
+  const headers = new Headers(init?.headers);
+  if (!headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
   if (token) {
-    headers["x-admin-token"] = token;
+    headers.set("x-admin-token", token);
   }
 
   const res = await fetch(path, {

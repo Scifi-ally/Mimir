@@ -95,7 +95,7 @@ async def analyze_sentiment(symbol: str) -> Dict[str, float]:
         init_models()
         
     if sentiment_pipeline is None:
-        return {"symbol_score": 0.0, "world_score": 0.0, "composite": 0.0}
+        return {"symbol_specific_score": 0.0, "market_wide_score": 0.0, "world_score": 0.0, "composite": 0.0}
 
     # Fetch all RSS feeds concurrently without blocking the event loop
     symbol_headlines, mc_headlines, et_headlines, world_headlines = await asyncio.gather(
@@ -105,20 +105,27 @@ async def analyze_sentiment(symbol: str) -> Dict[str, float]:
         fetch_world_politics_headlines()
     )
 
-    # Combine Moneycontrol and ET for Indian market context, plus symbol specific news
-    india_market_headlines = symbol_headlines + mc_headlines + et_headlines
+    # Explicit Weights
+    SYMBOL_SPECIFIC_WEIGHT = 0.5
+    MARKET_WIDE_WEIGHT = 0.3
+    WORLD_POLITICS_WEIGHT = 0.2
+
+    market_wide_headlines = mc_headlines + et_headlines
 
     # Run heavy PyTorch model inference in a separate thread so we don't block the async event loop
-    symbol_score, world_score = await asyncio.gather(
-        asyncio.to_thread(_score_headlines_sync, india_market_headlines),
+    symbol_specific_score, market_wide_score, world_score = await asyncio.gather(
+        asyncio.to_thread(_score_headlines_sync, symbol_headlines),
+        asyncio.to_thread(_score_headlines_sync, market_wide_headlines),
         asyncio.to_thread(_score_headlines_sync, world_headlines)
     )
     
-    # Advanced Blending: 70% India Market/Symbol / 30% World Politics
-    composite = (symbol_score * 0.7) + (world_score * 0.3)
+    composite = (symbol_specific_score * SYMBOL_SPECIFIC_WEIGHT) + \
+                (market_wide_score * MARKET_WIDE_WEIGHT) + \
+                (world_score * WORLD_POLITICS_WEIGHT)
 
     return {
-        "symbol_score": symbol_score,
+        "symbol_specific_score": symbol_specific_score,
+        "market_wide_score": market_wide_score,
         "world_score": world_score,
         "composite": composite
     }
