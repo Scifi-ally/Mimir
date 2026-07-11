@@ -46,7 +46,7 @@ Traditional retail trading terminals are often bogged down by high-latency DOM u
 * **Custom Canvas Candlesticks**: High-performance 60fps charting rendered via custom canvas graphics, supporting EMA, VWAP, Support/Resistance zones, and price projection overlays.
 * **Tick-by-Tick Order Book**: Live market depth monitoring and tick distribution analysis to spot institutional accumulation and distribution zones.
 
-### 🤖 AI Alpha Factors & Predictive Modeling
+### AI Alpha Factors & Predictive Modeling
 * **Composite Alpha Score (0–100)**: Real-time quantitative scoring combining Trend Alignment, RSI Momentum, Volume Surges, and Multi-Timeframe Confluence.
 * **Regime Classification**: Automated classification of market states (Bullish Trend, Bearish Momentum, Pullback, or Sideways Range) to dynamically adjust trading strategies.
 
@@ -153,7 +153,7 @@ npm --prefix frontend run dev
 
 ---
 
-## 🪟 Windows One-Click Launch (`bot.bat`)
+## Windows One-Click Launch (`bot.bat`)
 
 For Windows users, Mimir includes an automated one-click launcher that manages background process spawning, port verification, and public Cloudflare tunneling automatically:
 ```cmd
@@ -175,7 +175,7 @@ docker compose up --build -d
 
 ---
 
-## 🧪 Quality Assurance & Testing
+## Quality Assurance & Testing
 
 Run the automated test suites and type validation before deploying:
 ```bash
@@ -186,7 +186,7 @@ npm run build
 
 ---
 
-## 🤝 Contributing & Community
+## Contributing & Community
 
 We welcome contributions from quantitative developers, traders, and open-source enthusiasts!
 * Please see our [Contributing Guidelines](CONTRIBUTING.md) for details on setting up your environment and submitting Pull Requests.
