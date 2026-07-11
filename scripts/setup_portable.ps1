@@ -2,6 +2,8 @@ $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $PortableDir = Join-Path $ProjectRoot ".portable"
 
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
+
 Write-Host "Creating .portable directory at $PortableDir..."
 if (!(Test-Path $PortableDir)) {
     New-Item -ItemType Directory -Path $PortableDir | Out-Null
@@ -12,7 +14,11 @@ $NodeDir = Join-Path $PortableDir "node"
 if (!(Test-Path $NodeDir)) {
     Write-Host "Downloading Node.js v20.12.2 Portable..."
     $NodeZip = Join-Path $PortableDir "node.zip"
-    Invoke-WebRequest -Uri "https://nodejs.org/dist/v20.12.2/node-v20.12.2-win-x64.zip" -OutFile $NodeZip
+    curl.exe -fL "https://nodejs.org/dist/v20.12.2/node-v20.12.2-win-x64.zip" -o $NodeZip
+    if (!(Test-Path $NodeZip) -or (Get-Item $NodeZip).Length -eq 0) {
+        Write-Host "Error: Download failed, Node.js zip is empty or missing." -ForegroundColor Red
+        exit 1
+    }
     Write-Host "Extracting Node.js..."
     Expand-Archive -Path $NodeZip -DestinationPath $PortableDir -Force
     Rename-Item -Path (Join-Path $PortableDir "node-v20.12.2-win-x64") -NewName "node"
@@ -27,7 +33,11 @@ $PythonDir = Join-Path $PortableDir "python"
 if (!(Test-Path $PythonDir)) {
     Write-Host "Downloading Python 3.11.8 Embeddable..."
     $PythonZip = Join-Path $PortableDir "python.zip"
-    Invoke-WebRequest -Uri "https://www.python.org/ftp/python/3.11.8/python-3.11.8-embed-amd64.zip" -OutFile $PythonZip
+    curl.exe -fL "https://www.python.org/ftp/python/3.11.8/python-3.11.8-embed-amd64.zip" -o $PythonZip
+    if (!(Test-Path $PythonZip) -or (Get-Item $PythonZip).Length -eq 0) {
+        Write-Host "Error: Download failed, Python zip is empty or missing." -ForegroundColor Red
+        exit 1
+    }
     Write-Host "Extracting Python..."
     New-Item -ItemType Directory -Path $PythonDir | Out-Null
     Expand-Archive -Path $PythonZip -DestinationPath $PythonDir -Force
@@ -61,7 +71,11 @@ if (!(Test-Path $PgsqlDir)) {
     Write-Host "Downloading PostgreSQL 16.2 Portable..."
     $PgsqlZip = Join-Path $PortableDir "pgsql.zip"
     # Download the official EnterpriseDB binaries
-    Invoke-WebRequest -Uri "https://get.enterprisedb.com/postgresql/postgresql-16.2-1-windows-x64-binaries.zip" -OutFile $PgsqlZip
+    curl.exe -fL "https://get.enterprisedb.com/postgresql/postgresql-16.2-1-windows-x64-binaries.zip" -o $PgsqlZip
+    if (!(Test-Path $PgsqlZip) -or (Get-Item $PgsqlZip).Length -eq 0) {
+        Write-Host "Error: Download failed, PostgreSQL zip is empty or missing." -ForegroundColor Red
+        exit 1
+    }
     Write-Host "Extracting PostgreSQL..."
     Expand-Archive -Path $PgsqlZip -DestinationPath $PortableDir -Force
     Remove-Item -Path $PgsqlZip -Force
