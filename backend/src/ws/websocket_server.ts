@@ -39,6 +39,41 @@ export function initWebSocketServer(server: Server): void {
       return;
     }
 
+    const urlObj = new URL(request.url || "", `http://${request.headers.host}`);
+    const token = urlObj.searchParams.get("token");
+    const expectedToken = process.env.UPSTOXBOT_ADMIN_TOKEN?.trim();
+    
+    // Determine if request is local
+    const ipStr = request.headers["x-forwarded-for"] || request.headers["cf-connecting-ip"] || request.socket.remoteAddress;
+    const normalizedIp = (Array.isArray(ipStr) ? ipStr[0] : ipStr || "").split(",")[0].trim().replace(/^::ffff:/, "");
+    const isLocal = normalizedIp === "::1" || normalizedIp === "127.0.0.1" || normalizedIp.startsWith("127.");
+    const isRemoteAuthDisabled = process.env.DISABLE_REMOTE_API_AUTH === "1" || process.env.DISABLE_REMOTE_API_AUTH === "true";
+
+    if (!isLocal && !isRemoteAuthDisabled) {
+      if (!expectedToken) {
+        socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+        socket.destroy();
+        return;
+      }
+      if (!token) {
+        socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+        socket.destroy();
+        return;
+      }
+      try {
+        const left = Buffer.from(token);
+        const right = Buffer.from(expectedToken);
+        // Using native require here to avoid import issues
+        if (left.length !== right.length || !require("crypto").timingSafeEqual(left, right)) {
+          throw new Error("Invalid token");
+        }
+      } catch (err) {
+        socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+        socket.destroy();
+        return;
+      }
+    }
+
     const pathname = request.url ? request.url.split("?")[0] : "";
     if (pathname === "/ws/intelligence") {
       wssIntelligence.handleUpgrade(request, socket, head, (ws) => {

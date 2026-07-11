@@ -3,13 +3,20 @@ import { SessionStateSchema, MarketRegimeSchema, SuggestionSchema } from "./sche
 import { z } from "zod";
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = localStorage.getItem("mimir_admin_token");
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...init?.headers,
+  };
+  
+  if (token) {
+    headers["x-admin-token"] = token;
+  }
+
   const res = await fetch(path, {
     credentials: "include",
     ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...init?.headers,
-    },
+    headers,
   });
 
   const text = await res.text();

@@ -17,7 +17,9 @@ export function subscribeWsSymbols(symbols: string[]) {
 
 function wsUrl(path = "/ws") {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${protocol}//${window.location.host}${path}`;
+  const token = localStorage.getItem("mimir_admin_token");
+  const query = token ? `?token=${encodeURIComponent(token)}` : "";
+  return `${protocol}//${window.location.host}${path}${query}`;
 }
 
 export function useWebSocket() {

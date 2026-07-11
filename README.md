@@ -13,7 +13,7 @@
 ![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)
 ![License MIT](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
 
-**An Institutional-Grade, AI-Assisted Indian Stock Market Monitoring & Automated Trading Analysis Platform.**
+**An AI-Assisted Indian Stock Market Monitoring & Automated Trading Analysis Platform.**
 
 [Key Features](#-key-features) • [System Architecture](#-system-architecture) • [Getting Started](#-getting-started) • [Security Standards](#-security--safety-defaults) • [Contributing](CONTRIBUTING.md)
 
@@ -29,40 +29,40 @@
 
 ---
 
-## Why Mimir?
+## Overview
 
-Traditional retail trading terminals are often bogged down by high-latency DOM updates, restrictive indicator customization, and black-box quantitative scoring. **Mimir** bridges the gap between retail trading interfaces and institutional quantitative analysis by offering:
+Mimir is a self-hosted platform for quantitative analysis and monitoring of the Indian stock market. It provides:
 
-1. **Sub-Second WebSocket Telemetry**: Direct ingestion of live NSE/BSE tick distributions and market depth without browser lag or DOM throttling.
-2. **Transparent AI Alpha Ranking**: A dedicated Python FastAPI intelligence engine evaluating multi-timeframe momentum, liquidity surges, and regime alignment in real time.
-3. **Institutional Flow Tracking**: Integrated real-time tracking of Foreign Institutional Investors (FII) and Domestic Institutional Investors (DII) cash flows.
-4. **100% Private & Self-Hosted**: Your API keys, trading strategies, and order logs remain strictly on your infrastructure—no third-party cloud data harvesting.
+1. **WebSocket Telemetry**: Live streaming of NSE/BSE tick distributions and market depth.
+2. **AI Alpha Ranking**: A Python FastAPI intelligence engine evaluating multi-timeframe momentum, liquidity surges, and regime alignment.
+3. **Flow Tracking**: Integrated tracking of Foreign Institutional Investors (FII) and Domestic Institutional Investors (DII) cash flows.
+4. **Self-Hosted Data**: API keys, trading strategies, and order logs remain strictly on your infrastructure.
 
 ---
 
 ## Key Features
 
-### Real-Time Market Telemetry & Charting
-* **Custom Canvas Candlesticks**: High-performance 60fps charting rendered via custom canvas graphics, supporting EMA, VWAP, Support/Resistance zones, and price projection overlays.
-* **Tick-by-Tick Order Book**: Live market depth monitoring and tick distribution analysis to spot institutional accumulation and distribution zones.
+### Market Telemetry & Charting
+* **Canvas Charting**: Rendered via TradingView lightweight-charts, supporting EMA, VWAP, Support/Resistance zones, and price projection overlays.
+* **Tick-by-Tick Order Book**: Live market depth monitoring and tick distribution analysis.
 
 ### AI Alpha Factors & Predictive Modeling
-* **Composite Alpha Score (0–100)**: Real-time quantitative scoring combining Trend Alignment, RSI Momentum, Volume Surges, and Multi-Timeframe Confluence.
-* **Regime Classification**: Automated classification of market states (Bullish Trend, Bearish Momentum, Pullback, or Sideways Range) to dynamically adjust trading strategies.
+* **Composite Alpha Score (0–100)**: Quantitative scoring combining Trend Alignment, RSI Momentum, Volume Surges, and Multi-Timeframe Confluence.
+* **Regime Classification**: Automated classification of market states (Bullish Trend, Bearish Momentum, Pullback, or Sideways Range).
 
 ### Custom Screener & Rule Engine
-* **Interactive Rule Builder**: Build complex conditional scanning rules across price action, technical indicators, and institutional order flow without writing code.
-* **Persistent Background Scanning**: Dedicated background worker pool continuously evaluating 500+ Nifty/BSE symbols against custom screener conditions.
+* **Interactive Rule Builder**: Build conditional scanning rules across price action and technical indicators.
+* **Background Scanning**: Background worker pool continuously evaluates active symbols against custom screener conditions.
 
 ### Paper Trading & Risk Management
-* **Zero-Risk Simulation Engine**: Test quantitative strategies in real-time market conditions with realistic order fill simulation and slippage estimation.
-* **Automated Risk Guardrails**: Built-in automated stop-loss trailing, daily loss thresholds, and strict portfolio exposure limits to protect capital.
+* **Paper Trading Engine**: Test quantitative strategies in live market conditions with order fill simulation.
+* **Automated Risk Guardrails**: Built-in automated stop-loss trailing and daily loss thresholds.
 
 ---
 
 ## System Architecture
 
-Mimir operates as a decoupled, high-throughput multi-service architecture designed for resilience and horizontal scalability:
+Mimir operates as a decoupled multi-service application:
 
 ```mermaid
 graph TD
@@ -77,26 +77,35 @@ graph TD
         B <-->|REST & WebSocket RPC| A[AI Intelligence Service<br/>Python / FastAPI]
     end
 
-    subgraph Client & Tunneling
-        B -->|Live WebSocket Telemetry| W[React / Vite / Tailwind<br/>60fps Dark Dashboard]
-        B <-->|Zero-Auth Tunneling| C[Cloudflare Tunnels<br/>Public Web Access]
+    subgraph Client
+        B -->|Live WebSocket Telemetry| W[React / Vite / Tailwind<br/>Dashboard]
     end
 ```
 
 1. **Backend API (`/backend`)**: Handles Upstox OAuth2 authentication, WebSocket connection pooling, order execution management, and system telemetry.
-2. **Intelligence Service (`/backend/ai_service`)**: Executes heavy numerical calculations, sentiment evaluations, and automated signal generation without blocking the primary Node.js I/O thread.
-3. **Frontend Interface (`/frontend`)**: A state-of-the-art dark-mode trading interface utilizing custom canvas charting, sparklines, and dynamic notification drawers.
-4. **Persistence Layer (`PostgreSQL` & `Redis`)**: Relational storage for historical market data, user watchlists, and audit logs, paired with Redis for high-speed state caching.
+2. **Intelligence Service (`/backend/ai_service`)**: Executes numerical calculations, sentiment evaluations, and automated signal generation.
+3. **Frontend Interface (`/frontend`)**: A React-based trading interface utilizing canvas charting and sparklines.
+4. **Persistence Layer (`PostgreSQL` & `Redis`)**: Relational storage for historical market data, user watchlists, and audit logs, paired with Redis for state caching.
 
 ---
 
 ## Security & Safety Defaults
 
 * **Restricted Admin Access**: Remote backend API access is disabled by default unless explicitly authenticated via `UPSTOXBOT_ADMIN_TOKEN`.
-* **Rate Limiting & DoS Protection**: Public API endpoints enforce strict token-bucket rate limiting (120 requests per minute) to prevent Denial of Service (DoS) and API abuse.
+* **Rate Limiting**: Public API endpoints enforce token-bucket rate limiting (100 requests per minute for standard APIs, 10 requests per minute for authentication endpoints).
 * **CORS Hardening**: Cross-Origin Resource Sharing is strictly restricted to verified local and production origins via `AI_CORS_ORIGINS`.
-* **Zero Hardcoded Secrets**: All credentials, Upstox OAuth tokens, and API secrets are dynamically managed via environment variables and encrypted database schemas.
-* **Public Tunneling Compatibility**: Configured with Cloudflare Tunnels (`cloudflared`) by default to ensure uninterrupted, zero-auth real-time WebSocket telemetry for live stock feeds (avoiding interstitial proxy restrictions common in alternative tunneling services like Ngrok).
+* **Zero Hardcoded Secrets**: Credentials, Upstox OAuth tokens, and API secrets are managed via environment variables and encrypted database schemas.
+
+---
+
+## Remote Access & Cloudflare Tunnels
+
+Mimir is designed to run locally. If you choose to expose it to the public internet (e.g., via Cloudflare Tunnels), you **must** configure authentication to secure your data and Upstox API credentials.
+
+1. Set the `UPSTOXBOT_ADMIN_TOKEN` environment variable in your `.env` file to a secure, random string.
+2. The WebSocket telemetry and REST API endpoints will automatically enforce this token for any non-local connection.
+3. In the frontend, you can authenticate by manually setting this token in your browser's local storage: `localStorage.setItem('mimir_admin_token', 'your_secure_token')`.
+4. **Tunnel Opt-In**: The `bot.bat` launcher does not start the Cloudflare tunnel by default. To start the tunnel, explicitly run `bot.bat tunnel <port>`.
 
 ---
 
@@ -155,9 +164,13 @@ npm --prefix frontend run dev
 
 ## Windows One-Click Launch (`bot.bat`)
 
-For Windows users, Mimir includes an automated one-click launcher that manages background process spawning, port verification, and public Cloudflare tunneling automatically:
+For Windows users, Mimir includes an automated one-click launcher that manages background process spawning and port verification:
 ```cmd
 bot.bat
+```
+To start the application and automatically open an opt-in Cloudflare tunnel:
+```cmd
+bot.bat tunnel 3000
 ```
 To stop all running services and tunnels cleanly:
 ```cmd
@@ -188,7 +201,7 @@ npm run build
 
 ## Contributing & Community
 
-We welcome contributions from quantitative developers, traders, and open-source enthusiasts!
+We welcome contributions from developers, traders, and open-source enthusiasts!
 * Please see our [Contributing Guidelines](CONTRIBUTING.md) for details on setting up your environment and submitting Pull Requests.
 * Please adhere to our [Code of Conduct](CODE_OF_CONDUCT.md) in all community interactions.
 
@@ -198,9 +211,12 @@ This project is open-source and licensed under the terms of the [MIT License](LI
 
 ---
 
-<div align="center">
-  <i>Engineered with a focus on institutional-grade execution safety and real-time market transparency.</i>
-</div>
+## Known Architectural Limitations
 
+While this platform offers powerful retail-level monitoring and analysis, it is important to be brutally honest about its architectural limits. **This is a hobbyist / retail-level setup masquerading as an institutional platform.** True High-Frequency Trading (HFT) and institutional setups require infrastructure that Mimir fundamentally lacks:
+
+1. **Tick-Level Storage**: The current PostgreSQL (and historical SQLite) architecture is entirely unsuited for storing or querying true HFT tick-level data at scale.
+2. **Time-Series Processing**: Redis is currently utilized strictly for volatile state caching and rate limiting, *not* as a high-performance time-series database. 
+3. **Hardware & Infrastructure**: A true institutional setup requires specialized time-series databases like TimescaleDB or KDB+, colocation services, and FPGA hardware for sub-millisecond execution—none of which are present in this architecture.
 
 </div>

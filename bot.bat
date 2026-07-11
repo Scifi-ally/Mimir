@@ -124,12 +124,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%scripts\run-det
 echo !C_GRAY!    +-- !C_DIM!Starting frontend...!C_RESET!
 powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%scripts\run-detached.ps1" -FilePath "!NODE_CMD!" -ArgumentList "%PROJECT_DIR%\node_modules\vite\bin\vite.js preview" -WorkingDirectory "%PROJECT_DIR%\frontend" -PidFile "!FRONTEND_PID_FILE!" -LogOut "!FRONTEND_PID_FILE!.out.log" -LogErr "!FRONTEND_PID_FILE!.err.log"
 
-:: Start Cloudflare Tunnel in the background (preferred over Ngrok to ensure uninterrupted WebSocket telemetry without interstitial auth prompts)
-set "CF_CMD=%PROJECT_DIR%\.portable\cloudflared.exe"
-if exist "!CF_CMD!" (
-    echo !C_GRAY!    +-- !C_DIM!Starting Cloudflare tunnel...!C_RESET!
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%scripts\run-detached.ps1" -FilePath "!CF_CMD!" -ArgumentList "tunnel --url http://localhost:3000" -WorkingDirectory "%PROJECT_DIR%" -PidFile "%SCRIPT_DIR%.codex-logs\trade.tunnel.pid" -LogOut "%SCRIPT_DIR%.codex-logs\trade.tunnel.out.log" -LogErr "%SCRIPT_DIR%.codex-logs\trade.tunnel.err.log"
-)
 
 :: Wait for ports to become active to verify launch success
 set "BACKEND_OK=0"
@@ -164,18 +158,6 @@ if "%BACKEND_OK%"=="0" (
     echo !C_GREEN!  [OK] !C_WHITE!Frontend!C_RESET!!C_GRAY!            http://localhost:3000!C_RESET!
 )
 
-:: Extract cloudflared tunnel URL from stderr log (it prints there)
-set "CF_URL="
-for /l %%i in (1,1,15) do (
-    if "!CF_URL!"=="" (
-        for /f "tokens=*" %%a in ('powershell -NoProfile -Command "if (Test-Path '%SCRIPT_DIR%.codex-logs\trade.tunnel.err.log') { (Get-Content '%SCRIPT_DIR%.codex-logs\trade.tunnel.err.log' -ErrorAction SilentlyContinue | Select-String 'https://\S+trycloudflare\.com' | Select-Object -First 1).Matches[0].Value }" 2^>nul') do set "CF_URL=%%a"
-        if "!CF_URL!"=="" ping -n 2 127.0.0.1 >nul
-    )
-)
-
-if not "!CF_URL!"=="" (
-    echo !C_PURPLE!  [OK] !C_WHITE!Public Web!C_RESET!!C_GRAY!          !CF_URL!!C_RESET!
-)
 
 echo.
 echo !C_GRAY!  --------------------------------------!C_RESET!
