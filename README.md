@@ -35,8 +35,7 @@ Mimir is a self-hosted platform for quantitative analysis and monitoring of the 
 
 1. **WebSocket Telemetry**: Live streaming of NSE/BSE tick distributions and market depth.
 2. **AI Alpha Ranking**: A Python FastAPI intelligence engine evaluating multi-timeframe momentum, liquidity surges, and regime alignment.
-3. **Flow Tracking**: Integrated tracking of Foreign Institutional Investors (FII) and Domestic Institutional Investors (DII) cash flows.
-4. **Self-Hosted Data**: API keys, trading strategies, and order logs remain strictly on your infrastructure.
+3. **Self-Hosted Data**: API keys, trading strategies, and order logs remain strictly on your infrastructure.
 
 ---
 
@@ -68,13 +67,12 @@ Mimir operates as a decoupled multi-service application:
 graph TD
     subgraph External Feeds
         U[Upstox WebSocket Feed] -->|Live NSE/BSE Ticks| B
-        F[NSE FII/DII Data] -->|Institutional Flows| B
     end
 
     subgraph Mimir Core
         B[Express Backend API<br/>Node.js / TypeScript] <-->|Redis Cache & State| R[(Redis Cache)]
         B <-->|Persistence & Audit Logs| P[(PostgreSQL DB)]
-        B <-->|REST & WebSocket RPC| A[AI Intelligence Service<br/>Python / FastAPI]
+        B <-->|HTTP REST| A[AI Intelligence Service<br/>Python / FastAPI]
     end
 
     subgraph Client
