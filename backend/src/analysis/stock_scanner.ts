@@ -1108,7 +1108,8 @@ async function fetchHourlyCandles(
       hourlyCandleCache.set(cacheKey, { timestamp: now, candles: c60 });
     }
     return c60;
-  } catch {
+  } catch (err) {
+    logger.warn({ err }, "Suppressed error: failed to fetch 60m candles");
     return [];
   }
 }
@@ -1143,7 +1144,8 @@ export async function fetchNiftyDailyCandles(
       close: c[4] as number,
       volume: c[5] as number,
     }));
-  } catch {
+  } catch (err) {
+    logger.warn({ err }, "Suppressed error: failed to fetch Nifty candles");
     return [];
   }
 }
@@ -1735,7 +1737,8 @@ export async function diagnoseScanNullReason(
 
     if (!viable.length) return "quality_or_rs_rejected";
     return "filtered_downstream";
-  } catch {
+  } catch (err) {
+    logger.warn({ err }, "Suppressed error: checkSymbol pipeline exception");
     return "exception";
   }
 }

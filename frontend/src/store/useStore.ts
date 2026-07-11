@@ -103,7 +103,7 @@ export const useStore = create<AppStore>()(
   updateWatchlistCounts: (counts) => set((state) => ({ watchlistCounts: { ...state.watchlistCounts, ...counts } })),
     }),
     {
-      name: "upstoxbot-store",
+      name: "mimir-store",
       partialize: (state) => ({
         selectedSymbol: state.selectedSymbol,
         scanLogs: state.scanLogs,

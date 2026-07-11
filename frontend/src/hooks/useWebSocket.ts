@@ -74,8 +74,9 @@ export function useWebSocket() {
 
     const connectInt = (retryCount = 0) => {
       if (cancelled) return;
-      
-      const nextSocketInt = new WebSocket(wsUrl("/ws/intelligence"));
+      const token = localStorage.getItem("mimir_admin_token");
+      const protocols = token ? [token] : [];
+      const nextSocketInt = new WebSocket(wsUrl("/ws/intelligence"), protocols);
       nextSocketInt.binaryType = "arraybuffer";
       socketInt = nextSocketInt;
       lastMessageTimeInt = Date.now();
@@ -113,8 +114,9 @@ export function useWebSocket() {
 
     const connectMd = (retryCount = 0) => {
       if (cancelled) return;
-      
-      const nextSocketMd = new WebSocket(wsUrl("/ws/market-data"));
+      const token = localStorage.getItem("mimir_admin_token");
+      const protocols = token ? [token] : [];
+      const nextSocketMd = new WebSocket(wsUrl("/ws/market-data"), protocols);
       nextSocketMd.binaryType = "arraybuffer";
       socketMd = nextSocketMd;
       wsRef.current = nextSocketMd;
@@ -286,21 +288,7 @@ export function useWebSocket() {
         }
       };
 
-      pingTimer = window.setInterval(() => {
-        if (socketInt?.readyState === WebSocket.OPEN) {
-          if (Date.now() - lastMessageTimeInt > 35_000) {
-            socketInt.close();
-          } else {
-            socketInt.send(JSON.stringify({ event: "ping" }));
-          }
-        }
-        if (socketMd?.readyState === WebSocket.OPEN) {
-          if (Date.now() - lastMessageTimeMd > 35_000) {
-            socketMd.close();
-          } else {
-            socketMd.send(JSON.stringify({ event: "ping" }));
-          }
-        }
+      // Duplicate setInterval removed
     connectInt();
     connectMd();
 
