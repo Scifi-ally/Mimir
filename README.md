@@ -1,3 +1,5 @@
+<div style="font-family: 'Geist Mono', monospace;">
+
 # Mimir
 
 <div align="center">
@@ -19,7 +21,7 @@
 
 </div>
 
-## 🖥️ Dashboard Preview
+##  Dashboard Preview
 
 <div align="center">
   <img src="docs/dashboard.png" alt="Mimir Real-Time Trading Dashboard" width="100%" style="border-radius: 8px; box-shadow: 0 8px 30px rgba(0,0,0,0.5);" />
@@ -27,7 +29,7 @@
 
 ---
 
-## ⚡ Why Mimir?
+##  Why Mimir?
 
 Traditional retail trading terminals are often bogged down by high-latency DOM updates, restrictive indicator customization, and black-box quantitative scoring. **Mimir** bridges the gap between retail trading interfaces and institutional quantitative analysis by offering:
 
@@ -38,9 +40,9 @@ Traditional retail trading terminals are often bogged down by high-latency DOM u
 
 ---
 
-## 🚀 Key Features
+##  Key Features
 
-### 📈 Real-Time Market Telemetry & Charting
+###  Real-Time Market Telemetry & Charting
 * **Custom Canvas Candlesticks**: High-performance 60fps charting rendered via custom canvas graphics, supporting EMA, VWAP, Support/Resistance zones, and price projection overlays.
 * **Tick-by-Tick Order Book**: Live market depth monitoring and tick distribution analysis to spot institutional accumulation and distribution zones.
 
@@ -48,17 +50,17 @@ Traditional retail trading terminals are often bogged down by high-latency DOM u
 * **Composite Alpha Score (0–100)**: Real-time quantitative scoring combining Trend Alignment, RSI Momentum, Volume Surges, and Multi-Timeframe Confluence.
 * **Regime Classification**: Automated classification of market states (Bullish Trend, Bearish Momentum, Pullback, or Sideways Range) to dynamically adjust trading strategies.
 
-### 🔍 Custom Screener & Rule Engine
+###  Custom Screener & Rule Engine
 * **Interactive Rule Builder**: Build complex conditional scanning rules across price action, technical indicators, and institutional order flow without writing code.
 * **Persistent Background Scanning**: Dedicated background worker pool continuously evaluating 500+ Nifty/BSE symbols against custom screener conditions.
 
-### 🛡️ Paper Trading & Risk Management
+###  Paper Trading & Risk Management
 * **Zero-Risk Simulation Engine**: Test quantitative strategies in real-time market conditions with realistic order fill simulation and slippage estimation.
 * **Automated Risk Guardrails**: Built-in automated stop-loss trailing, daily loss thresholds, and strict portfolio exposure limits to protect capital.
 
 ---
 
-## 🏗️ System Architecture
+##  System Architecture
 
 Mimir operates as a decoupled, high-throughput multi-service architecture designed for resilience and horizontal scalability:
 
@@ -88,7 +90,7 @@ graph TD
 
 ---
 
-## 🔒 Security & Safety Defaults
+##  Security & Safety Defaults
 
 * **Restricted Admin Access**: Remote backend API access is disabled by default unless explicitly authenticated via `UPSTOXBOT_ADMIN_TOKEN`.
 * **Rate Limiting & DoS Protection**: Public API endpoints enforce strict token-bucket rate limiting (120 requests per minute) to prevent Denial of Service (DoS) and API abuse.
@@ -98,7 +100,7 @@ graph TD
 
 ---
 
-## 🛠️ Getting Started
+##  Getting Started
 
 ### Prerequisites
 * **Node.js** (v22.0 or higher)
@@ -164,7 +166,7 @@ bot.bat stop
 
 ---
 
-## 🐳 Docker Deployment
+##  Docker Deployment
 
 To launch the entire stack (Frontend, Backend, AI Engine, PostgreSQL, and Redis) in an isolated containerized environment:
 ```bash
@@ -190,7 +192,7 @@ We welcome contributions from quantitative developers, traders, and open-source 
 * Please see our [Contributing Guidelines](CONTRIBUTING.md) for details on setting up your environment and submitting Pull Requests.
 * Please adhere to our [Code of Conduct](CODE_OF_CONDUCT.md) in all community interactions.
 
-## 📄 License
+##  License
 
 This project is open-source and licensed under the terms of the [MIT License](LICENSE).
 
@@ -198,4 +200,7 @@ This project is open-source and licensed under the terms of the [MIT License](LI
 
 <div align="center">
   <i>Engineered with a focus on institutional-grade execution safety and real-time market transparency.</i>
+</div>
+
+
 </div>

@@ -1,3 +1,5 @@
+<div style="font-family: 'Geist Mono', monospace;">
+
 # Comprehensive Tick-by-Tick Monitoring System
 
 ## Overview
@@ -128,26 +130,26 @@ Batches 1-500ms worth of ticks and broadcasts to all connected clients.
 [Market Close 3:30 PM]
         ↓
 [Post-Market Full Scan Starts]
-  ├─ Analyze NSE_UNIVERSE (92+ stocks)
-  ├─ Multi-timeframe confluence analysis
-  ├─ Probability scoring
-  ├─ Save top 30 to watchlist
+   Analyze NSE_UNIVERSE (92+ stocks)
+   Multi-timeframe confluence analysis
+   Probability scoring
+   Save top 30 to watchlist
         ↓
 [Overnight Watchlist Ready]
         ↓
 [Market Open 9:15 AM]
-  ├─ Initialize Tick Feeder (all NSE stocks)
-  ├─ Initialize Intraday Monitoring (watchlist only)
-  ├─ Start monitoring loop (300ms interval)
+   Initialize Tick Feeder (all NSE stocks)
+   Initialize Intraday Monitoring (watchlist only)
+   Start monitoring loop (300ms interval)
         ↓
 [During Trading Hours - Every 300ms]
-  ├─ Receive tick updates
-  ├─ Check each monitored stock for signal
-  ├─ On signal confirmation → Generate suggestion
-  ├─ Broadcast tick update to clients
+   Receive tick updates
+   Check each monitored stock for signal
+   On signal confirmation → Generate suggestion
+   Broadcast tick update to clients
         ↓
 [Market Close 3:30 PM]
-  └─ Stop monitoring, save results
+   Stop monitoring, save results
 ```
 
 ---
@@ -372,3 +374,6 @@ TICK_BROADCAST_INTERVAL_MS=500
 - **Database:** PostgreSQL with drizzle ORM
 
 ---
+
+
+</div>

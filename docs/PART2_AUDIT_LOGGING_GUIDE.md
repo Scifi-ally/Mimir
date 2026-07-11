@@ -1,3 +1,5 @@
+<div style="font-family: 'Geist Mono', monospace;">
+
 # Part 2 Audit: Stuck Field Analysis & Logging Guide
 
 ## OVERVIEW
@@ -20,7 +22,7 @@ Two new useEffect hooks log:
    - All symbols in activeSuggestions (which ones are monitored)
    - Whether activeRecommendation was found
    - If found: direction, entryPrice, stopLoss, target1, riskReward, quantity, signalFactors
-   - If NOT found: Warning "⚠️ No recommendation found - symbol may not be monitored"
+   - If NOT found: Warning " No recommendation found - symbol may not be monitored"
 
 2. **Indices data flow** → Logged to console group `[AUDIT] Indices data`
    - Raw indices object (all properties)
@@ -145,7 +147,7 @@ Logs to **backend console**:
 **Indicators:**
 - Frontend log: `activeRecommendation found: false`
 - Backend log: BAJAJFINSV not in `activeSuggestions symbols` list (only has ~30 monitored symbols)
-- Frontend log: `⚠️ No recommendation found - symbol may not be monitored`
+- Frontend log: ` No recommendation found - symbol may not be monitored`
 
 **Fix:** This is NOT a bug. Add UX text: "Not actively monitored" instead of showing "--"
 
@@ -257,13 +259,13 @@ Logs to **backend console**:
 Once you review the logs and identify which fields are stuck, we can propose specific fixes:
 
 ### If AI Outlook is stuck because symbol not monitored:
-✅ **Fix:** Add UX text "This symbol is not actively monitored" or auto-select first monitored symbol
+ **Fix:** Add UX text "This symbol is not actively monitored" or auto-select first monitored symbol
 
 ### If indices are stuck because Upstox doesn't support them:
-✅ **Fix:** Add fallback rendering ("Data unavailable") or skip those indices
+ **Fix:** Add fallback rendering ("Data unavailable") or skip those indices
 
 ### If data should be there but isn't:
-✅ **Fix:** Trace the specific failure point (DB query, WebSocket broadcast, React Query cache, etc.) and implement targeted fix
+ **Fix:** Trace the specific failure point (DB query, WebSocket broadcast, React Query cache, etc.) and implement targeted fix
 
 ---
 
@@ -277,3 +279,6 @@ if (process.env.DEBUG_AUDIT === 'true') {
 ```
 
 Or use a debug flag in Zustand store.
+
+
+</div>

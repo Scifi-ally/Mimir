@@ -1,3 +1,5 @@
+<div style="font-family: 'Geist Mono', monospace;">
+
 # Mimir Testing Runbook
 
 This document details how to run the massive end-to-end audit testing suite for the Mimir system, what to do on failure, and the expected state for a successful test run.
@@ -62,3 +64,6 @@ The debug endpoints (`/api/system/debug/*`) are the designated way to force the 
 
 > [!CAUTION]  
 > Never deploy the system with `NODE_ENV=development` as it exposes the debug endpoints. The Admin Token serves as a secondary guard, but strict environment boundaries must be maintained.
+
+
+</div>

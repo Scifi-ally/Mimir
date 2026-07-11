@@ -1,3 +1,5 @@
+<div style="font-family: 'Geist Mono', monospace;">
+
 # Contributing to Mimir
 
 First off, thank you for considering contributing to **Mimir**! It is people like you that make Mimir such a powerful, institutional-grade Indian stock market monitoring and automated trading analysis platform.
@@ -61,3 +63,6 @@ When adding new functionality, keep in mind Mimir's separation of concerns:
 * **Audit Logging.** Any automated order execution or paper trading state change must be logged to the PostgreSQL audit trail.
 
 Thank you for contributing to Mimir!
+
+
+</div>

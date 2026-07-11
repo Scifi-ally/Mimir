@@ -1,3 +1,5 @@
+<div style="font-family: 'Geist Mono', monospace;">
+
 # Mimir Performance Audit Findings
 
 | Metric | Finding | Severity | Required Fixes |
@@ -9,3 +11,6 @@
 | **Memory Growth** | Heap grew by ~85MB over 5 minutes. Continuous object allocation from WS JSON.parse on main thread. | HIGH | Fix 4 |
 | **TanStack Query Cache Hit Rate** | Candle historical queries hitting network on every symbol switch instead of using cache. Hit rate < 20%. | MEDIUM | Fix 7, 9 |
 | **Animation Jank (FPS)** | Dynamic Island height/width layout thrashing drops frame rate to ~25fps during expansion. | MEDIUM | Fix 8 |
+
+
+</div>

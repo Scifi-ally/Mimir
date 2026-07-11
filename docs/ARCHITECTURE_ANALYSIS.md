@@ -1,3 +1,5 @@
+<div style="font-family: 'Geist Mono', monospace;">
+
 # UpstoxBot Architecture Analysis: Symbol Selection & Data Flow
 
 ## EXECUTIVE SUMMARY
@@ -26,72 +28,72 @@ Daily PnL and Active Exposure update correctly, so WebSocket works for some data
 ### Current Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        FRONTEND (React/Vite)                         │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                       │
-│  Dashboard.tsx (main page)                                           │
-│  ├─ selectedSymbol (Zustand) ← any of ~92 stocks              │
-│  │                                                               │
-│  ├─ useWebSocket() hook                                         │
-│  │  └─ listens to all events, updates Zustand                  │
-│  │     └─ tick_update → setLatestTickBatch([all symbols])     │
-│  │     └─ new_suggestion → query invalidation                  │
-│  │                                                               │
-│  ├─ useGetActiveSuggestions() (React Query)                    │
-│  │  └─ /api/suggestions/active (polled every 10s)             │
-│  │  └─ Returns ALL active suggestions across ALL symbols      │
-│  │  └─ activeRecommendation = find(s => s.symbol == selected) │
-│  │                                                               │
-│  ├─ UI Components                                               │
-│  │  ├─ AI Outlook        ← uses activeRecommendation         │
-│  │  ├─ Risk Matrix       ← uses activeRecommendation         │
-│  │  ├─ Trade Ticket      ← uses activeRecommendation         │
-│  │  ├─ PriceChart        ← uses latestTickBatch (all symbols) │
-│  │  └─ Top Bar Indices   ← uses indices state (polled)       │
-│  │                                                               │
-│  └─ Symbol selection logic                                      │
-│     ├─ Search results → setSelectedSymbol(symbol)             │
-│     ├─ Watchlist click → setSelectedSymbol(symbol)            │
-│     └─ Scanner click → setSelectedSymbol(symbol)              │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────────┘
-                                │
+
+                        FRONTEND (React/Vite)                         
+
+                                                                       
+  Dashboard.tsx (main page)                                           
+   selectedSymbol (Zustand) ← any of ~92 stocks              
+                                                                 
+   useWebSocket() hook                                         
+     listens to all events, updates Zustand                  
+        tick_update → setLatestTickBatch([all symbols])     
+        new_suggestion → query invalidation                  
+                                                                 
+   useGetActiveSuggestions() (React Query)                    
+     /api/suggestions/active (polled every 10s)             
+     Returns ALL active suggestions across ALL symbols      
+     activeRecommendation = find(s => s.symbol == selected) 
+                                                                 
+   UI Components                                               
+     AI Outlook        ← uses activeRecommendation         
+     Risk Matrix       ← uses activeRecommendation         
+     Trade Ticket      ← uses activeRecommendation         
+     PriceChart        ← uses latestTickBatch (all symbols) 
+     Top Bar Indices   ← uses indices state (polled)       
+                                                                 
+   Symbol selection logic                                      
+      Search results → setSelectedSymbol(symbol)             
+      Watchlist click → setSelectedSymbol(symbol)            
+      Scanner click → setSelectedSymbol(symbol)              
+                                                                  
+
+                                
                      WebSocket (to /ws)
-                                │
-┌─────────────────────────────────────────────────────────────────────┐
-│                     BACKEND (Express/TS)                            │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                       │
-│  WebSocket Server (websocket_server.ts)                            │
-│  ├─ Topic-based subscriptions                                      │
-│  │  └─ Each client has topics: Set<string>                        │
-│  │  └─ Default: ["suggestions"]                                   │
-│  │  └─ Broadcast filters: if (topic in client.topics) send      │
-│  │                                                                 │
-│  ├─ Broadcast channels (topics):                                  │
-│  │  ├─ "suggestions" ← new suggestions, updates               │
-│  │  ├─ "ticks" ← market ticks (but client never subscribes!) │
-│  │  ├─ "monitoring" ← monitoring status                       │
-│  │  └─ "intelligence" ← market intelligence                   │
-│  │                                                                 │
-│  └─ Tick Broadcaster (tick_feeder.ts)                            │
-│     ├─ Receives tick stream from Upstox  WebSocket              │
-│     ├─ Queues ticks from ALL subscribed symbols               │
-│     ├─ Every 500ms: batches latest tick per symbol            │
-│     └─ broadcast(tickUpdate, "ticks")                         │
-│        └─ ⚠️ But frontend never subscribed to "ticks"!        │
-│                                                                  │
-│  Intraday Monitor (intraday_monitor.ts)                         │
-│  ├─ Monitors ~30 stocks from overnightWatchlist                │
-│  ├─ Detects entry signals tick-by-tick                        │
-│  └─ Generates suggestions for monitored symbols               │
-│                                                                  │
-│  Market Indices Feed                                            │
-│  └─ /api/market/dashboard-indices (polled every 30s)          │
-│     └─ Returns NIFTY, BANKNIFTY, FINNIFTY, SENSEX, VIX      │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────────┘
+                                
+
+                     BACKEND (Express/TS)                            
+
+                                                                       
+  WebSocket Server (websocket_server.ts)                            
+   Topic-based subscriptions                                      
+     Each client has topics: Set<string>                        
+     Default: ["suggestions"]                                   
+     Broadcast filters: if (topic in client.topics) send      
+                                                                   
+   Broadcast channels (topics):                                  
+     "suggestions" ← new suggestions, updates               
+     "ticks" ← market ticks (but client never subscribes!) 
+     "monitoring" ← monitoring status                       
+     "intelligence" ← market intelligence                   
+                                                                   
+   Tick Broadcaster (tick_feeder.ts)                            
+      Receives tick stream from Upstox  WebSocket              
+      Queues ticks from ALL subscribed symbols               
+      Every 500ms: batches latest tick per symbol            
+      broadcast(tickUpdate, "ticks")                         
+          But frontend never subscribed to "ticks"!        
+                                                                  
+  Intraday Monitor (intraday_monitor.ts)                         
+   Monitors ~30 stocks from overnightWatchlist                
+   Detects entry signals tick-by-tick                        
+   Generates suggestions for monitored symbols               
+                                                                  
+  Market Indices Feed                                            
+   /api/market/dashboard-indices (polled every 30s)          
+      Returns NIFTY, BANKNIFTY, FINNIFTY, SENSEX, VIX      
+                                                                  
+
 ```
 
 ### ROOT CAUSE #1: Tick Updates Never Reach Frontend
@@ -331,3 +333,6 @@ BACKEND:
 4. We test each field during a simulated/live tick stream
 
 Once you review this analysis and provide clarification on the above questions, I'll implement the fixes as separate, reviewable changes.
+
+
+</div>
