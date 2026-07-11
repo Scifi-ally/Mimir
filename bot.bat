@@ -165,6 +165,22 @@ echo !C_DIM!!C_GRAY!  !C_WHITE!bot stop!C_GRAY! shut down  !C_WHITE!bot tunnel!C
 goto :eof
 
 :tunnel
+if exist "%PROJECT_DIR%\.env" (
+    for /f "usebackq tokens=1,* delims==" %%A in ("%PROJECT_DIR%\.env") do (
+        if "%%A"=="UPSTOXBOT_ADMIN_TOKEN" set "UPSTOXBOT_ADMIN_TOKEN=%%B"
+    )
+)
+if "%UPSTOXBOT_ADMIN_TOKEN%"=="" (
+    echo !C_RED!  [X] UPSTOXBOT_ADMIN_TOKEN is missing!!C_RESET!
+    echo !C_DIM!!C_GRAY!    Please set a secure UPSTOXBOT_ADMIN_TOKEN in your .env file before using the tunnel.!C_RESET!
+    exit /b 1
+)
+if "%UPSTOXBOT_ADMIN_TOKEN%"=="your_secure_token_here" (
+    echo !C_RED!  [X] UPSTOXBOT_ADMIN_TOKEN is set to a placeholder!!C_RESET!
+    echo !C_DIM!!C_GRAY!    Please set a secure UPSTOXBOT_ADMIN_TOKEN in your .env file before using the tunnel.!C_RESET!
+    exit /b 1
+)
+
 set "TUNNEL_PORT=%~2"
 if "%TUNNEL_PORT%"=="" set "TUNNEL_PORT=3000"
 set "CF_CMD=%PROJECT_DIR%\.portable\cloudflared.exe"

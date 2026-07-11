@@ -88,6 +88,12 @@ export async function apiRateLimit(req: Request, res: Response, next: NextFuncti
   try {
     if (redisClient.status !== "ready") {
       if (redisClient.status === "wait") redisClient.connect().catch(() => {});
+      
+      const failClosed = process.env["RATE_LIMIT_FAIL_CLOSED"] === "true" || process.env["RATE_LIMIT_FAIL_CLOSED"] === "1";
+      if (failClosed) {
+        res.status(503).json({ error: "Service unavailable (rate limit engine offline)" });
+        return;
+      }
       next();
       return;
     }
@@ -103,8 +109,16 @@ export async function apiRateLimit(req: Request, res: Response, next: NextFuncti
       return;
     }
   } catch (err) {
-    // If Redis fails, fail-open with logging so trading terminal continues to function
-    logger.debug({ err }, "Redis rate limiter error, allowing request");
+    // If Redis fails, rate limiting behavior is controlled by RATE_LIMIT_FAIL_CLOSED.
+    // By default it fails-open with logging so the trading terminal continues to function offline.
+    const failClosed = process.env["RATE_LIMIT_FAIL_CLOSED"] === "true" || process.env["RATE_LIMIT_FAIL_CLOSED"] === "1";
+    if (failClosed) {
+      logger.error({ err }, "Redis rate limiter error, rejecting request (RATE_LIMIT_FAIL_CLOSED=true)");
+      res.status(503).json({ error: "Service unavailable (rate limit engine offline)" });
+      return;
+    } else {
+      logger.debug({ err }, "Redis rate limiter error, allowing request (fail-open)");
+    }
   }
 
   next();
