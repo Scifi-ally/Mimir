@@ -1,6 +1,6 @@
 @echo off
 echo ==============================================================
-echo UpstoxBot Portable Runtime Setup
+echo Mimir Portable Runtime Setup
 echo ==============================================================
 echo This will download Node.js and Python locally into the pendrive.
 echo Please ensure you have a stable internet connection.

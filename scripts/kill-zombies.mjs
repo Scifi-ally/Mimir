@@ -32,7 +32,7 @@ try {
 
     // Check if the command line contains project identifiers and is not our scripts
     const isTarget = 
-      cmdLine.includes("UpstoxBot") ||
+      cmdLine.includes("Mimir") ||
       cmdLine.includes("trading_engine.mjs") ||
       cmdLine.includes("api_server.mjs") ||
       cmdLine.includes("start:engine") ||
