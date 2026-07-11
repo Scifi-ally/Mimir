@@ -85,9 +85,9 @@ async function verifyDockerContainers() {
     }
     report("Docker Containers (Process Check)", "PASS");
     return true;
-  // eslint-disable-next-line unused-imports/no-unused-vars, @typescript-eslint/no-unused-vars
-  } catch (e) {
+  } catch (err) {
     // Docker command failed, probably not running docker locally or no access.
+    console.warn("Suppressed error: docker CLI check failed", err);
     report("Docker Containers (Process Check)", "PASS", "Skipped docker CLI check");
     return true;
   }

@@ -351,7 +351,8 @@ export function parseClientEvent(raw: string | Buffer | Uint8Array): ClientEvent
       parsed = packr.unpack(raw);
     }
     return ClientEventSchema.parse(parsed);
-  } catch {
+  } catch (err) {
+    logger.warn({ err }, "Suppressed error: failed to parse ClientEvent");
     return null;
   }
 }

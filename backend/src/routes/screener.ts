@@ -207,7 +207,7 @@ router.post("/screener/run", async (req, res, next) => {
       screenerIds: screenerId ? [screenerId] : undefined,
       runId: newRun.id 
     }).catch((err) => {
-      console.error({ err }, "Error running custom screener asynchronously");
+      logger.error({ err }, "Error running custom screener asynchronously");
     });
 
     return res.json({

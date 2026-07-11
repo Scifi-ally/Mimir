@@ -288,8 +288,8 @@ function serializeItem(i: typeof overnightWatchlistTable.$inferSelect) {
         // Just return as string if it's some other JSON
         parsedCondition = i.condition ?? "";
       }
-    // eslint-disable-next-line unused-imports/no-unused-vars, @typescript-eslint/no-unused-vars
-    } catch (e) {
+    } catch (err) {
+      logger.warn({ err }, "Suppressed error: failed to parse watchlist condition JSON");
       // fallback to string
     }
   }

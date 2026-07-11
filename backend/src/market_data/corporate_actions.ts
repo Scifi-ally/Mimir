@@ -49,7 +49,8 @@ async function getNSECookies(): Promise<string> {
     const raw = resp.headers["set-cookie"] as string | string[] | undefined;
     if (!raw) return "";
     return Array.isArray(raw) ? raw.map(c => c.split(";")[0]).join("; ") : (raw as string).split(";")[0] ?? "";
-  } catch {
+  } catch (err) {
+    logger.warn({ err }, "Suppressed error: failed to fetch NSE cookies");
     return "";
   }
 }

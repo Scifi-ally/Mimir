@@ -643,7 +643,8 @@ async function getActiveSymbolsSet(): Promise<Set<string>> {
     const symbols = new Set(rows.map((r) => r.symbol));
     activeSuggestionsCache = { symbols, timestamp: now };
     return symbols;
-  } catch {
+  } catch (err) {
+    logger.warn({ err }, "Suppressed error: failed to fetch active suggestions");
     return activeSuggestionsCache.symbols;
   }
 }

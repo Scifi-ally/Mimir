@@ -44,7 +44,8 @@ export class UpstoxConnectionManager {
       let dirname = "";
       try {
         dirname = typeof __dirname !== "undefined" ? __dirname : new URL('.', import.meta.url).pathname;
-      } catch {
+      } catch (err) {
+        logger.warn({ err }, "Suppressed error: failed to resolve __dirname for protobuf schema path");
         dirname = process.cwd();
       }
       const possiblePaths = [
@@ -285,7 +286,7 @@ export class UpstoxConnectionManager {
         if (!feed) continue;
         const globalAny = global as typeof globalThis & { tickLogCount?: number };
         if (!globalAny.tickLogCount) globalAny.tickLogCount = 0;
-        if (globalAny.tickLogCount++ < 5) console.log("LOG_TICK_DEBUG:", JSON.stringify(feed));
+        if (globalAny.tickLogCount++ < 5) logger.info({ feed: JSON.stringify(feed) }, "LOG_TICK_DEBUG");
 
         const normalizedKey = key.trim().toUpperCase().replace(":", "|");
         const symbol = this.keyToSymbolMap.get(normalizedKey);

@@ -45,7 +45,8 @@ async function fetchPrevClose(
           typeof c[0] === "string" && (c[0] as string).split("T")[0] !== today,
       ) ?? candles[0];
     return (completedCandle?.[4] as number) ?? null;
-  } catch {
+  } catch (err) {
+    logger.warn({ err }, "Suppressed error: failed to fetch prev close");
     return null;
   }
 }
@@ -69,7 +70,8 @@ async function fetchLTP(
       if (val.last_price) result[key] = val.last_price;
     }
     return result;
-  } catch {
+  } catch (err) {
+    logger.warn({ err }, "Suppressed error: failed to fetch LTP");
     return {};
   }
 }

@@ -10,7 +10,7 @@ export function logApiError(req: Request, err: any): void {
 }
 
 export function sendFallback<T>(res: Response, data: T, reason: string, status = 503): void {
-  res.setHeader("X-UpstoxBot-Fallback", reason);
+  res.setHeader("X-Mimir-Fallback", reason);
   res.status(status).json({
     error: "Service temporarily unavailable",
     reason,

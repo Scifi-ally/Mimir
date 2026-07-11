@@ -176,8 +176,8 @@ class TickDistributionServer {
           ask: normalized.ask,
           timestamp: normalized.timestamp,
         });
-      } catch {
-        // Suppress analysis bus errors from blocking feed loop
+      } catch (err) {
+        logger.warn({ err }, "Suppressed error: failed to publish processedTick to intelligenceBus");
       }
     });
   }
