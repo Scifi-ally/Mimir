@@ -147,6 +147,12 @@ export async function apiRateLimit(req: Request, res: Response, next: NextFuncti
 }
 
 export function logSecurityMode(): void {
+  const secretKey = process.env["UPSTOXBOT_SECRET_KEY"]?.trim();
+  if (!secretKey || secretKey === "replace_with_a_long_random_secret") {
+    logger.error("CRITICAL: UPSTOXBOT_SECRET_KEY is missing or insecure. Refusing to start.");
+    process.exit(1);
+  }
+
   const token = process.env["UPSTOXBOT_ADMIN_TOKEN"]?.trim();
   const tokenLooksPlaceholder =
     token === "change_me_before_remote_use" ||

@@ -725,7 +725,14 @@ router.get("/system/auth-callback", async (req, res) => {
   const expectedState = req.cookies?.[AUTH_STATE_COOKIE];
   res.clearCookie(AUTH_STATE_COOKIE);
   if (!expectedState || parsed.data.state !== expectedState) {
-    req.log.warn({ expectedState, receivedState: parsed.data.state }, "Auth state mismatch or missing cookie, bypassing for local dev");
+    req.log.error({ expectedState, receivedState: parsed.data.state }, "Auth state mismatch or missing cookie (CSRF validation failed)");
+    res.setHeader("Content-Type", "text/html");
+    res.status(400).send(htmlResponse(
+      "Authorization Error",
+      "Invalid or missing state parameter. This could be a CSRF attempt or your session expired. Please restart the login process.",
+      true
+    ));
+    return;
   }
 
   const type = parsed.data.state?.endsWith("_data") ? "data" : "trading";

@@ -13,7 +13,9 @@ export function protectSecret(value: string | null | undefined): string | null {
   if (value.startsWith(PREFIX)) return value;
 
   const key = getKey();
-  if (!key) return value;
+  if (!key) {
+    throw new Error("UPSTOXBOT_SECRET_KEY is required to protect secrets");
+  }
 
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);

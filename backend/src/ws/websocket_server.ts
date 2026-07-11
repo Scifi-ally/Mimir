@@ -2,7 +2,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import type { Server } from "http";
 import { logger } from "../lib/logger";
 import { parseClientEvent, ServerEvent, createServerEvent, packr } from "./events";
-import { isAllowedOrigin } from "../lib/security";
+import { isAllowedOrigin, isLocalRequest } from "../lib/security";
 import { Redis } from "ioredis";
 
 const redisSubscriber = new Redis(process.env.REDIS_URL || "redis://localhost:6379");
@@ -24,8 +24,17 @@ let connectedCount = 0;
 let lastTickLog = 0;
 
 export function initWebSocketServer(server: Server): void {
-  const wssIntelligence = new WebSocketServer({ noServer: true });
-  const wssMarketData = new WebSocketServer({ noServer: true });
+  const handleProtocols = (protocols: Set<string>, _request: any): string | false => {
+    // If the client requested any protocols (which in our case is the admin token),
+    // echo back the first one so the browser doesn't drop the connection.
+    if (protocols.size > 0) {
+      return protocols.values().next().value || false;
+    }
+    return false;
+  };
+
+  const wssIntelligence = new WebSocketServer({ noServer: true, handleProtocols });
+  const wssMarketData = new WebSocketServer({ noServer: true, handleProtocols });
 
   wssInstances.push(wssIntelligence, wssMarketData);
 
@@ -33,10 +42,27 @@ export function initWebSocketServer(server: Server): void {
     const origin = request.headers.origin;
     
     if (origin && !isAllowedOrigin(origin)) {
-      console.error("401 Unauthorized in UPGRADE", { origin, isAllowed: isAllowedOrigin(origin), nodeEnv: process.env.NODE_ENV, headers: request.headers });
+      logger.error({ origin, isAllowed: isAllowedOrigin(origin), nodeEnv: process.env.NODE_ENV, headers: request.headers }, "401 Unauthorized in UPGRADE");
       socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
       socket.destroy();
       return;
+    }
+
+    if (!isLocalRequest(request as any)) {
+      const token = process.env.UPSTOXBOT_ADMIN_TOKEN;
+      const protocols = request.headers['sec-websocket-protocol'];
+      const protocolList = protocols ? protocols.split(',').map(p => p.trim()) : [];
+      const hasValidToken = token && protocolList.includes(token);
+      
+      const url = new URL(request.url || "", `http://${request.headers.host || "localhost"}`);
+      const hasValidQuery = token && url.searchParams.get("token") === token;
+
+      if (!hasValidToken && !hasValidQuery) {
+        logger.warn({ ip: request.socket.remoteAddress }, "WebSocket upgrade rejected: missing or invalid admin token");
+        socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+        socket.destroy();
+        return;
+      }
     }
 
     const pathname = request.url ? request.url.split("?")[0] : "";
