@@ -11,6 +11,7 @@ import {
 import type { SuggestionGeneratedEvent, MarketTickEvent } from "../intelligence/types";
 import { todayStartUTC } from "../lib/ist-time";
 import { stateStore } from "../lib/redis_state";
+import Decimal from "decimal.js";
 
 let engineActive = false;
 
@@ -44,11 +45,11 @@ export async function initPaperEngine() {
 
       const { suggestion } = event;
       const account = await getAccount();
-      const balance = parseFloat(account.balance);
-      const allocated = parseFloat(account.allocatedMargin);
-      const availableMargin = balance - allocated;
+      const balance = new Decimal(account.balance);
+      const allocated = new Decimal(account.allocatedMargin);
+      const availableMargin = balance.minus(allocated);
 
-      if (availableMargin <= 0) {
+      if (availableMargin.lte(0)) {
         logger.warn("PaperEngine: Insufficient margin for new trades");
         return;
       }
@@ -56,23 +57,23 @@ export async function initPaperEngine() {
       // ---------------------------------------------------------
       // CIRCUIT BREAKER: Daily Drawdown Limit
       // ---------------------------------------------------------
-      const maxDailyLossPct = config.maxDailyLossPct || 3.0;
-      const maxDailyLossAmount = -(parseFloat(account.startingBalance) * (maxDailyLossPct / 100));
+      const maxDailyLossPct = new Decimal(config.maxDailyLossPct || 3.0);
+      const maxDailyLossAmount = new Decimal(account.startingBalance).mul(maxDailyLossPct.div(100)).negated();
 
       const todaysPositions = await db.select().from(paperPositionsTable).where(
         gte(paperPositionsTable.createdAt, todayStartUTC())
       );
 
-      let totalDailyPnl = 0;
+      let totalDailyPnl = new Decimal(0);
       for (const pos of todaysPositions) {
-        totalDailyPnl += parseFloat(pos.realizedPnl) + parseFloat(pos.unrealizedPnl);
+        totalDailyPnl = totalDailyPnl.plus(pos.realizedPnl).plus(pos.unrealizedPnl);
       }
 
-      if (totalDailyPnl <= maxDailyLossAmount) {
-        logger.error({ totalDailyPnl, maxDailyLossAmount }, "CIRCUIT BREAKER: Daily loss limit reached. Halting new trades.");
+      if (totalDailyPnl.lte(maxDailyLossAmount)) {
+        logger.error({ totalDailyPnl: totalDailyPnl.toNumber(), maxDailyLossAmount: maxDailyLossAmount.toNumber() }, "CIRCUIT BREAKER: Daily loss limit reached. Halting new trades.");
         intelligenceBus.publish("dailyLossLimitReached", {
-          lossAmount: totalDailyPnl,
-          limitAmount: maxDailyLossAmount
+          lossAmount: totalDailyPnl.toNumber(),
+          limitAmount: maxDailyLossAmount.toNumber()
         });
         return;
       }
@@ -95,7 +96,7 @@ export async function initPaperEngine() {
       const kellyRiskPct = fullKelly > 0 ? (fullKelly * 100) / 2.0 : 1.0; 
       
       const riskPct = Math.min(Math.max(kellyRiskPct, 1.0), maxRiskCap); // Minimum 1% risk
-      const riskAmount = balance * (riskPct / 100);
+      const riskAmount = balance.mul(riskPct).div(100);
       
       logger.info({ symbol: suggestion.symbol, winProb, riskReward, fullKelly, riskPct }, "PaperEngine: Sized trade");
       // ---------------------------------------------------------
@@ -117,26 +118,26 @@ export async function initPaperEngine() {
 
       const isBuy = suggestion.direction === "BUY";
       // 0.05% slippage on entry
-      const rawEntry = Number(suggestion.entry);
-      const entry = isBuy ? rawEntry * 1.0005 : rawEntry * 0.9995;
-      const stopLoss = Number(suggestion.stopLoss);
-      const stopDistance = Math.abs(entry - stopLoss);
+      const rawEntry = new Decimal(suggestion.entry);
+      const entry = isBuy ? rawEntry.mul(1.0005) : rawEntry.mul(0.9995);
+      const stopLoss = new Decimal(suggestion.stopLoss);
+      const stopDistance = entry.minus(stopLoss).abs();
       
-      if (stopDistance === 0 || isNaN(stopDistance)) {
-        logger.debug({ symbol: suggestion.symbol, stopDistance, entry, stopLoss }, "PaperEngine: Aborted entry due to invalid stopDistance");
+      if (stopDistance.isZero() || stopDistance.isNaN()) {
+        logger.debug({ symbol: suggestion.symbol, stopDistance: stopDistance.toNumber(), entry: entry.toNumber(), stopLoss: stopLoss.toNumber() }, "PaperEngine: Aborted entry due to invalid stopDistance");
         return;
       }
 
       // Calculate quantity, but guarantee at least 1 share if margin allows it
-      let quantity = Math.max(1, Math.floor(riskAmount / stopDistance));
+      let quantity = Decimal.max(1, riskAmount.div(stopDistance).floor()).toNumber();
 
       // Ensure we don't exceed available margin
-      let requiredMargin = quantity * entry;
-      if (requiredMargin > availableMargin) {
-        quantity = Math.floor(availableMargin / entry);
-        requiredMargin = quantity * entry; // Recalculate with new quantity
+      let requiredMargin = entry.mul(quantity);
+      if (requiredMargin.gt(availableMargin)) {
+        quantity = availableMargin.div(entry).floor().toNumber();
+        requiredMargin = entry.mul(quantity); // Recalculate with new quantity
         if (quantity <= 0) {
-          logger.warn({ symbol: suggestion.symbol, availableMargin, entry }, "PaperEngine: Aborted entry because quantity is 0 after margin adjustment");
+          logger.warn({ symbol: suggestion.symbol, availableMargin: availableMargin.toNumber(), entry: entry.toNumber() }, "PaperEngine: Aborted entry because quantity is 0 after margin adjustment");
           return;
         }
       }
@@ -168,8 +169,8 @@ export async function initPaperEngine() {
 
         // 3. Update Account
         const updateRes = await tx.update(paperAccountsTable)
-          .set({ allocatedMargin: sql`allocated_margin + ${requiredMargin}` })
-          .where(sql`${paperAccountsTable.id} = ${account.id} AND balance - allocated_margin >= ${requiredMargin}`)
+          .set({ allocatedMargin: sql`allocated_margin + ${requiredMargin.toFixed(2)}` })
+          .where(sql`${paperAccountsTable.id} = ${account.id} AND balance - allocated_margin >= ${requiredMargin.toFixed(2)}`)
           .returning();
           
         if (updateRes.length === 0) {
@@ -209,44 +210,44 @@ export async function initPaperEngine() {
         const suggestion = sugMap.get(pos.suggestionId!);
         if (!suggestion) continue;
 
-        const ltp = tick.ltp;
-        const entryPrice = parseFloat(pos.avgEntryPrice);
-        const qty = pos.quantity;
+        const ltp = new Decimal(tick.ltp);
+        const entryPrice = new Decimal(pos.avgEntryPrice);
+        const qty = new Decimal(pos.quantity);
         const isBuy = pos.direction === "BUY";
         
-        const currentStop = pos.trailingStopLoss ? parseFloat(pos.trailingStopLoss) : parseFloat(suggestion.stopLoss);
-        const originalStop = parseFloat(suggestion.stopLoss);
-        const target = parseFloat(suggestion.target1 ?? (suggestion as any).target ?? "0");
+        const currentStop = new Decimal(pos.trailingStopLoss || suggestion.stopLoss);
+        const originalStop = new Decimal(suggestion.stopLoss);
+        const target = new Decimal(suggestion.target1 ?? (suggestion as any).target ?? "0");
 
-        const unrealized = isBuy ? (ltp - entryPrice) * qty : (entryPrice - ltp) * qty;
+        const unrealized = isBuy ? ltp.minus(entryPrice).mul(qty) : entryPrice.minus(ltp).mul(qty);
         
         let exitReason: "TARGET_EXIT" | "STOP_EXIT" | null = null;
         let newTrailingStop = currentStop;
         
-        const risk = Math.abs(entryPrice - originalStop);
+        const risk = entryPrice.minus(originalStop).abs();
         
         if (isBuy) {
-          if (ltp >= target) exitReason = "TARGET_EXIT";
-          if (ltp <= currentStop) exitReason = "STOP_EXIT";
+          if (ltp.gte(target)) exitReason = "TARGET_EXIT";
+          if (ltp.lte(currentStop)) exitReason = "STOP_EXIT";
           
-          if (!exitReason && risk > 0) {
-            const steps = Math.floor((ltp - entryPrice) / risk);
-            if (steps > 0) {
-              const trailed = originalStop + steps * risk;
-              if (trailed > currentStop) {
+          if (!exitReason && risk.gt(0)) {
+            const steps = ltp.minus(entryPrice).div(risk).floor();
+            if (steps.gt(0)) {
+              const trailed = originalStop.plus(steps.mul(risk));
+              if (trailed.gt(currentStop)) {
                 newTrailingStop = trailed;
               }
             }
           }
         } else {
-          if (ltp <= target) exitReason = "TARGET_EXIT";
-          if (ltp >= currentStop) exitReason = "STOP_EXIT";
+          if (ltp.lte(target)) exitReason = "TARGET_EXIT";
+          if (ltp.gte(currentStop)) exitReason = "STOP_EXIT";
 
-          if (!exitReason && risk > 0) {
-            const steps = Math.floor((entryPrice - ltp) / risk);
-            if (steps > 0) {
-              const trailed = originalStop - steps * risk;
-              if (trailed < currentStop) {
+          if (!exitReason && risk.gt(0)) {
+            const steps = entryPrice.minus(ltp).div(risk).floor();
+            if (steps.gt(0)) {
+              const trailed = originalStop.minus(steps.mul(risk));
+              if (trailed.lt(currentStop)) {
                 newTrailingStop = trailed;
               }
             }
@@ -262,13 +263,13 @@ export async function initPaperEngine() {
 
            let slippedLtp = ltp;
            if (isBuy) {
-              if (exitReason === "STOP_EXIT") slippedLtp = currentStop * 0.9995;
-              else if (exitReason === "TARGET_EXIT") slippedLtp = target * 0.9995;
+              if (exitReason === "STOP_EXIT") slippedLtp = currentStop.mul(0.9995);
+              else if (exitReason === "TARGET_EXIT") slippedLtp = target.mul(0.9995);
            } else {
-              if (exitReason === "STOP_EXIT") slippedLtp = currentStop * 1.0005;
-              else if (exitReason === "TARGET_EXIT") slippedLtp = target * 1.0005;
+              if (exitReason === "STOP_EXIT") slippedLtp = currentStop.mul(1.0005);
+              else if (exitReason === "TARGET_EXIT") slippedLtp = target.mul(1.0005);
            }
-          const realizedPnl = isBuy ? (slippedLtp - entryPrice) * qty : (entryPrice - slippedLtp) * qty;
+          const realizedPnl = isBuy ? slippedLtp.minus(entryPrice).mul(qty) : entryPrice.minus(slippedLtp).mul(qty);
 
           const account = await getAccount();
           await db.transaction(async (tx) => {
@@ -294,24 +295,24 @@ export async function initPaperEngine() {
               symbol: pos.symbol,
               direction: isBuy ? "SELL" : "BUY",
               orderType: exitReason as string,
-              quantity: qty,
+              quantity: qty.toNumber(),
               price: slippedLtp.toFixed(2),
               status: "EXECUTED"
             });
 
             // 3. Update Account
-            const requiredMargin = qty * entryPrice;
+            const requiredMargin = qty.mul(entryPrice);
             await tx.update(paperAccountsTable)
               .set({ 
-                allocatedMargin: sql`allocated_margin - ${requiredMargin}`,
-                balance: sql`balance + ${realizedPnl}`
+                allocatedMargin: sql`allocated_margin - ${requiredMargin.toFixed(2)}`,
+                balance: sql`balance + ${realizedPnl.toFixed(2)}`
               })
               .where(eq(paperAccountsTable.id, account.id));
           });
 
-          logger.info({ symbol: pos.symbol, exitReason, realizedPnl }, "PaperEngine: Exited Position");
+          logger.info({ symbol: pos.symbol, exitReason, realizedPnl: realizedPnl.toNumber() }, "PaperEngine: Exited Position");
         } else {
-          if (newTrailingStop !== currentStop || unrealized.toFixed(2) !== pos.unrealizedPnl) {
+          if (!newTrailingStop.equals(currentStop) || unrealized.toFixed(2) !== pos.unrealizedPnl) {
             await db.update(paperPositionsTable)
               .set({
                 unrealizedPnl: unrealized.toFixed(2),
