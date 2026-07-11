@@ -31,4 +31,15 @@ describe("PaperEngine Math Precision", () => {
     const jsSlippedLtp = 10.30 * 0.9995;
     expect(jsSlippedLtp).not.toBe(10.29485);
   });
+
+  it("quarter-Kelly produces a more conservative risk percentage than half-Kelly", () => {
+    const winProb = 0.65;
+    const riskReward = 2.0;
+    const fullKelly = winProb - ((1.0 - winProb) / riskReward);
+    const halfKelly = fullKelly > 0 ? (fullKelly * 100) / 2.0 : 1.0;
+    const quarterKelly = fullKelly > 0 ? (fullKelly * 100) / 4.0 : 0.5;
+    
+    expect(quarterKelly).toBeLessThan(halfKelly);
+    expect(quarterKelly).toBeGreaterThan(0);
+  });
 });

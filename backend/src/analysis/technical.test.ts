@@ -38,6 +38,10 @@ describe("technical indicators", () => {
       .toBeGreaterThan(50);
   });
 
+  it("returns 50 for a completely flat series", () => {
+    expect(computeRSI(Array.from({ length: 20 }, () => 100), 14)).toBe(50);
+  });
+
   it("seeds ATR from available true ranges for short series", () => {
     const atr = computeATR([
       { ...candle(0), high: 10, low: 8, close: 9 },

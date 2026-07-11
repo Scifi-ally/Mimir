@@ -23,12 +23,6 @@ function setAccessToken(token: UpstoxToken, type: "trading" | "data" = "trading"
 
 export async function initAccessTokenFromDb(): Promise<void> {
   try {
-    await db
-      .select()
-      .from(upstoxTokenTable);
-    
-    // I need to use raw SQL or a proper query
-    // Let me rewrite this cleanly
     const allRows = await db.select().from(upstoxTokenTable);
     
     for (const row of allRows) {

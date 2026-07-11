@@ -319,6 +319,14 @@ export const SubscribeWatchlistEventSchema = z.object({
 });
 export type SubscribeWatchlistEvent = z.infer<typeof SubscribeWatchlistEventSchema>;
 
+export const AuthEventSchema = z.object({
+  event: z.literal("auth"),
+  data: z.object({
+    token: z.string(),
+  }),
+});
+export type AuthEvent = z.infer<typeof AuthEventSchema>;
+
 export const ClientEventSchema = z.discriminatedUnion("event", [
   PingEventSchema,
   SubscribeEventSchema,
@@ -326,6 +334,7 @@ export const ClientEventSchema = z.discriminatedUnion("event", [
   SubscribeSymbolEventSchema,
   SubscribeSymbolsEventSchema,
   SubscribeWatchlistEventSchema,
+  AuthEventSchema,
 ]);
 export type ClientEvent = z.infer<typeof ClientEventSchema>;
 

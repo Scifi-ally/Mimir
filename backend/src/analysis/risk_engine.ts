@@ -96,6 +96,12 @@ export function getOpenPositionCount(): number {
   return _openPositions.length;
 }
 
+/**
+ * Syncs the risk engine state with the database.
+ * NOTE: This is called every minute via the scheduler. The 60s staleness window
+ * is acceptable for the current trading cadence (suggestions generated every 5 mins).
+ * No explicit locking is needed due to single-threaded Node.js event loop.
+ */
 export async function syncRiskEngineState(): Promise<void> {
   try {
     const active = await db
@@ -120,7 +126,7 @@ export async function syncRiskEngineState(): Promise<void> {
       .from(suggestionsTable)
       .where(
         and(
-          gte(suggestionsTable.generatedAt, todayStart),
+          gte(suggestionsTable.closedAt, todayStart),
           sql`status != 'ACTIVE'`
         )
       );
@@ -313,6 +319,23 @@ export async function assessRisk(
 
   if (quantity === 0) {
     rejections.push("Position size computed to 0 — risk per share too large");
+  }
+
+  // ── Check: Aggregate deployed capital ────────────────────────────────
+  const totalDeployed = _openPositions.reduce((sum, p) => sum + (p.entryPrice * p.quantity), 0);
+  const maxDeployed = cfg.tradingCapital * ((cfg.maxDeployedCapitalPct ?? 90) / 100);
+  if (totalDeployed + investmentAmount > maxDeployed) {
+    const remainingCapital = Math.max(0, maxDeployed - totalDeployed);
+    if (remainingCapital < entryPrice) {
+      rejections.push(`Aggregate deployed capital would exceed ${cfg.maxDeployedCapitalPct ?? 90}% limit (₹${Math.round(totalDeployed)} deployed + ₹${Math.round(investmentAmount)} new > ₹${Math.round(maxDeployed)} max)`);
+    } else {
+      // Reduce position to fit within capital limit
+      quantity = Math.floor(remainingCapital / entryPrice);
+      investmentAmount = quantity * entryPrice;
+      maxRiskInr = quantity * (direction === 'BUY' ? entryPrice - stopLoss : stopLoss - entryPrice);
+      riskPct = cfg.tradingCapital > 0 ? (maxRiskInr / cfg.tradingCapital) * 100 : 0;
+      warnings.push(`Position reduced to ${quantity} shares to stay within ${cfg.maxDeployedCapitalPct ?? 90}% deployed capital limit`);
+    }
   }
 
   // ── Warnings (non-blocking) ───────────────────────────────────────────

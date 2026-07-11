@@ -12,6 +12,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 dotenvConfig({ path: path.resolve(__dirname, "../../.env.local"), override: true });
 dotenvConfig({ path: path.resolve(__dirname, "../../.env") });
+dotenvConfig({ path: path.resolve(__dirname, "../../../.env.local"), override: true });
+dotenvConfig({ path: path.resolve(__dirname, "../../../.env") });
 
 if (!process.env.DATABASE_URL) {
   throw new Error(

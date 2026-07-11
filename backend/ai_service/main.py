@@ -567,7 +567,7 @@ async def infer_batch(req: BatchRequest):
 
 
 # ---------------------------------------------------------------------------
-# Request timing middleware
+# Auth & Timing middleware
 # ---------------------------------------------------------------------------
 @app.middleware("http")
 async def add_timing_header(request: Request, call_next):
@@ -577,6 +577,20 @@ async def add_timing_header(request: Request, call_next):
     response.headers["X-Process-Time-Ms"] = f"{elapsed:.2f}"
     return response
 
+@app.middleware("http")
+async def verify_auth_token(request: Request, call_next):
+    if request.url.path == "/health":
+        return await call_next(request)
+    
+    expected_token = os.getenv("AI_SERVICE_TOKEN")
+    if expected_token:
+        token = request.headers.get("X-AI-Service-Token")
+        if not token or token != expected_token:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
+            
+    return await call_next(request)
+
 
 # ---------------------------------------------------------------------------
 # Entry point
@@ -584,7 +598,7 @@ async def add_timing_header(request: Request, call_next):
 if __name__ == "__main__":
     uvicorn.run(
         "main:app",
-        host="0.0.0.0",
+        host="127.0.0.1",
         port=8001,
         log_level="info",
         reload=False,

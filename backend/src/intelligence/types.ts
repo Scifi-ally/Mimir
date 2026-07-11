@@ -10,7 +10,7 @@ export interface MarketTickEvent {
   instrumentKey: InstrumentKey;
   symbol: string;
   ltp: number;
-  volume: number;
+  volume: number | null;
   bid?: number | null;
   ask?: number | null;
   timestamp: number;

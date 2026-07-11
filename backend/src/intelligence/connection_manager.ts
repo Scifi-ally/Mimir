@@ -332,7 +332,7 @@ export class UpstoxConnectionManager {
           instrumentKey: normalizedKey,
           symbol,
           ltp: lastPrice,
-          volume: volume || 100000,
+          volume: volume || null,
           bid,
           ask,
           timestamp: Date.now(),
@@ -482,7 +482,7 @@ export class UpstoxConnectionManager {
           instrumentKey: canonicalKey,
           symbol,
           ltp: price,
-          volume: 100000,
+          volume: null,
           timestamp: Date.now(),
         });
       }

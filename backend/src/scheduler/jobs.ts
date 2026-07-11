@@ -187,7 +187,7 @@ async function updateDailyLoss(): Promise<void> {
       .from(suggestionsTable)
       .where(
         and(
-          gte(suggestionsTable.generatedAt, todayStartUTC()),
+          gte(suggestionsTable.closedAt, todayStartUTC()),
           eq(suggestionsTable.status, "STOP_HIT"),
         ),
       );
@@ -205,7 +205,7 @@ async function updateDailyLoss(): Promise<void> {
     const weeklyRows = await db
       .select({ pnlInr: suggestionsTable.pnlInr })
       .from(suggestionsTable)
-      .where(gte(suggestionsTable.generatedAt, weekStart));
+      .where(gte(suggestionsTable.closedAt, weekStart));
     const weeklyPnl = weeklyRows.reduce((sum, r) => {
       const v = r.pnlInr != null ? parseFloat(r.pnlInr) : 0;
       return sum + v;
@@ -216,7 +216,7 @@ async function updateDailyLoss(): Promise<void> {
     const rollingRows = await db
       .select({ pnlInr: suggestionsTable.pnlInr, status: suggestionsTable.status })
       .from(suggestionsTable)
-      .where(gte(suggestionsTable.generatedAt, weekStart));
+      .where(gte(suggestionsTable.closedAt, weekStart));
     const realized = rollingRows
       .filter((r) => r.status !== "ACTIVE")
       .map((r) => (r.pnlInr != null ? parseFloat(r.pnlInr) : 0))
@@ -316,7 +316,7 @@ async function runStateReconciliation(): Promise<void> {
 
   try {
     // Fetch live positions from Upstox (aborting safely if getPositions is unimplemented rather than mocking 0 positions)
-    logger.debug("State reconciliation skipped — getPositions not implemented yet");
+    logger.warn("State reconciliation skipped — live trading order placement (placeOrder/getPositions) is not implemented. Set paperTradingEnabled=true or implement broker integration.");
     return;
   } catch (err) {
     logger.error({ err }, "State reconciliation failed");

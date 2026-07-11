@@ -64,6 +64,7 @@ export const paperPositionsTable = pgTable("paper_positions", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   closedAt: timestamp("closed_at", { withTimezone: true }),
 }, (table) => ({
+  symbolIdx: index("paper_positions_symbol_idx").on(table.symbol),
   statusIdx: index("paper_positions_status_idx").on(table.status),
   suggestionIdx: index("paper_positions_suggestion_idx").on(table.suggestionId),
 }));

@@ -17,9 +17,7 @@ export function subscribeWsSymbols(symbols: string[]) {
 
 function wsUrl(path = "/ws") {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const token = localStorage.getItem("mimir_admin_token");
-  const query = token ? `?token=${encodeURIComponent(token)}` : "";
-  return `${protocol}//${window.location.host}${path}${query}`;
+  return `${protocol}//${window.location.host}${path}`;
 }
 
 export function useWebSocket() {
@@ -40,11 +38,18 @@ export function useWebSocket() {
 
   useEffect(() => {
     let cancelled = false;
-    let reconnectTimer: number | null = null;
+    let reconnectTimerInt: number | null = null;
+    let reconnectTimerMd: number | null = null;
     let pingTimer: number | null = null;
     let worker: Worker | null = null;
     let socketInt: WebSocket | null = null;
     let socketMd: WebSocket | null = null;
+    let isIntConnected = false;
+    let isMdConnected = false;
+    let lastMessageTimeInt = Date.now();
+    let lastMessageTimeMd = Date.now();
+
+    const checkConnected = () => setWsConnected(isIntConnected && isMdConnected);
 
     const clearPing = () => {
       if (pingTimer != null) {
@@ -59,30 +64,25 @@ export function useWebSocket() {
         ws.send(JSON.stringify({ event: "subscribe_symbol", data: { symbol } }));
       }
     };
+    
+    const sendAuth = (ws: WebSocket) => {
+      const token = localStorage.getItem("mimir_admin_token");
+      if (token) {
+        ws.send(JSON.stringify({ event: "auth", data: { token } }));
+      }
+    };
 
-    const connect = (retryCount = 0) => {
+    const connectInt = (retryCount = 0) => {
       if (cancelled) return;
-
-      clearPing();
+      
       const nextSocketInt = new WebSocket(wsUrl("/ws/intelligence"));
-      const nextSocketMd = new WebSocket(wsUrl("/ws/market-data"));
-      
       nextSocketInt.binaryType = "arraybuffer";
-      nextSocketMd.binaryType = "arraybuffer";
-      
       socketInt = nextSocketInt;
-      socketMd = nextSocketMd;
-      wsRef.current = nextSocketMd; // Use MD socket for symbol subscriptions
-      
-      let lastMessageTimeInt = Date.now();
-      let lastMessageTimeMd = Date.now();
-      let isIntConnected = false;
-      let isMdConnected = false;
-      
-      const checkConnected = () => setWsConnected(isIntConnected && isMdConnected);
+      lastMessageTimeInt = Date.now();
 
       nextSocketInt.onopen = () => {
         if (cancelled) return;
+        sendAuth(nextSocketInt);
         isIntConnected = true;
         checkConnected();
         lastMessageTimeInt = Date.now();
@@ -91,9 +91,39 @@ export function useWebSocket() {
         nextSocketInt.send(JSON.stringify({ event: "subscribe", data: { topic: "alerts" } }));
       };
 
+      const handleCloseInt = () => {
+        if (cancelled) return;
+        isIntConnected = false;
+        checkConnected();
+        if (socketInt && socketInt.readyState !== WebSocket.CLOSED) socketInt.close();
+
+        if (!reconnectTimerInt) {
+          const delay = Math.min(1000 * Math.pow(2, retryCount), 15000);
+          reconnectTimerInt = window.setTimeout(() => {
+            reconnectTimerInt = null;
+            connectInt(retryCount + 1);
+          }, delay);
+        }
+      };
+
+      nextSocketInt.onclose = handleCloseInt;
+      nextSocketInt.onerror = handleCloseInt;
+      nextSocketInt.onmessage = (m) => handleMessage('int', m);
+    };
+
+    const connectMd = (retryCount = 0) => {
+      if (cancelled) return;
+      
+      const nextSocketMd = new WebSocket(wsUrl("/ws/market-data"));
+      nextSocketMd.binaryType = "arraybuffer";
+      socketMd = nextSocketMd;
+      wsRef.current = nextSocketMd;
+      activeWsSocket = nextSocketMd;
+      lastMessageTimeMd = Date.now();
+
       nextSocketMd.onopen = () => {
         if (cancelled) return;
-        activeWsSocket = nextSocketMd;
+        sendAuth(nextSocketMd);
         isMdConnected = true;
         checkConnected();
         lastMessageTimeMd = Date.now();
@@ -106,30 +136,27 @@ export function useWebSocket() {
         subscribeSymbol(nextSocketMd);
       };
 
-      const handleClose = () => {
+      const handleCloseMd = () => {
         if (cancelled) return;
-        activeWsSocket = null;
-        isIntConnected = false;
+        if (activeWsSocket === socketMd) activeWsSocket = null;
+        if (wsRef.current === socketMd) wsRef.current = null;
         isMdConnected = false;
         checkConnected();
-        wsRef.current = null;
-        clearPing();
-        if (socketInt && socketInt.readyState !== WebSocket.CLOSED) socketInt.close();
         if (socketMd && socketMd.readyState !== WebSocket.CLOSED) socketMd.close();
 
-        if (!reconnectTimer) {
-          const delay = Math.min(1000 * Math.pow(2, retryCount), 15000); // Exponential backoff up to 15s
-          reconnectTimer = window.setTimeout(() => {
-            reconnectTimer = null;
-            connect(retryCount + 1);
+        if (!reconnectTimerMd) {
+          const delay = Math.min(1000 * Math.pow(2, retryCount), 15000);
+          reconnectTimerMd = window.setTimeout(() => {
+            reconnectTimerMd = null;
+            connectMd(retryCount + 1);
           }, delay);
         }
       };
 
-      socketInt.onclose = handleClose;
-      socketMd.onclose = handleClose;
-      socketInt.onerror = handleClose;
-      socketMd.onerror = handleClose;
+      nextSocketMd.onclose = handleCloseMd;
+      nextSocketMd.onerror = handleCloseMd;
+      nextSocketMd.onmessage = (m) => handleMessage('md', m);
+    };
 
       if (!worker) {
         worker = new Worker(new URL('../workers/marketDataWorker.ts', import.meta.url), { type: 'module' });
@@ -259,9 +286,6 @@ export function useWebSocket() {
         }
       };
 
-      socketInt.onmessage = (m) => handleMessage('int', m);
-      socketMd.onmessage = (m) => handleMessage('md', m);
-
       pingTimer = window.setInterval(() => {
         if (socketInt?.readyState === WebSocket.OPEN) {
           if (Date.now() - lastMessageTimeInt > 35_000) {
@@ -277,14 +301,30 @@ export function useWebSocket() {
             socketMd.send(JSON.stringify({ event: "ping" }));
           }
         }
-      }, 10_000);
-    };
+    connectInt();
+    connectMd();
 
-    connect();
+    pingTimer = window.setInterval(() => {
+      if (socketInt?.readyState === WebSocket.OPEN) {
+        if (Date.now() - lastMessageTimeInt > 35_000) {
+          socketInt.close();
+        } else {
+          socketInt.send(JSON.stringify({ event: "ping" }));
+        }
+      }
+      if (socketMd?.readyState === WebSocket.OPEN) {
+        if (Date.now() - lastMessageTimeMd > 35_000) {
+          socketMd.close();
+        } else {
+          socketMd.send(JSON.stringify({ event: "ping" }));
+        }
+      }
+    }, 10_000);
 
     return () => {
       cancelled = true;
-      if (reconnectTimer != null) window.clearTimeout(reconnectTimer);
+      if (reconnectTimerInt != null) window.clearTimeout(reconnectTimerInt);
+      if (reconnectTimerMd != null) window.clearTimeout(reconnectTimerMd);
       clearPing();
       if (wsRef.current) {
         wsRef.current.onopen = null;

@@ -39,41 +39,6 @@ export function initWebSocketServer(server: Server): void {
       return;
     }
 
-    const urlObj = new URL(request.url || "", `http://${request.headers.host}`);
-    const token = urlObj.searchParams.get("token");
-    const expectedToken = process.env.UPSTOXBOT_ADMIN_TOKEN?.trim();
-    
-    // Determine if request is local
-    const ipStr = request.headers["x-forwarded-for"] || request.headers["cf-connecting-ip"] || request.socket.remoteAddress;
-    const normalizedIp = (Array.isArray(ipStr) ? ipStr[0] : ipStr || "").split(",")[0].trim().replace(/^::ffff:/, "");
-    const isLocal = normalizedIp === "::1" || normalizedIp === "127.0.0.1" || normalizedIp.startsWith("127.");
-    const isRemoteAuthDisabled = process.env.DISABLE_REMOTE_API_AUTH === "1" || process.env.DISABLE_REMOTE_API_AUTH === "true";
-
-    if (!isLocal && !isRemoteAuthDisabled) {
-      if (!expectedToken) {
-        socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
-        socket.destroy();
-        return;
-      }
-      if (!token) {
-        socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
-        socket.destroy();
-        return;
-      }
-      try {
-        const left = Buffer.from(token);
-        const right = Buffer.from(expectedToken);
-        // Using native require here to avoid import issues
-        if (left.length !== right.length || !require("crypto").timingSafeEqual(left, right)) {
-          throw new Error("Invalid token");
-        }
-      } catch (err) {
-        socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
-        socket.destroy();
-        return;
-      }
-    }
-
     const pathname = request.url ? request.url.split("?")[0] : "";
     if (pathname === "/ws/intelligence") {
       wssIntelligence.handleUpgrade(request, socket, head, (ws) => {
@@ -89,17 +54,35 @@ export function initWebSocketServer(server: Server): void {
   });
 
   const setupWs = (wss: WebSocketServer, name: string) => {
-    wss.on("connection", (ws) => {
+    wss.on("connection", (ws, request) => {
       connectedCount++;
       logger.info({ connectedClients: connectedCount, channel: name }, "WebSocket client connected");
 
       // Mark alive for heartbeat tracking and initialize default topics and symbol subscription
-      const tc = ws as WebSocket & { isAlive: boolean; topics: Set<string>; activeSymbol: string | null; subscribedSymbols: Set<string>; channelName: string };
+      const tc = ws as WebSocket & { isAlive: boolean; topics: Set<string>; activeSymbol: string | null; subscribedSymbols: Set<string>; channelName: string; isAuthenticated: boolean };
       tc.isAlive = true;
       tc.topics = new Set(["suggestions", "alerts"]); // default low-frequency subscription
       tc.activeSymbol = null; // no symbol subscription until client specifies
       tc.subscribedSymbols = new Set<string>();
       tc.channelName = name;
+      tc.isAuthenticated = false;
+
+      const ipStr = request?.socket?.remoteAddress;
+      const normalizedIp = (ipStr || "").replace(/^::ffff:/, "");
+      const isLocal = normalizedIp === "::1" || normalizedIp === "127.0.0.1" || normalizedIp.startsWith("127.");
+      const isRemoteAuthDisabled = process.env.DISABLE_REMOTE_API_AUTH === "1" || process.env.DISABLE_REMOTE_API_AUTH === "true";
+
+      if (isLocal || isRemoteAuthDisabled) {
+        tc.isAuthenticated = true;
+      } else {
+        // Enforce 5-second auth timeout
+        setTimeout(() => {
+          if (!tc.isAuthenticated) {
+            logger.warn({ channel: tc.channelName }, "Closing WS connection: Auth timeout");
+            ws.close(4001, "Authentication timeout");
+          }
+        }, 5000);
+      }
 
       ws.on("pong", () => {
         tc.isAlive = true;
@@ -135,6 +118,36 @@ export function initWebSocketServer(server: Server): void {
           }, "Inbound WebSocket message");
 
           // Handle client events
+          if (clientEvent.event === "auth") {
+            const token = clientEvent.data?.token;
+            const expectedToken = process.env.UPSTOXBOT_ADMIN_TOKEN?.trim();
+            if (!expectedToken) {
+              ws.close(4003, "Remote access disabled");
+              return;
+            }
+            if (!token) {
+              ws.close(4001, "Token required");
+              return;
+            }
+            try {
+              const left = Buffer.from(token);
+              const right = Buffer.from(expectedToken);
+              if (left.length !== right.length || !require("crypto").timingSafeEqual(left, right)) {
+                throw new Error("Invalid token");
+              }
+              tc.isAuthenticated = true;
+              logger.info({ channel: tc.channelName }, "WS client authenticated successfully");
+            } catch (err) {
+              ws.close(4001, "Invalid token");
+            }
+            return;
+          }
+
+          if (!tc.isAuthenticated && clientEvent.event !== "ping") {
+            logger.warn({ event: clientEvent.event }, "Ignoring event from unauthenticated client");
+            return;
+          }
+
           if (clientEvent.event === "ping") {
             ws.send(packr.pack(createServerEvent.pong()));
           } else if (clientEvent.event === "subscribe") {

@@ -9,7 +9,7 @@ export class TickEngine {
     const high = existing ? Math.max(existing.high, tick.ltp) : tick.ltp;
     const low = existing ? Math.min(existing.low, tick.ltp) : tick.ltp;
     const previousVolume = existing?.volume ?? 0;
-    const volume = Math.max(tick.volume, previousVolume);
+    const volume = Math.max(tick.volume ?? 0, previousVolume);
     const state: MarketState = {
       instrumentKey: tick.instrumentKey,
       symbol: tick.symbol,

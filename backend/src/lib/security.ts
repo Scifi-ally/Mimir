@@ -11,7 +11,15 @@ function normalizeIp(value: string | undefined): string {
 }
 
 export function isLocalRequest(req: Request): boolean {
-  const ip = normalizeIp(req.ip || req.socket.remoteAddress);
+  // We use req.socket.remoteAddress directly, rather than req.ip.
+  // req.ip respects the X-Forwarded-For header because Express is configured
+  // with 'trust proxy: 1'. However, we ONLY want to trust the physical connection
+  // to the Express server (which comes from nginx within the Docker network),
+  // regardless of what the client injected in X-Forwarded-For.
+  // nginx is now configured to overwrite X-Forwarded-For with the real client IP,
+  // making req.ip safe for rate limiting, but for local admin access, we strictly
+  // check if the physical connection is from the local network.
+  const ip = normalizeIp(req.socket.remoteAddress);
   return ip === "::1" || ip === "127.0.0.1" || ip.startsWith("127.");
 }
 
@@ -74,8 +82,9 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction): v
 }
 
 /**
- * Redis-backed rate limiter (surcives server restarts).
+ * Redis-backed rate limiter (survives server restarts).
  * Enforces 100 req/min on standard APIs, 10 req/min on sensitive auth/system endpoints.
+ * Uses a sliding window via Redis sorted sets.
  */
 export async function apiRateLimit(req: Request, res: Response, next: NextFunction): Promise<void> {
   const ip = normalizeIp(req.ip || req.socket.remoteAddress) || "unknown";
@@ -83,7 +92,8 @@ export async function apiRateLimit(req: Request, res: Response, next: NextFuncti
   
   const windowSec = 60;
   const maxRequests = isAuthRoute ? 10 : Number(process.env["UPSTOXBOT_RATE_LIMIT_MAX"] ?? 100);
-  const bucketKey = `ratelimit:${isAuthRoute ? "auth" : "api"}:${ip}:${Math.floor(Date.now() / 60000)}`;
+  const now = Date.now();
+  const bucketKey = `ratelimit:${isAuthRoute ? "auth" : "api"}:${ip}`;
 
   try {
     if (redisClient.status !== "ready") {
@@ -97,16 +107,28 @@ export async function apiRateLimit(req: Request, res: Response, next: NextFuncti
       next();
       return;
     }
-    const count = await redisClient.incr(bucketKey);
-    if (count === 1) {
-      await redisClient.expire(bucketKey, windowSec);
-    }
+    
+    // Sliding window using sorted sets
+    const multi = redisClient.multi();
+    // Remove old requests outside the 60s window
+    multi.zremrangebyscore(bucketKey, 0, now - windowSec * 1000);
+    // Count remaining requests
+    multi.zcard(bucketKey);
+    // Add current request
+    multi.zadd(bucketKey, now.toString(), `${now}-${Math.random()}`);
+    // Set expiry on the whole set so it cleans up inactive IPs
+    multi.expire(bucketKey, windowSec);
 
-    if (count > maxRequests) {
-      const ttl = await redisClient.ttl(bucketKey);
-      res.setHeader("Retry-After", Math.max(1, ttl).toString());
-      res.status(429).json({ error: "Too many requests. Rate limit exceeded." });
-      return;
+    const results = await multi.exec();
+    
+    if (results && results.length >= 2) {
+      // @ts-ignore
+      const count = results[1][1] as number; // Result of zcard
+      if (count >= maxRequests) {
+        res.setHeader("Retry-After", windowSec.toString());
+        res.status(429).json({ error: "Too many requests. Rate limit exceeded." });
+        return;
+      }
     }
   } catch (err) {
     // If Redis fails, rate limiting behavior is controlled by RATE_LIMIT_FAIL_CLOSED.
@@ -139,6 +161,13 @@ export function logSecurityMode(): void {
       return;
     }
     logger.info("Remote API access requires UPSTOXBOT_ADMIN_TOKEN");
+    
+    const failClosed = process.env["RATE_LIMIT_FAIL_CLOSED"] === "true" || process.env["RATE_LIMIT_FAIL_CLOSED"] === "1";
+    if (!failClosed) {
+      logger.warn(
+        "RATE_LIMIT_FAIL_CLOSED is not set to true. The rate limiter will fail open if Redis is down, which may expose the remote API to abuse."
+      );
+    }
     return;
   }
 

@@ -27,6 +27,7 @@ export interface TradingConfig {
   avoidMiddayEndMinute: number;
   weeklyLossLimitPct: number;
   rollingDrawdownPct: number;
+  maxDeployedCapitalPct: number;
   paperTradingEnabled: boolean;
   upstoxApiKey: string;
   upstoxApiSecret: string;
@@ -57,6 +58,7 @@ export const defaultConfig: TradingConfig = {
   avoidMiddayEndMinute: 225,   // 13:00 IST
   weeklyLossLimitPct: 6,
   rollingDrawdownPct: 8,
+  maxDeployedCapitalPct: 90,
   paperTradingEnabled: true,
   upstoxApiKey: process.env["UPSTOX_API_KEY"] ?? "",
   upstoxApiSecret: process.env["UPSTOX_API_SECRET"] ?? "",
@@ -111,6 +113,7 @@ function rowToConfig(row: typeof tradingConfigTable.$inferSelect): TradingConfig
     avoidMiddayEndMinute: row.avoidMiddayEndMinute ?? defaultConfig.avoidMiddayEndMinute,
     weeklyLossLimitPct: numberOrDefault(row.weeklyLossLimitPct, defaultConfig.weeklyLossLimitPct),
     rollingDrawdownPct: numberOrDefault(row.rollingDrawdownPct, defaultConfig.rollingDrawdownPct),
+    maxDeployedCapitalPct: numberOrDefault(row.maxDeployedCapitalPct, defaultConfig.maxDeployedCapitalPct),
     paperTradingEnabled: row.paperTradingEnabled ?? defaultConfig.paperTradingEnabled,
     upstoxApiKey: row.upstoxApiKey ?? defaultConfig.upstoxApiKey,
     upstoxApiSecret: row.upstoxApiSecret ? revealSecret(row.upstoxApiSecret) : defaultConfig.upstoxApiSecret,
@@ -144,6 +147,7 @@ function toDbValues(cfg: TradingConfig): typeof tradingConfigTable.$inferInsert 
     avoidMiddayEndMinute: cfg.avoidMiddayEndMinute,
     weeklyLossLimitPct: cfg.weeklyLossLimitPct.toString(),
     rollingDrawdownPct: cfg.rollingDrawdownPct.toString(),
+    maxDeployedCapitalPct: cfg.maxDeployedCapitalPct.toString(),
     paperTradingEnabled: cfg.paperTradingEnabled,
     upstoxApiKey: cfg.upstoxApiKey,
     upstoxApiSecret: protectSecret(cfg.upstoxApiSecret),

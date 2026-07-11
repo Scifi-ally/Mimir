@@ -61,7 +61,7 @@ export class CandleBuilderEngine {
           high: tick.ltp,
           low: tick.ltp,
           close: tick.ltp,
-          volume: tick.volume,
+          volume: tick.volume ?? 0,
           timestamp: new Date(startTime).toISOString(),
           closed: false,
         });
@@ -71,7 +71,7 @@ export class CandleBuilderEngine {
       current.high = Math.max(current.high, tick.ltp);
       current.low = Math.min(current.low, tick.ltp);
       current.close = tick.ltp;
-      current.volume = Math.max(current.volume, tick.volume);
+      current.volume = Math.max(current.volume, tick.volume ?? 0);
     }
     return closed;
   }

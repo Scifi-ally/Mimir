@@ -22,6 +22,7 @@ const config = {
   avoidMiddayEndMinute: 225,
   weeklyLossLimitPct: 6,
   rollingDrawdownPct: 8,
+  maxDeployedCapitalPct: 90,
   upstoxApiKey: "",
   upstoxApiSecret: "",
   upstoxRedirectUri: "",
@@ -113,6 +114,7 @@ describe("risk engine", async () => {
       minRiskReward: 1.8,
       minDailyVolume: 100_000,
       maxSameDirectionOpenPositions: 2,
+      maxDeployedCapitalPct: 90,
     });
     risk.updateOpenPositions([]);
     risk.updateDailyPnl(0, 0);
@@ -166,5 +168,17 @@ describe("risk engine", async () => {
 
     expect(result.passed).toBe(false);
     expect(result.rejectionReasons.join(" ")).toContain("Already have an open BUY position");
+  });
+
+  it("rejects when aggregate deployed capital exceeds limit", async () => {
+    // @ts-ignore
+    config.maxDeployedCapitalPct = 50;
+    risk.updateOpenPositions([
+      { symbol: "TCS", sector: "IT", direction: "BUY", entryPrice: 3000, quantity: 10, maxRiskInr: 500 },
+      { symbol: "WIPRO", sector: "IT", direction: "BUY", entryPrice: 500, quantity: 20, maxRiskInr: 200 },
+    ]);
+    // Already deployed: 3000*10 + 500*20 = 40,000. Max at 50% = 50,000. New trade = 100*200 = 20,000. Total = 60,000 > 50,000
+    const result = await risk.assessRisk(setup, snapshot, "IT", { symbol: "RELIANCE" } as never);
+    expect(result.rejectionReasons.join(" ")).toContain("deployed capital");
   });
 });

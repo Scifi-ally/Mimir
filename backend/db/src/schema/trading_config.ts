@@ -56,6 +56,7 @@ export const tradingConfigTable = pgTable("trading_config", {
   rollingDrawdownPct: decimal("rolling_drawdown_pct", { precision: 5, scale: 2 })
     .notNull()
     .default("8"),
+  maxDeployedCapitalPct: decimal("max_deployed_capital_pct", { precision: 5, scale: 2 }).default("90"),
   paperTradingEnabled: boolean("paper_trading_enabled").notNull().default(true),
   upstoxApiKey: text("upstox_api_key"),
   upstoxApiSecret: text("upstox_api_secret"),

@@ -1,5 +1,5 @@
 import { db } from "../../db/src";
-import { eq, sql, gte } from "drizzle-orm";
+import { eq, sql, gte, and } from "drizzle-orm";
 import { intelligenceBus } from "../intelligence/event_bus";
 import { getConfig } from "../config";
 import { logger } from "../lib/logger";
@@ -32,6 +32,14 @@ export async function initPaperEngine() {
   if (engineActive) return;
   engineActive = true;
   
+  const config = getConfig();
+  if (!config.paperTradingEnabled) {
+    throw new Error(
+      'Live trading is not implemented. Set paperTradingEnabled=true in config, ' +
+      'or implement real order placement + broker reconciliation before disabling paper trading.'
+    );
+  }
+  
   await getAccount(); // Ensure account exists
 
   intelligenceBus.subscribe("suggestionGenerated", async (event: SuggestionGeneratedEvent) => {
@@ -60,9 +68,16 @@ export async function initPaperEngine() {
       const maxDailyLossPct = new Decimal(config.maxDailyLossPct || 3.0);
       const maxDailyLossAmount = new Decimal(account.startingBalance).mul(maxDailyLossPct.div(100)).negated();
 
-      const todaysPositions = await db.select().from(paperPositionsTable).where(
-        gte(paperPositionsTable.createdAt, todayStartUTC())
+      const todaysClosedPositions = await db.select().from(paperPositionsTable).where(
+        and(
+          eq(paperPositionsTable.status, 'CLOSED'),
+          gte(paperPositionsTable.closedAt, todayStartUTC())
+        )
       );
+      const openPositions = await db.select().from(paperPositionsTable).where(
+        eq(paperPositionsTable.status, 'OPEN')
+      );
+      const todaysPositions = [...todaysClosedPositions, ...openPositions];
 
       let totalDailyPnl = new Decimal(0);
       for (const pos of todaysPositions) {
@@ -80,22 +95,24 @@ export async function initPaperEngine() {
       // ---------------------------------------------------------
 
       // ---------------------------------------------------------
-      // Dynamic Position Sizing (Half-Kelly Criterion)
+      // Dynamic Position Sizing (Quarter-Kelly Criterion)
       // ---------------------------------------------------------
       const maxRiskCap = config.maxRiskPerTradePct || 2.0; // Hard cap at 2% risk
 
       // Derive Kelly variables
-      // confidence is usually 0-100 (from compositeScore * 10), so divide by 100
+      // NOTE: confidence is NOT a calibrated win probability. It is an uncalibrated AI heuristic score.
       const winProb = (suggestion.confidence || 50) / 100; // 0.0 to 1.0 range
       const riskReward = Number(suggestion.riskReward) || 2.0; // Fallback to 1:2 if missing
 
       // Full Kelly = W - ( (1 - W) / R )
       const fullKelly = winProb - ((1.0 - winProb) / riskReward);
       
-      // Use Half-Kelly for safety, if negative fallback to a base 1% risk rather than vetoing a top AI pick
-      const kellyRiskPct = fullKelly > 0 ? (fullKelly * 100) / 2.0 : 1.0; 
+      // Use Quarter-Kelly for safety — AI confidence is uncalibrated and should not be
+      // treated as a true win probability. Quarter-Kelly provides a conservative margin
+      // until proper calibration (e.g. Platt scaling) is implemented against historical outcomes.
+      const kellyRiskPct = fullKelly > 0 ? (fullKelly * 100) / 4.0 : 0.5; 
       
-      const riskPct = Math.min(Math.max(kellyRiskPct, 1.0), maxRiskCap); // Minimum 1% risk
+      const riskPct = Math.min(Math.max(kellyRiskPct, 0.5), maxRiskCap); // Minimum 0.5% risk
       const riskAmount = balance.mul(riskPct).div(100);
       
       logger.info({ symbol: suggestion.symbol, winProb, riskReward, fullKelly, riskPct }, "PaperEngine: Sized trade");
@@ -140,6 +157,20 @@ export async function initPaperEngine() {
           logger.warn({ symbol: suggestion.symbol, availableMargin: availableMargin.toNumber(), entry: entry.toNumber() }, "PaperEngine: Aborted entry because quantity is 0 after margin adjustment");
           return;
         }
+      }
+
+      // Duplicate position guard: skip if already have an OPEN position on same symbol
+      const existingPosition = await db.select({ id: paperPositionsTable.id })
+        .from(paperPositionsTable)
+        .where(and(
+          eq(paperPositionsTable.symbol, suggestion.symbol),
+          eq(paperPositionsTable.status, 'OPEN')
+        ))
+        .limit(1);
+
+      if (existingPosition.length > 0) {
+        logger.info({ symbol: suggestion.symbol }, "PaperEngine: Skipping — already have an OPEN position on this symbol");
+        return;
       }
 
       await db.transaction(async (tx) => {
@@ -190,10 +221,12 @@ export async function initPaperEngine() {
       const config = getConfig();
       if (!config.paperTradingEnabled) return;
 
-      const openPositions = await db.select().from(paperPositionsTable)
-        .where(eq(paperPositionsTable.status, "OPEN"));
+      const positionsForSymbol = await db.select().from(paperPositionsTable)
+        .where(and(
+          eq(paperPositionsTable.status, 'OPEN'),
+          eq(paperPositionsTable.symbol, tick.symbol)
+        ));
 
-      const positionsForSymbol = openPositions.filter(p => p.symbol === tick.symbol);
       if (positionsForSymbol.length === 0) return;
 
       // We need the suggestion details to know the target and stopLoss
@@ -217,7 +250,11 @@ export async function initPaperEngine() {
         
         const currentStop = new Decimal(pos.trailingStopLoss || suggestion.stopLoss);
         const originalStop = new Decimal(suggestion.stopLoss);
-        const target = new Decimal(suggestion.target1 ?? (suggestion as any).target ?? "0");
+        if (!suggestion.target1) {
+          logger.error({ symbol: pos.symbol, suggestionId: suggestion.id }, "PaperEngine: target1 is missing — skipping tick processing for this position (schema violation)");
+          continue;
+        }
+        const target = new Decimal(suggestion.target1);
 
         const unrealized = isBuy ? ltp.minus(entryPrice).mul(qty) : entryPrice.minus(ltp).mul(qty);
         

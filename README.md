@@ -148,7 +148,7 @@ Launch the application services in development mode:
 npm run dev:backend
 
 # Terminal 2: Start the Python Intelligence Service
-uvicorn main:app --app-dir backend/ai_service --host 0.0.0.0 --port 8001
+uvicorn main:app --app-dir backend/ai_service --host 127.0.0.1 --port 8001
 
 # Terminal 3: Start the React Frontend Dashboard
 npm --prefix frontend run dev
