@@ -453,12 +453,8 @@ export function startScheduler(): void {
 
   // ── Custom Screener Scheduled Runs ───────────────────────────────────────
   scheduleJob("custom-screener-engine", "* 9-15 * * 1-5", async () => {
-    try {
-      const { evaluateCustomScreenerSchedules } = await import("./custom_screener_scheduler");
-      await evaluateCustomScreenerSchedules();
-    } catch (err) {
-      logger.error({ err }, "Failed to evaluate custom screener schedules");
-    }
+    // Legacy scheduled screener runs have been deprecated in favor of a daily idempotent run
+    logger.debug("Legacy evaluateCustomScreenerSchedules hook removed");
   });
 
   // ── 07:00 IST (01:30 UTC) Mon–Fri — FII/DII data for the day ─────────────

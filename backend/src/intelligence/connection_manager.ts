@@ -3,15 +3,17 @@ import path from "node:path";
 import fs from "node:fs";
 import protobuf from "protobufjs";
 import axios from "axios";
+import { UPSTOX_API_URL } from "../upstox/config";
 import { logger } from "../lib/logger";
 import { getAccessToken } from "../upstox/auth";
+import { loadBalancer } from "./load_balancer";
 import { intelligenceBus } from "./event_bus";
 import { createUpstoxClient } from "../lib/upstox-client";
 import type { ConnectionStatusEvent } from "./types";
 
 const UPSTOX_AUTHORIZE_URL = "https://api.upstox.com/v3/feed/market-data-feed/authorize";
 
-const FALLBACK_POLL_INTERVAL_MS = 5000;
+
 
 export class UpstoxConnectionManager {
   private ws: WebSocket | null = null;
@@ -206,13 +208,13 @@ export class UpstoxConnectionManager {
       this.consecutiveFailures++;
 
       // Check if it's an authorization failure (401/403 or invalid token msg)
-      const isAuthError =
+      const isAuthErr =
         err?.response?.status === 401 ||
         err?.response?.status === 403 ||
         err?.response?.data?.errors?.[0]?.errorCode === "UDAPI100050" ||
-        err?.response?.data?.errors?.[0]?.message?.toLowerCase().includes("invalid token");
+        (typeof err?.response?.data?.errors?.[0]?.message === "string" && err.response.data.errors[0].message.toLowerCase().includes("invalid token"));
 
-      if (isAuthError) {
+      if (isAuthErr) {
         logger.warn({ status: err?.response?.status, error: err?.response?.data }, "Invalid Upstox token detected in connection manager; invalidating token");
         try {
           const { invalidateAccessToken } = await import("../upstox/auth");
@@ -357,6 +359,9 @@ export class UpstoxConnectionManager {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.subscribeToAll();
     }
+    
+    // Trigger immediate fallback fetch so UI gets instant updates when a new stock is added
+    this.executeFallbackPoll(true);
   }
 
   private subscribeToAll() {
@@ -439,51 +444,60 @@ export class UpstoxConnectionManager {
     };
   }
 
+  private async executeFallbackPoll(force: boolean = false) {
+    const mode = loadBalancer.getTickFeedMode();
+    if (mode === "paused") {
+      // Pause fallback polling to free up 100% of Upstox API quotas for offline background scans
+      return;
+    }
+
+    const now = Date.now();
+    const wsIsActive = this.ws && this.ws.readyState === WebSocket.OPEN;
+    const receivedRecentTicks = now - this.lastTickReceivedAt < 10000;
+
+    if (wsIsActive && !receivedRecentTicks && (now - this.lastTickReceivedAt > 30000)) {
+      logger.warn("WebSocket silent for 30s, forcing reconnect.");
+      if (this.ws) this.ws.close();
+    }
+
+    if (!force && wsIsActive && receivedRecentTicks) return;
+    if (this.subscribedKeys.size === 0) return;
+
+    const token = getAccessToken("data");
+    if (!token) return;
+
+    try {
+      const keys = Array.from(this.subscribedKeys);
+      if (!force) this.publishStatus("connecting", "upstox_http_fallback", "WebSocket silent or inactive");
+      const prices = await this.upstoxClient.fetchLTPForInstruments(keys, token);
+
+      for (const [key, price] of Object.entries(prices)) {
+        if (typeof price !== "number" || isNaN(price) || price <= 0) continue;
+
+        const canonicalKey = key.trim().toUpperCase().replace(":", "|");
+        const symbol = this.keyToSymbolMap.get(canonicalKey);
+        if (!symbol) continue;
+
+        intelligenceBus.publish("marketTick", {
+          instrumentKey: canonicalKey,
+          symbol,
+          ltp: price,
+          volume: 100000,
+          timestamp: Date.now(),
+        });
+      }
+      if (!force) this.publishStatus("connected", "upstox_http_fallback");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } catch (err: any) {
+      logger.debug({ err: err.message }, "LTP fallback polling failed");
+    }
+  }
+
   private startFallbackPolling() {
     if (this.fallbackTimer) clearInterval(this.fallbackTimer);
 
-    this.fallbackTimer = setInterval(async () => {
-      const now = Date.now();
-      const wsIsActive = this.ws && this.ws.readyState === WebSocket.OPEN;
-      const receivedRecentTicks = now - this.lastTickReceivedAt < 10000;
-
-      if (wsIsActive && !receivedRecentTicks && (now - this.lastTickReceivedAt > 30000)) {
-        logger.warn("WebSocket silent for 30s, forcing reconnect.");
-        if (this.ws) this.ws.close();
-      }
-
-      if (wsIsActive && receivedRecentTicks) return;
-      if (this.subscribedKeys.size === 0) return;
-
-      const token = getAccessToken("data");
-      if (!token) return;
-
-      try {
-        const keys = Array.from(this.subscribedKeys);
-        this.publishStatus("connecting", "upstox_http_fallback", "WebSocket silent or inactive");
-        const prices = await this.upstoxClient.fetchLTPForInstruments(keys, token);
-
-        for (const [key, price] of Object.entries(prices)) {
-          if (typeof price !== "number" || isNaN(price) || price <= 0) continue;
-
-          const canonicalKey = key.trim().toUpperCase().replace(":", "|");
-          const symbol = this.keyToSymbolMap.get(canonicalKey);
-          if (!symbol) continue;
-
-          intelligenceBus.publish("marketTick", {
-            instrumentKey: canonicalKey,
-            symbol,
-            ltp: price,
-            volume: 100000,
-            timestamp: Date.now(),
-          });
-        }
-        this.publishStatus("connected", "upstox_http_fallback");
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      } catch (err: any) {
-        logger.debug({ err: err.message }, "LTP fallback polling failed");
-      }
-    }, FALLBACK_POLL_INTERVAL_MS);
+    // Poll every 2 seconds for ultra-responsive off-market UI (Upstox limit is 10 req/sec)
+    this.fallbackTimer = setInterval(() => this.executeFallbackPoll(), 2000);
   }
 
   disconnect() {

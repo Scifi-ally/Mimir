@@ -273,8 +273,8 @@ router.get("/market/dashboard-indices", async (req, res) => {
       status === 401 ||
       status === 403 ||
       errData?.errors?.[0]?.errorCode === "UDAPI100050" ||
-      err.message?.includes("UDAPI100050") ||
-      errData?.errors?.[0]?.message?.toLowerCase().includes("invalid token");
+      (typeof err.message === "string" && err.message.includes("UDAPI100050")) ||
+      (typeof errData?.errors?.[0]?.message === "string" && errData.errors[0].message.toLowerCase().includes("invalid token"));
 
     if (isAuthErr) {
       respondDegraded("auth-invalid", fallbackDashboardIndices());
@@ -363,8 +363,8 @@ router.get("/market/ltp", async (req, res) => {
       status === 401 ||
       status === 403 ||
       errData?.errors?.[0]?.errorCode === "UDAPI100050" ||
-      err.message?.includes("UDAPI100050") ||
-      errData?.errors?.[0]?.message?.toLowerCase().includes("invalid token");
+      (typeof err.message === "string" && err.message.includes("UDAPI100050")) ||
+      (typeof errData?.errors?.[0]?.message === "string" && errData.errors[0].message.toLowerCase().includes("invalid token"));
 
     if (isAuthErr) {
       res.status(401).json({ error: "Upstox authentication required (Token invalid)" });
@@ -448,8 +448,8 @@ router.get("/market/ltp-batch", async (req, res) => {
       status === 401 ||
       status === 403 ||
       errData?.errors?.[0]?.errorCode === "UDAPI100050" ||
-      err.message?.includes("UDAPI100050") ||
-      errData?.errors?.[0]?.message?.toLowerCase().includes("invalid token");
+      (typeof err.message === "string" && err.message.includes("UDAPI100050")) ||
+      (typeof errData?.errors?.[0]?.message === "string" && errData.errors[0].message.toLowerCase().includes("invalid token"));
 
     if (isAuthErr) {
       res.status(401).json({ error: "Upstox authentication required (Token invalid)" });
@@ -532,8 +532,8 @@ router.get("/market/candles", async (req, res) => {
       status === 401 ||
       status === 403 ||
       errData?.errors?.[0]?.errorCode === "UDAPI100050" ||
-      err.message?.includes("UDAPI100050") ||
-      errData?.errors?.[0]?.message?.toLowerCase().includes("invalid token");
+      (typeof err.message === "string" && err.message.includes("UDAPI100050")) ||
+      (typeof errData?.errors?.[0]?.message === "string" && errData.errors[0].message.toLowerCase().includes("invalid token"));
 
     if (isAuthErr) {
       res.status(401).json({ error: "Upstox authentication required (Token invalid)" });
@@ -668,8 +668,8 @@ router.get("/market/movers", async (req, res) => {
       status === 401 ||
       status === 403 ||
       errData?.errors?.[0]?.errorCode === "UDAPI100050" ||
-      err.message?.includes("UDAPI100050") ||
-      errData?.errors?.[0]?.message?.toLowerCase().includes("invalid token");
+      (typeof err.message === "string" && err.message.includes("UDAPI100050")) ||
+      (typeof errData?.errors?.[0]?.message === "string" && errData.errors[0].message.toLowerCase().includes("invalid token"));
 
     if (isAuthErr) {
       res.status(401).json({ error: "Upstox authentication required (Token invalid)" });

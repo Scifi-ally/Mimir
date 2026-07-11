@@ -1387,7 +1387,7 @@ export async function scanStock(
   try {
     const [dailyCandles, hourlyCandles] = await Promise.all([
       fetchDailyCandles(stock.key, 800, toDateOverride, priority),
-      fetchHourlyCandles(stock.key, 75, toDateOverride, priority),
+      fetchHourlyCandles(stock.key, 14, toDateOverride, priority),
     ]);
 
     if (dailyCandles.length < 60) {
@@ -1527,7 +1527,7 @@ export async function scanStock(
           mtfSignal.direction !== c.direction &&
           mtfSignal.confluenceScore >= 66
         ) {
-          adjustedScore -= 1.5; 
+          adjustedScore -= 2.0; 
         }
 
         if (
@@ -1541,9 +1541,12 @@ export async function scanStock(
           adjustedScore += 0.2;
         }
 
-        // Cap normal score at 9.0 to leave room for the truly exceptional setups.
-        // We only allow scores above 9.0 if MTF confluence is exceptionally high.
-        const scoreCap = mtfSignal.confluenceScore >= 75 && mtfSignal.direction === c.direction ? 10 : 9.0;
+        // BRUTAL ADJUSTMENT: Scale down scores so that a baseline 10 becomes an 8.5 unless it has massive MTF bonuses.
+        adjustedScore = adjustedScore * 0.85;
+
+        // Cap normal score at 8.0 to leave room for the truly exceptional setups.
+        // We only allow scores above 8.0 if MTF confluence is exceptionally high (>=85).
+        const scoreCap = mtfSignal.confluenceScore >= 85 && mtfSignal.direction === c.direction ? 9.5 : 8.0;
         
         return { ...c, score: Math.min(Math.max(adjustedScore, 0), scoreCap) };
       })
@@ -1661,7 +1664,7 @@ export async function diagnoseScanNullReason(
   try {
     const [dailyCandles, hourlyCandles] = await Promise.all([
       fetchDailyCandles(stock.key, 800, toDateOverride),
-      fetchHourlyCandles(stock.key, 75, toDateOverride),
+      fetchHourlyCandles(stock.key, 14, toDateOverride),
     ]);
 
     if (dailyCandles.length < 60) return "insufficient_daily_candles";

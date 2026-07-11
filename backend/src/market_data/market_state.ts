@@ -160,6 +160,34 @@ export function minutesUntilOpen(): number | null {
   return minutesLeftToday + (daysUntilTradingDay - 1) * 24 * 60 + openMinutes;
 }
 
+/**
+ * Returns the target trading session date for scans.
+ * If we are before market close (15:30 IST) on a trading day, returns today's date.
+ * If we are after market close, or on a weekend/holiday, returns the NEXT trading date.
+ */
+export function getTargetTradingSessionDate(): string {
+  const now = new Date();
+  const { day, totalMinutes, dateString } = getISTTime(now);
+  
+  // Market close is 15:30 IST (15 * 60 + 30 = 930)
+  const MARKET_CLOSE = 15 * 60 + 30;
+
+  if (isTradingDay(day, dateString) && totalMinutes < MARKET_CLOSE) {
+    return dateString;
+  }
+
+  // Find the next trading day
+  let daysOffset = 0;
+  let nextDayInfo;
+  do {
+    daysOffset++;
+    const nextDate = new Date(now.getTime() + daysOffset * 86400000);
+    nextDayInfo = getISTTime(nextDate);
+  } while (!isTradingDay(nextDayInfo.day, nextDayInfo.dateString) && daysOffset < 30);
+
+  return nextDayInfo.dateString;
+}
+
 /** Dashboard-facing session (distinct from raw SessionPhase). */
 export type DashboardSession = "PRE_MARKET" | "OPEN" | "CLOSED" | "POST_MARKET_SCAN";
 

@@ -14,6 +14,7 @@ import {
   recordLtpApiCall,
   recordLtpCacheHit,
 } from "./data_telemetry";
+import { isMarketOpen } from "../market_data/market_state";
 
 const BASE_URL = "https://api.upstox.com/v2";
 const DEFAULT_TIMEOUT = 15000;
@@ -163,7 +164,7 @@ export async function withRetry<T>(
           status === 401 ||
           status === 403 ||
           errData?.errors?.[0]?.errorCode === "UDAPI100050" ||
-          errData?.errors?.[0]?.message?.toLowerCase().includes("invalid token");
+          (typeof errData?.errors?.[0]?.message === "string" && errData.errors[0].message.toLowerCase().includes("invalid token"));
 
         if (isAuthErr) {
           try {
@@ -517,9 +518,6 @@ export function createUpstoxClient(options?: {
           let preferV3 = interval === "240minute" || interval === "week";
           
           if (!preferV3 && !isMarketOpen()) {
-            // Use deterministic round-robin to evenly split traffic 50/50.
-            // This prevents statistical clustering that random Math.random() caused, 
-            // guaranteeing we never exceed the 10/sec bucket for either endpoint.
             v3RoundRobin = !v3RoundRobin;
             preferV3 = v3RoundRobin;
           }

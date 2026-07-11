@@ -1,4 +1,5 @@
-import { pgTable, serial, integer, text, timestamp, varchar, boolean, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, serial, integer, text, timestamp, varchar, boolean, jsonb, uniqueIndex } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 export const customScreenerTable = pgTable("custom_screener", {
   id: serial("id").primaryKey(),
@@ -35,4 +36,24 @@ export const customScreenerTargetsTable = pgTable("custom_screener_targets", {
   symbol: varchar("symbol", { length: 50 }).notNull(),
   notes: text("notes"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const customScreenerRunsTable = pgTable("custom_screener_runs", {
+  id: serial("id").primaryKey(),
+  tradingSessionDate: varchar("trading_session_date", { length: 10 }).notNull(), // e.g., '2026-07-11'
+  status: varchar("status", { length: 20 }).notNull(), // 'RUNNING', 'COMPLETED', 'FAILED', 'CANCELLED'
+  startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+  triggerType: varchar("trigger_type", { length: 20 }).notNull(), // 'AUTOMATIC', 'MANUAL'
+  isActive: boolean("is_active").notNull().default(false), // Only one active run per trading session
+  configHash: text("config_hash"),
+  universeScanned: integer("universe_scanned"),
+  generatedCandidates: integer("generated_candidates"),
+  metadata: jsonb("metadata"),
+}, (table) => {
+  return {
+    activeScanIdx: uniqueIndex("active_scan_idx")
+      .on(table.tradingSessionDate)
+      .where(sql`is_active = true`), // Only one active scan per session date allowed
+  };
 });

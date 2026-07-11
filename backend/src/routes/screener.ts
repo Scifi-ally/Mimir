@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "../../db/src";
-import { customScreenerTable, customScreenerMatchesTable, customScreenerTargetsTable } from "../../db/src/schema/custom_screener";
+import { customScreenerTable, customScreenerMatchesTable, customScreenerTargetsTable, customScreenerRunsTable } from "../../db/src/schema/custom_screener";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 
@@ -182,15 +182,37 @@ router.post("/screener/run", async (req, res, next) => {
     const activeScreeners = await activeQuery;
 
     const { runCustomScreener } = await import("../analysis/custom_screener_engine");
+    const { getTargetTradingSessionDate } = await import("../market_data/market_state");
+    
+    const targetSession = getTargetTradingSessionDate();
+    
+    // 1. Mark existing active scan for this session as inactive
+    await db.update(customScreenerRunsTable)
+      .set({ isActive: false })
+      .where(and(
+        eq(customScreenerRunsTable.tradingSessionDate, targetSession),
+        eq(customScreenerRunsTable.isActive, true)
+      ));
+      
+    // 2. Create new MANUAL run
+    const [newRun] = await db.insert(customScreenerRunsTable).values({
+      tradingSessionDate: targetSession,
+      status: "RUNNING",
+      triggerType: "MANUAL",
+      isActive: true,
+    }).returning({ id: customScreenerRunsTable.id });
     
     // Run asynchronously to avoid blocking the HTTP request
-    runCustomScreener(screenerId ? { screenerIds: [screenerId] } : undefined).catch((err) => {
+    runCustomScreener({ 
+      screenerIds: screenerId ? [screenerId] : undefined,
+      runId: newRun.id 
+    }).catch((err) => {
       console.error({ err }, "Error running custom screener asynchronously");
     });
 
     return res.json({
       success: true,
-      message: "Screener started in the background. Progress will be updated.",
+      message: "Manual screener started. This replaces any previous scan for the current trading session.",
       activeScreeners: activeScreeners.length,
       newMatches: 0,
       newTargets: 0,

@@ -17,8 +17,19 @@ export async function fetchSparklines(symbols: string[]): Promise<Record<string,
           : `${symbol}.NS`;
 
         const queryOptions = { period1: "1mo", interval: "1d" as const };
+        
+        let timer: NodeJS.Timeout;
+        const timeoutPromise = new Promise((_, reject) => 
+          timer = setTimeout(() => reject(new Error("Yahoo Finance timeout")), 5000)
+        );
+        
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const result = (await yahooFinance.chart(yfSymbol, queryOptions)) as any;
+        const result = (await Promise.race([
+          yahooFinance.chart(yfSymbol, queryOptions),
+          timeoutPromise
+        ])) as any;
+        
+        clearTimeout(timer!);
         
         if (result && result.quotes && result.quotes.length > 0) {
           const closes = result.quotes

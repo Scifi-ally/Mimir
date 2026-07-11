@@ -11,6 +11,7 @@
  */
 
 import { logger } from "../lib/logger";
+import { loadBalancer } from "../intelligence/load_balancer";
 import { broadcastMarketTicks } from "../ws/websocket_server";
 import { intelligenceBus } from "../intelligence/event_bus";
 
@@ -101,6 +102,28 @@ class TickDistributionServer {
       this.droppedTicks++;
       return;
     }
+
+    // --- Intelligent Load Balancing ---
+    const mode = loadBalancer.getTickFeedMode();
+    
+    // Complete pause during offline scans
+    if (mode === "paused") {
+      this.droppedTicks++;
+      return;
+    }
+
+    // Throttled mode during live market scans: filter out micro-ticks
+    if (mode === "throttled" && existing) {
+      const priceDiff = Math.abs(ltp - existing.ltp);
+      const diffPercent = priceDiff / existing.ltp;
+      
+      // If the price changed by less than 0.05%, drop it to save CPU
+      if (diffPercent < 0.0005) {
+        this.droppedTicks++;
+        return;
+      }
+    }
+    // ----------------------------------
 
     this.totalTicks++;
     this.ticksInCurrentSecond++;

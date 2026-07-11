@@ -1,5 +1,5 @@
 import { db } from "../../db/src";
-import { customScreenerTable, customScreenerMatchesTable, customScreenerTargetsTable } from "../../db/src/schema/custom_screener";
+import { customScreenerTable, customScreenerMatchesTable, customScreenerTargetsTable, customScreenerRunsTable } from "../../db/src/schema/custom_screener";
 import { eq, and, desc, isNull, inArray } from "drizzle-orm";
 import { logger } from "../lib/logger";
 import { createUpstoxClient } from "../lib/upstox-client";
@@ -9,9 +9,7 @@ import { computeEMA, computeSMA, computeStandardDeviation } from "./technical";
 import { getISTDateStr } from "../lib/ist-time";
 import { suggestionsTable, overnightWatchlistTable } from "../../db/src"; 
 import { getAccessToken } from "../upstox/auth";
-
-// Prevent overlapping runs
-let isRunning = false;
+import { loadBalancer, AsyncAnalysisQueue } from "../intelligence/load_balancer";
 const upstoxClient = createUpstoxClient({ cacheTimeMs: 10 * 60 * 1000 });
 
 async function resolveTargetSymbols(targetType: string, specificSymbol?: string): Promise<string[]> {
@@ -48,17 +46,16 @@ async function resolveTargetSymbols(targetType: string, specificSymbol?: string)
   return targetsRows.map(u => u.symbol);
 }
 
-export async function runCustomScreener(options: { screenerIds?: number[] } = {}) {
-  if (isRunning) return;
-  isRunning = true;
-
+export async function runCustomScreener(options: { screenerIds?: number[], runId?: number } = {}) {
   try {
     const token = getAccessToken();
     if (!token) {
       logger.debug("Skipping custom screener run because Upstox is not authenticated");
+      if (options.runId) {
+        await db.update(customScreenerRunsTable).set({ status: "FAILED" }).where(eq(customScreenerRunsTable.id, options.runId));
+      }
       return;
     }
-
     const activeWhere = options.screenerIds?.length
       ? and(eq(customScreenerTable.status, "ACTIVE"), inArray(customScreenerTable.id, options.screenerIds))
       : eq(customScreenerTable.status, "ACTIVE");
@@ -91,8 +88,10 @@ export async function runCustomScreener(options: { screenerIds?: number[] } = {}
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const candleCache = new Map<string, any[]>(); // 'symbol:timeframe' -> candles
 
+    loadBalancer.beginScan();
+    
     // Fetch candles with controlled concurrency to respect rate limits
-    const CONCURRENCY = 4;
+    const CONCURRENCY = loadBalancer.getScannerConcurrency();
     let completed = 0;
     let total = 0;
     for (const symbolSet of timeframeSymbols.values()) {
@@ -103,46 +102,51 @@ export async function runCustomScreener(options: { screenerIds?: number[] } = {}
       broadcast({ event: 'custom_screener', data: { type: 'screener_progress', progress: completed, total } } as unknown as Parameters<typeof broadcast>[0]);
     }
 
+    const fetchQueue = new AsyncAnalysisQueue<{ symbol: string; timeframe: string }>(async (task) => {
+      const { symbol, timeframe } = task;
+      try {
+        const tfMap = { "1m": "1minute", "5m": "5minute", "15m": "15minute", "1h": "60minute", "1d": "day" } as const;
+        const toDate = getISTDateStr();
+        const from = new Date();
+        from.setDate(from.getDate() - (timeframe === "1d" ? 730 : 30));
+        
+        const rows = await upstoxClient.fetchHistoricalCandles(
+          symbol,
+          tfMap[timeframe as keyof typeof tfMap] || "15minute",
+          toDate,
+          getISTDateStr(from),
+          token,
+        );
+        const candles = rows.map((row) => ({
+          timestamp: String(row[0]),
+          open: Number(row[1]),
+          high: Number(row[2]),
+          low: Number(row[3]),
+          close: Number(row[4]),
+          volume: Number(row[5]) || 0,
+        })).filter((candle) => Number.isFinite(candle.close));
+        
+        candles.sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
+        if (candles.length > 0) {
+          candleCache.set(`${symbol}:${timeframe}`, candles);
+        }
+      } catch (err) {
+        logger.warn({ err, symbol, timeframe }, "Failed to fetch candles for screener");
+      } finally {
+        completed++;
+        if (total > 0 && completed % Math.max(1, Math.floor(total / 20)) === 0) {
+          broadcast({ event: 'custom_screener', data: { type: 'screener_progress', progress: completed, total } } as unknown as Parameters<typeof broadcast>[0]);
+        }
+      }
+    }, CONCURRENCY);
+
     for (const [timeframe, symbolSet] of timeframeSymbols.entries()) {
-      const symbols = Array.from(symbolSet);
-      for (let batchStart = 0; batchStart < symbols.length; batchStart += CONCURRENCY) {
-        const batch = symbols.slice(batchStart, batchStart + CONCURRENCY);
-        await Promise.allSettled(batch.map(async (symbol) => {
-          try {
-            const tfMap = { "1m": "1minute", "5m": "5minute", "15m": "15minute", "1h": "60minute", "1d": "day" } as const;
-            const toDate = getISTDateStr();
-            const from = new Date();
-            from.setDate(from.getDate() - (timeframe === "1d" ? 730 : 30));
-            const rows = await upstoxClient.fetchHistoricalCandles(
-              symbol,
-              tfMap[timeframe as keyof typeof tfMap] || "15minute",
-              toDate,
-              getISTDateStr(from),
-              token,
-            );
-            const candles = rows.map((row) => ({
-              timestamp: String(row[0]),
-              open: Number(row[1]),
-              high: Number(row[2]),
-              low: Number(row[3]),
-              close: Number(row[4]),
-              volume: Number(row[5]) || 0,
-            })).filter((candle) => Number.isFinite(candle.close));
-            candles.sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
-            if (candles.length > 0) {
-              candleCache.set(`${symbol}:${timeframe}`, candles);
-            }
-          } catch (err) {
-            logger.warn({ err, symbol, timeframe }, "Failed to fetch candles for screener");
-          } finally {
-            completed++;
-            if (total > 0 && completed % Math.max(1, Math.floor(total / 20)) === 0) {
-              broadcast({ event: 'custom_screener', data: { type: 'screener_progress', progress: completed, total } } as unknown as Parameters<typeof broadcast>[0]);
-            }
-          }
-        }));
+      for (const symbol of Array.from(symbolSet)) {
+        fetchQueue.push({ symbol, timeframe });
       }
     }
+
+    await fetchQueue.waitUntilEmpty();
     
     if (total > 0) {
       broadcast({ event: 'custom_screener', data: { type: 'screener_progress', progress: completed, total } } as unknown as Parameters<typeof broadcast>[0]);
@@ -156,6 +160,9 @@ export async function runCustomScreener(options: { screenerIds?: number[] } = {}
       for (const symbol of targets) {
         const candles = candleCache.get(`${symbol}:${screener.timeframe}`);
         if (!candles || candles.length < 50) continue;
+
+        // Yield to event loop to prevent blocking during heavy analysis
+        await new Promise(r => setImmediate(r));
 
         const { matched, messages } = evaluateRuleTree(screener, candles);
 
@@ -227,10 +234,33 @@ export async function runCustomScreener(options: { screenerIds?: number[] } = {}
         }
       }
     }
+
+    if (options.runId) {
+      // Calculate total unique symbols scanned
+      const allScannedSymbols = new Set<string>();
+      timeframeSymbols.forEach(set => set.forEach(s => allScannedSymbols.add(s)));
+      
+      await db.update(customScreenerRunsTable)
+        .set({ 
+          status: "COMPLETED", 
+          completedAt: new Date(),
+          universeScanned: allScannedSymbols.size,
+          generatedCandidates: matchesToInsert.length,
+          configHash: "engine-v2",
+          metadata: { screenersEvaluated: activeScreeners.length }
+        })
+        .where(eq(customScreenerRunsTable.id, options.runId));
+    }
   } catch (err) {
-    logger.error({ err }, "Custom Screener Engine failed");
+    logger.error({ err }, "Fatal error running custom screener");
+    if (options.runId) {
+      await db.update(customScreenerRunsTable)
+        .set({ status: "FAILED", completedAt: new Date() })
+        .where(eq(customScreenerRunsTable.id, options.runId))
+        .catch(dbErr => logger.error({ dbErr }, "Failed to update run status on crash"));
+    }
   } finally {
-    isRunning = false;
+    loadBalancer.endScan();
   }
 }
 

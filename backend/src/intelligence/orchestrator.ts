@@ -421,6 +421,48 @@ export const marketIntelligence = new ScannerOrchestrator();
 
 export async function startMarketIntelligence(): Promise<void> {
   await marketIntelligence.start();
+
+  try {
+    const { getTargetTradingSessionDate } = await import("../market_data/market_state");
+    const { db } = await import("../../db/src");
+    const { customScreenerRunsTable } = await import("../../db/src/schema/custom_screener");
+    const { eq, and } = await import("drizzle-orm");
+    const { runCustomScreener } = await import("../analysis/custom_screener_engine");
+
+    // 1. Mark ghost RUNNING scans as FAILED
+    await db.update(customScreenerRunsTable)
+      .set({ status: "FAILED" })
+      .where(eq(customScreenerRunsTable.status, "RUNNING"));
+
+    // 2. Determine target session
+    const targetSession = getTargetTradingSessionDate();
+
+    // 3. Check for existing active scan
+    const existing = await db.select()
+      .from(customScreenerRunsTable)
+      .where(and(
+        eq(customScreenerRunsTable.tradingSessionDate, targetSession),
+        eq(customScreenerRunsTable.isActive, true)
+      ))
+      .limit(1);
+
+    if (existing.length === 0) {
+      logger.info({ targetSession }, "No completed scan for upcoming session. Triggering automatic scan...");
+      const [newRun] = await db.insert(customScreenerRunsTable).values({
+        tradingSessionDate: targetSession,
+        status: "RUNNING",
+        triggerType: "AUTOMATIC",
+        isActive: true,
+      }).returning({ id: customScreenerRunsTable.id });
+      
+      // Fire and forget
+      runCustomScreener({ runId: newRun.id }).catch(err => logger.error({ err }, "Startup scan failed"));
+    } else {
+      logger.info({ targetSession, runStatus: existing[0].status }, "Valid scan already exists for session. Skipping auto-scan.");
+    }
+  } catch (err) {
+    logger.error({ err }, "Failed to initialize persistent scanner state");
+  }
 }
 
 export function getMarketIntelligenceSnapshot(): IntelligenceSnapshot {
