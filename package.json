@@ -1,7 +1,7 @@
 {
   "name": "workspace",
   "version": "0.0.0",
-  "workspaces": ["frontend", "backend", "db"],
+  "workspaces": ["frontend", "backend", "backend/db"],
   "license": "MIT",
   "scripts": {
     "build": "npm --prefix frontend run build && npm --prefix backend run build",

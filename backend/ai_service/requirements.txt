@@ -1,18 +1,20 @@
 # FastAPI & Server
-fastapi>=0.104.0
-uvicorn[standard]>=0.24.0
-pydantic>=2.0
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+pydantic==2.7.1
+gunicorn==22.0.0
+httpx==0.27.0
 
 # ML / AI
-transformers>=4.35.0
-chronos-forecasting>=2.0
-onnxruntime-gpu>=1.18.0
+transformers==4.40.2
+chronos-forecasting==2.0
+onnxruntime==1.18.0
 
 # Numerical
-numpy>=1.24.0
+numpy==1.26.4
 
 # CORS & HTTP
-python-multipart>=0.0.6
+python-multipart==0.0.9
 
 # Logging
-python-json-logger>=2.0.0
+python-json-logger==2.0.7
