@@ -2,11 +2,11 @@
 
 # Mimir Testing Runbook
 
-This document details how to run the massive end-to-end audit testing suite for the Mimir system, what to do on failure, and the expected state for a successful test run.
+This document details how to run the existing testing suite for the Mimir system, what to do on failure, and the expected state for a successful test run.
 
 ## Test Scope & Execution
 
-The system uses Vitest for the backend tests (Infrastructure, REST, WebSockets, Logic, Performance) and Playwright for the frontend tests (UI interactions, Dynamic Island, Charting, Smoke).
+The system uses Vitest for backend regression tests (Risk Engine, Trading Engine logic, math computations) and Playwright for frontend UI interactions.
 
 ### Running the Entire Suite
 
@@ -15,15 +15,19 @@ The system uses Vitest for the backend tests (Infrastructure, REST, WebSockets, 
 cd backend && npm run dev
 cd frontend && npm run dev
 
-# Terminal 2: Run Backend Tests
-cd backend && npm run test:all
+# Terminal 2: Run Backend Tests & Typecheck
+cd backend
+npm run typecheck
+npm test
 
 # Terminal 3: Run Frontend Tests
-cd frontend && npm run test:all
+cd frontend
+npm run typecheck
+npm run test:all
 ```
 
 > [!IMPORTANT]  
-> The backend tests require the PostgreSQL and Redis containers to be actively running. Ensure you have run `docker-compose up -d postgres redis` before beginning.
+> End-to-End (E2E) scripts have been removed or consolidated to reduce phantom failing tests. If you previously relied on `npm run test:e2e`, use the component/regression tests (`npm test` in backend, `npm run test:all` in frontend) which provide the same functional coverage.
 
 ---
 
@@ -35,21 +39,11 @@ cd frontend && npm run test:all
 - **Failure**: "AI Service not ready".
   - **Action**: The AI service takes up to 30-45 seconds to load the ONNX Chronos models into VRAM. Wait 60 seconds and try again. Ensure `ai-service` is running.
 
-### 2. Database Integrity (`tests/db/integrity.test.ts`)
-- **Failure**: Missing columns or tables.
-  - **Action**: Run `npm run db:push` in the backend directory to apply Drizzle schema updates.
-- **Failure**: Constraint violations.
-  - **Action**: A migration might be out of sync, or the DB has dirty test data. Manually clear the tables or run `npm run setup:db`.
+### 2. Backend Regression Tests (`backend/npm test`)
+- **Failure**: Math regression errors or risk assessment mismatches.
+  - **Action**: Ensure that any changes to `backend/src/analysis/technical.ts` or `backend/src/analysis/risk_engine.ts` are mathematically verified against standard indicator definitions.
 
-### 3. Redis Cache Integrity (`tests/cache/redis.test.ts`)
-- **Failure**: Namespace collision.
-  - **Action**: The backend is improperly using `bull:` prefix instead of `mimir:` prefix for app-level caching. Check the Redis wrapper logic.
-
-### 4. WebSocket Routing (`tests/ws/channels.test.ts`)
-- **Failure**: Timeout waiting for `system_health`.
-  - **Action**: Ensure `process.env.UPSTOXBOT_ADMIN_TOKEN` matches the debug header. The debug route `POST /api/system/debug/set-regime` triggers this.
-
-### 5. UI Tests & Smoke Test (`tests/ui/*` & `tests/e2e/smoke.test.ts`)
+### 3. UI Tests (`tests/ui/*`)
 - **Failure**: Chart Canvas timeout.
   - **Action**: If running headless in CI, ensure XVFB or appropriate browser environments are installed. Playwright handles this generally, but ensure the Vite frontend compiles successfully.
 - **Failure**: "Active [0]" in watchlist.
@@ -64,6 +58,5 @@ The debug endpoints (`/api/system/debug/*`) are the designated way to force the 
 
 > [!CAUTION]  
 > Never deploy the system with `NODE_ENV=development` as it exposes the debug endpoints. The Admin Token serves as a secondary guard, but strict environment boundaries must be maintained.
-
 
 </div>

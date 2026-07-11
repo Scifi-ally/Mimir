@@ -289,7 +289,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="UpstoxBot AI Inference Service",
+    title="Mimir AI Inference Service",
     version="1.0.0",
     description="Financial AI inference using Kronos and Chronos-Bolt models.",
     lifespan=lifespan,

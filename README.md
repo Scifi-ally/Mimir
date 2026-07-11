@@ -13,7 +13,7 @@
 ![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)
 ![License MIT](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
 
-**An AI-Assisted Indian Stock Market Monitoring & Automated Trading Analysis Platform.**
+**A Production-Ready Algorithmic Trading Engine for the Indian Stock Market.**
 
 [Key Features](#-key-features) • [System Architecture](#-system-architecture) • [Getting Started](#-getting-started) • [Security Standards](#-security--safety-defaults) • [Contributing](CONTRIBUTING.md)
 

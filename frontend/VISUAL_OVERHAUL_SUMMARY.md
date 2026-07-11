@@ -3,7 +3,7 @@
 # Frontend Visual System Overhaul - Complete Summary
 
 ## Overview
-Comprehensive visual redesign completed on UpstoxBot frontend UI transitioning from gray/muted color palette to pure white + green/red system with Geist Mono typography.
+Comprehensive visual redesign completed on Mimir frontend UI transitioning from gray/muted color palette to pure white + green/red system with Geist Mono typography.
 
 ## Changes by Category
 
