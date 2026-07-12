@@ -18,8 +18,6 @@ import subprocess
 import time
 from contextlib import asynccontextmanager, suppress
 import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import importlib
 from typing import Any, Dict, List, Optional
 
@@ -544,8 +542,8 @@ async def infer_batch(req: BatchRequest):
                             cur = conn.cursor()
                             cur.execute("""
                                 SELECT value FROM fundamental_snapshots
-                                WHERE symbol = %s AND field_name = 'sentiment_composite' AND filed_date <= %s
-                                ORDER BY filed_date DESC LIMIT 1
+                                WHERE symbol = %s AND field_name = 'sentiment_composite' AND field_date <= %s
+                                ORDER BY field_date DESC LIMIT 1
                             """, (cand.symbol, cand.as_of_date))
                             row = cur.fetchone()
                             conn.close()
@@ -636,7 +634,8 @@ async def verify_auth_token(request: Request, call_next):
     expected_token = os.getenv("AI_SERVICE_TOKEN")
     if expected_token:
         token = request.headers.get("X-AI-Service-Token")
-        if not token or token != expected_token:
+        import hmac
+        if not token or not hmac.compare_digest(token, expected_token):
             from fastapi.responses import JSONResponse
             return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
             
