@@ -49,10 +49,9 @@ __pycache__/
 venv/
 .venv/
 
-# Internship specific scripts (Do not commit to GitHub!)
-scripts/generate_internship_commits.ps1
-scripts/internship_push.ps1
-scripts/milestones.json
+# Internal scripts
+scripts/*.generated.*
+dev-notes/
 
 # Generated and test artifacts
 backend/eslint_backend.json

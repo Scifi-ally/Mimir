@@ -1,6 +1,22 @@
 {
-  "name": "workspace",
-  "version": "0.0.0",
+  "name": "mimir",
+  "version": "1.0.0",
+  "description": "A Production-Ready Algorithmic Trading Engine for the Indian Stock Market.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Scifi-ally/Mimir.git"
+  },
+  "author": "Scifi-ally",
+  "keywords": [
+    "trading",
+    "upstox",
+    "algorithmic-trading",
+    "nse",
+    "stock-market"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "workspaces": ["frontend", "backend", "backend/db"],
   "license": "MIT",
   "scripts": {

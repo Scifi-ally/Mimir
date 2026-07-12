@@ -2,7 +2,7 @@
 
 # Contributing to Mimir
 
-First off, thank you for considering contributing to **Mimir**! It is people like you that make Mimir such a powerful, institutional-grade Indian stock market monitoring and automated trading analysis platform.
+First off, thank you for considering contributing to **Mimir**! It is people like you that make Mimir such a powerful retail-level Indian stock market monitoring and automated trading analysis platform.
 
 ## Code of Conduct
 
@@ -59,7 +59,7 @@ When adding new functionality, keep in mind Mimir's separation of concerns:
 
 ### Security & Telemetry Standards
 * **Never commit API keys or `.env` files.** All Upstox OAuth tokens and secrets must be dynamically pulled from environment variables.
-* **Respect Rate Limits.** Ensure any new market data endpoints adhere to our token-bucket rate limiting standards (120 req/min).
+* **Respect Rate Limits.** Ensure any new market data endpoints adhere to our token-bucket rate limiting standards (100 req/min).
 * **Audit Logging.** Any automated order execution or paper trading state change must be logged to the PostgreSQL audit trail.
 
 Thank you for contributing to Mimir!
