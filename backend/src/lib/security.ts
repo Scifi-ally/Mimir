@@ -24,8 +24,8 @@ export function isLocalRequest(req: Request): boolean {
 }
 
 export function isAllowedOrigin(origin: string | undefined): boolean {
-  if (!origin) return true;
   if (process.env.NODE_ENV === "test") return true;
+  if (!origin) return false;
 
   try {
     const url = new URL(origin);
@@ -55,11 +55,6 @@ function getPresentedToken(req: Request): string | null {
 
 export function requireAdmin(req: Request, res: Response, next: NextFunction): void {
   if (req.path === "/healthz" || req.path === "/system/auth-callback" || isLocalRequest(req)) {
-    next();
-    return;
-  }
-
-  if (process.env["DISABLE_REMOTE_API_AUTH"] === "1" || process.env["DISABLE_REMOTE_API_AUTH"] === "true") {
     next();
     return;
   }
@@ -99,7 +94,7 @@ export async function apiRateLimit(req: Request, res: Response, next: NextFuncti
     if (redisClient.status !== "ready") {
       if (redisClient.status === "wait") redisClient.connect().catch(() => {});
       
-      const failClosed = process.env["RATE_LIMIT_FAIL_CLOSED"] === "true" || process.env["RATE_LIMIT_FAIL_CLOSED"] === "1";
+      const failClosed = process.env["RATE_LIMIT_FAIL_OPEN"] !== "true";
       if (failClosed) {
         res.status(503).json({ error: "Service unavailable (rate limit engine offline)" });
         return;
@@ -122,8 +117,7 @@ export async function apiRateLimit(req: Request, res: Response, next: NextFuncti
     const results = await multi.exec();
     
     if (results && results.length >= 2) {
-      // @ts-ignore
-      const count = results[1][1] as number; // Result of zcard
+      const count = (results[1]?.[1] as number) || 0; // Result of zcard
       if (count >= maxRequests) {
         res.setHeader("Retry-After", windowSec.toString());
         res.status(429).json({ error: "Too many requests. Rate limit exceeded." });
@@ -133,7 +127,7 @@ export async function apiRateLimit(req: Request, res: Response, next: NextFuncti
   } catch (err) {
     // If Redis fails, rate limiting behavior is controlled by RATE_LIMIT_FAIL_CLOSED.
     // By default it fails-open with logging so the trading terminal continues to function offline.
-    const failClosed = process.env["RATE_LIMIT_FAIL_CLOSED"] === "true" || process.env["RATE_LIMIT_FAIL_CLOSED"] === "1";
+    const failClosed = process.env["RATE_LIMIT_FAIL_OPEN"] !== "true";
     if (failClosed) {
       logger.error({ err }, "Redis rate limiter error, rejecting request (RATE_LIMIT_FAIL_CLOSED=true)");
       res.status(503).json({ error: "Service unavailable (rate limit engine offline)" });
@@ -168,10 +162,10 @@ export function logSecurityMode(): void {
     }
     logger.info("Remote API access requires UPSTOXBOT_ADMIN_TOKEN");
     
-    const failClosed = process.env["RATE_LIMIT_FAIL_CLOSED"] === "true" || process.env["RATE_LIMIT_FAIL_CLOSED"] === "1";
+    const failClosed = process.env["RATE_LIMIT_FAIL_OPEN"] !== "true";
     if (!failClosed) {
       logger.warn(
-        "RATE_LIMIT_FAIL_CLOSED is not set to true. The rate limiter will fail open if Redis is down, which may expose the remote API to abuse."
+        "RATE_LIMIT_FAIL_OPEN is set to true. The rate limiter will fail open if Redis is down, which may expose the remote API to abuse."
       );
     }
     return;

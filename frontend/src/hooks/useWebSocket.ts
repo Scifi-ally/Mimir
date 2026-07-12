@@ -84,9 +84,7 @@ export function useWebSocket() {
 
     const connectInt = (retryCount = 0) => {
       if (cancelled) return;
-      const token = localStorage.getItem("mimir_admin_token");
-      const protocols = token ? [token] : [];
-      const nextSocketInt = new WebSocket(wsUrl("/ws/intelligence"), protocols);
+      const nextSocketInt = new WebSocket(wsUrl("/ws/intelligence"));
       nextSocketInt.binaryType = "arraybuffer";
       socketInt = nextSocketInt;
       lastMessageTimeInt = Date.now();
@@ -124,9 +122,7 @@ export function useWebSocket() {
 
     const connectMd = (retryCount = 0) => {
       if (cancelled) return;
-      const token = localStorage.getItem("mimir_admin_token");
-      const protocols = token ? [token] : [];
-      const nextSocketMd = new WebSocket(wsUrl("/ws/market-data"), protocols);
+      const nextSocketMd = new WebSocket(wsUrl("/ws/market-data"));
       nextSocketMd.binaryType = "arraybuffer";
       socketMd = nextSocketMd;
       wsRef.current = nextSocketMd;

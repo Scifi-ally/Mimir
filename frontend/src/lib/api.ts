@@ -44,7 +44,11 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
 
 async function apiFetchSoft<T>(path: string, fallback: T): Promise<T> {
   try {
-    const res = await fetch(path, { credentials: "include" });
+    const token = localStorage.getItem("mimir_admin_token");
+    const headers = new Headers();
+    if (token) headers.set("x-admin-token", token);
+
+    const res = await fetch(path, { credentials: "include", headers });
     const body = await res.json().catch(() => null);
     if (!res.ok) return { ...fallback, ...(body ?? {}), available: false } as T;
     return body as T;

@@ -1,12 +1,15 @@
+import crypto from "crypto";
 import { WebSocketServer, WebSocket } from "ws";
 import type { Server } from "http";
 import { logger } from "../lib/logger";
 import { parseClientEvent, ServerEvent, createServerEvent, packr } from "./events";
 import { isAllowedOrigin, isLocalRequest } from "../lib/security";
-import { Redis } from "ioredis";
+import { createRedisClient } from "../lib/redis";
 
-const redisSubscriber = new Redis(process.env.REDIS_URL || "redis://localhost:6379");
-redisSubscriber.subscribe("mimir:alerts:pubsub").catch(err => logger.error({ err }, "Failed to subscribe to alerts"));
+const redisSubscriber = createRedisClient("ws-subscriber");
+redisSubscriber.connect().then(() => {
+  return redisSubscriber.subscribe("mimir:alerts:pubsub");
+}).catch(err => logger.error({ err }, "Failed to subscribe to alerts"));
 redisSubscriber.on("message", (channel: string, message: string) => {
   if (channel === "mimir:alerts:pubsub") {
     try {
@@ -24,17 +27,8 @@ let connectedCount = 0;
 let lastTickLog = 0;
 
 export function initWebSocketServer(server: Server): void {
-  const handleProtocols = (protocols: Set<string>, _request: any): string | false => {
-    // If the client requested any protocols (which in our case is the admin token),
-    // echo back the first one so the browser doesn't drop the connection.
-    if (protocols.size > 0) {
-      return protocols.values().next().value || false;
-    }
-    return false;
-  };
-
-  const wssIntelligence = new WebSocketServer({ noServer: true, handleProtocols });
-  const wssMarketData = new WebSocketServer({ noServer: true, handleProtocols });
+  const wssIntelligence = new WebSocketServer({ noServer: true });
+  const wssMarketData = new WebSocketServer({ noServer: true });
 
   wssInstances.push(wssIntelligence, wssMarketData);
 
@@ -50,19 +44,12 @@ export function initWebSocketServer(server: Server): void {
 
     if (!isLocalRequest(request as any)) {
       const token = process.env.UPSTOXBOT_ADMIN_TOKEN;
-      const protocols = request.headers['sec-websocket-protocol'];
-      const protocolList = protocols ? protocols.split(',').map(p => p.trim()) : [];
-      const hasValidToken = token && protocolList.includes(token);
-      
       const url = new URL(request.url || "", `http://${request.headers.host || "localhost"}`);
       const hasValidQuery = token && url.searchParams.get("token") === token;
 
-      if (!hasValidToken && !hasValidQuery) {
-        logger.warn({ ip: request.socket.remoteAddress }, "WebSocket upgrade rejected: missing or invalid admin token");
-        socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
-        socket.destroy();
-        return;
-      }
+      // We no longer require the token during the Upgrade request to prevent leaking it in headers/URLs.
+      // Instead, we allow the connection and rely on the 5-second auth timeout payload.
+      // However, if they *do* send a valid query token, we'll accept it (optional backward compatibility).
     }
 
     const pathname = request.url ? request.url.split("?")[0] : "";
@@ -158,7 +145,7 @@ export function initWebSocketServer(server: Server): void {
             try {
               const left = Buffer.from(token);
               const right = Buffer.from(expectedToken);
-              if (left.length !== right.length || !require("crypto").timingSafeEqual(left, right)) {
+              if (left.length !== right.length || !crypto.timingSafeEqual(left, right)) {
                 throw new Error("Invalid token");
               }
               tc.isAuthenticated = true;
@@ -200,7 +187,8 @@ export function initWebSocketServer(server: Server): void {
 
             if (oldSymbol && oldSymbol !== symbol) {
               // Clean up old activeSymbol monitoring if no other client is currently subscribing to it
-              const otherSubscribed = Array.from(wssInstances.flatMap(w => Array.from(w.clients))).some((client) => {
+              const allClients = wssInstances.reduce((acc, w) => acc.concat(Array.from(w.clients)), [] as any[]);
+              const otherSubscribed = allClients.some((client) => {
                 const tcClient = client as WebSocket & { activeSymbol?: string | null };
                 return tcClient !== ws && tcClient.activeSymbol === oldSymbol;
               });
@@ -237,7 +225,8 @@ export function initWebSocketServer(server: Server): void {
         const oldSymbol = tc.activeSymbol;
         if (oldSymbol) {
           // Clean up old activeSymbol monitoring if no other client is currently subscribing to it
-          const otherSubscribed = Array.from(wss?.clients || []).some((client) => {
+          const allClients = wssInstances.reduce((acc, w) => acc.concat(Array.from(w.clients)), [] as any[]);
+          const otherSubscribed = allClients.some((client) => {
             const tcClient = client as WebSocket & { activeSymbol?: string | null };
             return tcClient !== ws && tcClient.activeSymbol === oldSymbol;
           });
