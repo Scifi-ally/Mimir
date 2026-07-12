@@ -82,8 +82,9 @@ router.get("/market/forecast", async (req, res) => {
       forecastReturnPct: ai.chronos.forecast_return_pct,
       medianForecast: ai.chronos.median_forecast,
       quantileForecasts: ai.chronos.quantile_forecasts,
-      technicalRanking: ai.technicalRanking,
+      worldSentiment: ai.world_sentiment_score || 0,
       compositeScore: ai.composite_score,
+      components: ai.components || {},
       lastClose,
       fetchedAt: new Date().toISOString(),
     });
@@ -236,7 +237,9 @@ router.get("/market/symbol-insights", async (req, res) => {
       monitoring: monitoring ?? null,
       ai: ai
         ? {
+            worldSentiment: ai.world_sentiment_score || 0,
             compositeScore: ai.composite_score,
+            components: ai.components || {},
             trend: ai.chronos.trend,
             forecastReturnPct: ai.chronos.forecast_return_pct,
             technicalPatterns: ai.technicalRanking.detected_patterns,

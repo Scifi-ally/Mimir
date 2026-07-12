@@ -216,8 +216,9 @@ async function rankAiOpportunities(
 }
 
 interface AiRankResult {
-  symbol: string;
+  world_sentiment_score?: number;
   composite_score: number;
+  components?: Record<string, number>;
   technicalRanking: {
     bullish_probability: number;
   };

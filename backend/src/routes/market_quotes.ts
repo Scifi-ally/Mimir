@@ -6,9 +6,12 @@ import { logger } from "../lib/logger";
 import { getISTDateStr, getLastCompletedTradingDayStr, shiftISTDateStr } from "../lib/ist-time";
 import { logApiError, sendFallback } from "../lib/api-errors";
 import axios, { AxiosError } from "axios";
-import { db, overnightWatchlistTable } from "../../db/src/index.js";
+import { desc, eq } from "drizzle-orm";
 import { desc, eq } from "drizzle-orm";
 import { upstoxClient, fetchIndexPrevClose } from "./market_utils";
+import { getFiiDiiDivergence, type DivergenceResult } from "../analysis/divergence_engine";
+import { computeOFI } from "../analysis/order_flow";
+import { z } from "zod";
 
 const router = Router();
 
@@ -24,6 +27,7 @@ type DashboardIndices = {
   bankNifty: LiveIndexQuote;
   finnifty: LiveIndexQuote;
   indiaVix: LiveIndexQuote;
+  fiiDiiDivergence?: DivergenceResult | null;
   fetchedAt: string;
 };
 
@@ -40,6 +44,7 @@ function fallbackDashboardIndices(): DashboardIndices {
     bankNifty: { keyUsed: null, ltp: null, changePct: null },
     finnifty: { keyUsed: null, ltp: null, changePct: null },
     indiaVix: { keyUsed: state.indiaVix == null ? null : "cached:VIX", ltp: state.indiaVix, changePct: null },
+    fiiDiiDivergence: null,
     fetchedAt: new Date().toISOString(),
   };
 }
@@ -67,12 +72,13 @@ async function buildDashboardIndices(): Promise<DashboardIndices | null> {
     }
   };
 
-  const [nifty50, sensex, bankNifty, finnifty, indiaVix] = await Promise.all([
+  const [nifty50, sensex, bankNifty, finnifty, indiaVix, fiiDiiDivergence] = await Promise.all([
     computeYF('^NSEI'),
     computeYF('^BSESN'),
     computeYF('^NSEBANK'),
     computeYF('^CNXFIN'),
-    computeYF('^INDIAVIX')
+    computeYF('^INDIAVIX'),
+    getFiiDiiDivergence().catch(() => null)
   ]);
 
   const result = {
@@ -81,6 +87,7 @@ async function buildDashboardIndices(): Promise<DashboardIndices | null> {
     bankNifty,
     finnifty,
     indiaVix,
+    fiiDiiDivergence,
     fetchedAt: new Date().toISOString(),
   };
 
@@ -131,6 +138,22 @@ router.get("/market/dashboard-indices", async (req, res) => {
     }
     respondDegraded("dashboard-indices-error", fallbackDashboardIndices());
   }
+});
+
+const OfiQuerySchema = z.object({
+  symbol: z.string().min(1).max(20),
+});
+
+// GET /api/market/ofi
+router.get("/market/ofi", (req, res) => {
+  const result = OfiQuerySchema.safeParse(req.query);
+  if (!result.success) {
+    return res.status(400).json({ error: "Invalid symbol parameter", details: result.error.format() });
+  }
+  const symbol = result.data.symbol;
+  
+  const ofi = computeOFI(symbol);
+  res.json(ofi);
 });
 
 // GET /api/market/ltp?symbol=TCS

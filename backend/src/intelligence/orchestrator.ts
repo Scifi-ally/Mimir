@@ -173,10 +173,40 @@ class ScannerOrchestrator {
 
             // Generate suggestions for top 5 ranked opportunities
             for (const opportunity of ranked.slice(0, 5)) {
-              const suggestion = this.suggestions.generate(opportunity);
-              if (suggestion.isNew) {
-                intelligenceBus.publish("suggestionGenerated", { suggestion });
-              }
+              // Also add it to the active suggestions map for real-time tracking
+              this.suggestions.generate(opportunity);
+
+              const signal: any = {
+                symbol: opportunity.symbol,
+                name: opportunity.symbol,
+                signal: opportunity.direction,
+                setupType: opportunity.setup,
+                entryPrice: opportunity.entry,
+                stopLoss: opportunity.stopLoss,
+                target1: opportunity.target,
+                target2: null,
+                riskReward: opportunity.riskReward,
+                aiScore: opportunity.aiScore ?? 50,
+                confidence: Math.round(opportunity.compositeScore * 10),
+                patternScore: 50,
+                chronosScore: 50,
+                technicalScore: 50,
+                sentimentScore: 50,
+                sector: "Unknown",
+                regime: this.breadth.getSnapshot()?.regime ?? "UNKNOWN",
+                positionSize: 1,
+                maxRiskInr: Math.abs(opportunity.entry - opportunity.stopLoss),
+                stopDistancePct: (Math.abs(opportunity.entry - opportunity.stopLoss) / opportunity.entry) * 100,
+                featureVector: { atr14: (Math.abs(opportunity.entry - opportunity.stopLoss) / 1.5) },
+                reasoning: opportunity.rankReasoning ? opportunity.rankReasoning.join("; ") : "",
+                confluence: [],
+                rankingProvider: "AI Ranking",
+                signalFactors: null,
+              };
+
+              const { ingestSignal, fetchLTPForSymbols } = await import("../suggestions/generator");
+              const ltpMap = await fetchLTPForSymbols([opportunity.symbol]);
+              await ingestSignal(signal, ltpMap[opportunity.symbol], { isIntraday: true, source: "realtime" });
             }
           } catch (err) {
             logger.warn({ err }, "AI Ranking task failed");
@@ -189,58 +219,6 @@ class ScannerOrchestrator {
         void cacheJson(`intelligence:suggestion:${suggestion.instrumentKey}`, suggestion, 30 * 60);
         void syncMonitoredSubscriptions();
         
-        // Persist to database and broadcast to frontend
-        try {
-          const { db, suggestionsTable } = await import("../../db/src");
-          const [inserted] = await db
-            .insert(suggestionsTable)
-            .values({
-              symbol: suggestion.symbol,
-              name: suggestion.symbol,
-              exchange: "NSE",
-              direction: suggestion.direction,
-              tradeType: "INTRADAY",
-              setupType: suggestion.setup,
-              entryPrice: suggestion.entry.toString(),
-              stopLoss: suggestion.stopLoss.toString(),
-              target1: suggestion.target.toString(),
-              target2: null,
-              riskReward: suggestion.riskReward.toString(),
-              quantity: 1,
-              maxRiskInr: Math.abs(suggestion.entry - suggestion.stopLoss).toString(),
-              stopDistancePct: (Math.abs(suggestion.entry - suggestion.stopLoss) / suggestion.entry * 100).toString(),
-              marketRegime: this.breadth.getSnapshot()?.regime ?? "UNKNOWN",
-              reasoning: suggestion.reasoning ? suggestion.reasoning.join("; ") : "",
-              validityTill: new Date(suggestion.expiresAt).toISOString(),
-              status: "ACTIVE",
-              atr: (Math.abs(suggestion.entry - suggestion.stopLoss) / 1.5).toString(),
-              highestPrice: suggestion.entry.toString(),
-              lowestPrice: suggestion.entry.toString(),
-              signalFactors: null,
-            })
-            .returning();
-
-          if (inserted) {
-            broadcast(
-              createServerEvent.newSuggestion({
-                id: inserted.id,
-                symbol: inserted.symbol,
-                direction: suggestion.direction as "BUY" | "SELL",
-                entryPrice: suggestion.entry,
-                stopLoss: suggestion.stopLoss,
-                target1: suggestion.target,
-                setupType: suggestion.setup,
-                riskReward: suggestion.riskReward,
-                scanSessionId: undefined,
-              }),
-              "suggestions"
-            );
-            logger.info({ symbol: suggestion.symbol, id: inserted.id }, "Real-time suggestion persisted and broadcasted");
-          }
-        } catch (err) {
-          logger.warn({ err, symbol: suggestion.symbol }, "Failed to persist real-time suggestion to database");
-        }
-
         // Detect compositeScore alerts
         detectAlerts(suggestion.symbol, {
           compositeScore: suggestion.confidence / 10 // Confidence is Math.round(compositeScore * 10)

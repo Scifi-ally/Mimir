@@ -20,7 +20,7 @@ import {
   findStockBySymbol,
   ScanResult,
 } from "../analysis/stock_scanner";
-import { runIntelligencePipeline } from "../analysis/signal_generator";
+import { runIntelligencePipeline, type IntelligenceSignal } from "../analysis/signal_generator";
 import { checkSuggestionOutcomes } from "./accuracy_tracker";
 import { fetchCorporateActionBlacklist } from "../market_data/corporate_actions";
 import { broadcast } from "../ws/websocket_server";
@@ -28,7 +28,7 @@ import { createServerEvent } from "../ws/events";
 import { logger } from "../lib/logger";
 import { intelligenceBus } from "../intelligence/event_bus";
 import { createUpstoxClient } from "../lib/upstox-client";
-import { getISTDateStr, getNextTradingDayStr } from "../lib/ist-time";
+import { getISTDateStr, getNextTradingDayStr, todayStartUTC } from "../lib/ist-time";
 import { beginWorkflow, endWorkflow } from "../workflow/coordinator";
 
 // ── Create optimized API client (reused across calls) ────────────────────────
@@ -604,175 +604,26 @@ export async function generateSuggestionsFromWatchlist(options?: {
     for (const signal of pipelineResult.signals) {
       if (generated >= slotsAvailable) break;
 
-      // Verify against live market price to ensure we never publish late/chased trades
       const ltp = livePrices[signal.symbol];
-      if (ltp && ltp > 0) {
-        if (signal.signal === "BUY") {
-          // Strict anti-chasing guard: If live price has already passed planned entry by >0.2%, reject as late entry
-          if (ltp > signal.entryPrice * 1.002) {
-            logger.warn(
-              { symbol: signal.symbol, ltp, origEntry: signal.entryPrice },
-              "Discarding BUY suggestion: live price has already passed planned entry point (Late Entry / Chased)",
-            );
-            continue;
-          }
-          const liveRisk = ltp - signal.stopLoss;
-          const liveReward = signal.target1 - ltp;
-          const liveRR = liveRisk > 0 ? liveReward / liveRisk : 0;
-          if (ltp <= signal.stopLoss || ltp >= signal.target1 || liveRR < minRequiredRR) {
-            logger.warn(
-              { symbol: signal.symbol, ltp, origEntry: signal.entryPrice, liveRR, minRequiredRR },
-              "Discarding suggestion: live price has hit target/stop or risk-reward < minRequiredRR",
-            );
-            continue;
-          }
-          signal.riskReward = Number(liveRR.toFixed(2));
-        } else if (signal.signal === "SELL") {
-          // Strict anti-chasing guard: If live price has already dropped below planned entry by >0.2%, reject as late entry
-          if (ltp < signal.entryPrice * 0.998) {
-            logger.warn(
-              { symbol: signal.symbol, ltp, origEntry: signal.entryPrice },
-              "Discarding SELL suggestion: live price has already passed planned entry point (Late Entry / Chased)",
-            );
-            continue;
-          }
-          const liveRisk = signal.stopLoss - ltp;
-          const liveReward = ltp - signal.target1;
-          const liveRR = liveRisk > 0 ? liveReward / liveRisk : 0;
-          if (ltp >= signal.stopLoss || ltp <= signal.target1 || liveRR < minRequiredRR) {
-            logger.warn(
-              { symbol: signal.symbol, ltp, origEntry: signal.entryPrice, liveRR, minRequiredRR },
-              "Discarding suggestion: live price has hit target/stop or risk-reward < minRequiredRR",
-            );
-            continue;
-          }
-          signal.riskReward = Number(liveRR.toFixed(2));
-        }
-      }
-
-      // Prevent duplicates: Ensure we don't generate the same suggestion multiple times today
-      // even if the previous one hit its target and is no longer ACTIVE
-      const todayStart = new Date();
-      todayStart.setHours(0, 0, 0, 0);
-      
-      const [latestOpen] = await db
-        .select({ id: suggestionsTable.id })
-        .from(suggestionsTable)
-        .where(
-          and(
-            eq(suggestionsTable.symbol, signal.symbol),
-            or(
-              gte(suggestionsTable.generatedAt, todayStart),
-              eq(suggestionsTable.status, "ACTIVE")
-            )
-          ),
-        )
-        .limit(1);
-
-      if (latestOpen) continue;
-
       const candidate = eligibleCandidates.find(c => c.symbol === signal.symbol);
       const isIntraday = candidate?.category?.toUpperCase().includes("INTRADAY") ?? false;
-      const tradeType = isIntraday ? "INTRADAY" : "SWING";
       
-      const tomorrow = new Date();
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      const validityTill = isIntraday ? tomorrow.toISOString().slice(0, 10) : "3d";
+      const success = await ingestSignal(signal, ltp, {
+        scanSessionId: options?.scanSessionId,
+        source: options?.source,
+        isIntraday,
+        minRequiredRR
+      });
 
-      const [inserted] = await db
-        .insert(suggestionsTable)
-        .values({
-          symbol: signal.symbol,
-          name: signal.name,
-          exchange: "NSE",
-          direction: signal.signal,
-          tradeType,
-          setupType: signal.setupType,
-          entryPrice: signal.entryPrice.toString(),
-          stopLoss: signal.stopLoss.toString(),
-          target1: signal.target1.toString(),
-          target2: signal.target2 ? signal.target2.toString() : null,
-          riskReward: signal.riskReward.toString(),
-          quantity: signal.positionSize,
-          maxRiskInr: signal.maxRiskInr.toString(),
-          stopDistancePct: signal.stopDistancePct.toString(),
-          marketRegime: signal.regime,
-          reasoning: `[MODE:${signal.rankingProvider === "AI Ranking" ? "AI" : "TECH"}|CF:${signal.confidence.toFixed(0)}|AI:${signal.aiScore.toFixed(0)}|K:${signal.patternScore.toFixed(0)}|C:${signal.chronosScore.toFixed(0)}|T:${signal.technicalScore.toFixed(0)}] [SENTIMENT: ${signal.sentimentScore > 60 ? "BULLISH" : signal.sentimentScore < 40 ? "BEARISH" : "NEUTRAL"}] ${signal.reasoning} Confluence: ${signal.confluence.slice(0, 2).join(", ")}.`,
-          validityTill,
-          status: "ACTIVE",
-          atr: signal.featureVector.atr14.toString(),
-          highestPrice: signal.entryPrice.toString(),
-          lowestPrice: signal.entryPrice.toString(),
-          signalFactors: signal.signalFactors,
-        })
-        .returning();
-
-      if (inserted) {
-        logger.info({
-          id: inserted.id,
-          symbol: inserted.symbol,
-          setupType: inserted.setupType,
-          direction: inserted.direction,
-          entryPrice: inserted.entryPrice
-        }, "Database write: auto suggestion generated and inserted");
-
+      if (success) {
         generated++;
-
         const sector = STOCK_SECTOR_MAP[signal.symbol] ?? "Other";
         sectorCounts[sector] = (sectorCounts[sector] ?? 0) + 1;
         if (signal.signal === "BUY") {
-          // eslint-disable-next-line unused-imports/no-unused-vars, @typescript-eslint/no-unused-vars
           openBuyCount += 1;
         } else {
-          // eslint-disable-next-line unused-imports/no-unused-vars, @typescript-eslint/no-unused-vars
           openSellCount += 1;
         }
-
-        // Broadcast with typed event
-        broadcast(
-          createServerEvent.newSuggestion({
-            id: inserted.id,
-            symbol: inserted.symbol,
-            direction: signal.signal as "BUY" | "SELL",
-            entryPrice: signal.entryPrice,
-            stopLoss: signal.stopLoss,
-            target1: signal.target1,
-            setupType: signal.setupType,
-            riskReward: signal.riskReward,
-            scanSessionId: options?.scanSessionId,
-          }),
-          "suggestions"
-        );
-
-        intelligenceBus.publish("suggestionGenerated", {
-          suggestion: {
-            id: inserted.id,
-            instrumentKey: `NSE_EQ|${inserted.symbol}`,
-            symbol: inserted.symbol,
-            direction: signal.signal as "BUY" | "SELL",
-            setup: signal.setupType,
-            confidence: signal.confidence,
-            entry: signal.entryPrice,
-            stopLoss: signal.stopLoss,
-            target: signal.target1,
-            target1: signal.target1,
-            riskReward: signal.riskReward,
-            reasoning: [signal.reasoning],
-            generatedAt: Date.now(),
-            expiresAt: Date.now() + 20 * 60_000,
-          } as any
-        });
-
-        logger.info(
-          {
-            symbol: signal.symbol,
-            setup: signal.setupType,
-            direction: signal.signal,
-            rr: signal.riskReward,
-            confidence: signal.confidence,
-          },
-          "New suggestion generated via Layer 7 Pipeline",
-        );
       }
     }
 
@@ -830,4 +681,166 @@ export async function generateSuggestionsFromWatchlist(options?: {
     generationInProgress = false;
     endWorkflow("INTRADAY_GENERATION", workflowSuccess, workflowFailureReason);
   }
+}
+
+
+export async function ingestSignal(
+  signal: IntelligenceSignal,
+  livePrice?: number,
+  options?: {
+    scanSessionId?: string;
+    source?: string;
+    isIntraday?: boolean;
+    minRequiredRR?: number;
+  }
+): Promise<boolean> {
+  const ltp = livePrice;
+  const minRequiredRR = options?.minRequiredRR ?? 1.3;
+
+  if (ltp && ltp > 0) {
+    if (signal.signal === "BUY") {
+      if (ltp > signal.entryPrice * 1.002) {
+        logger.warn({ symbol: signal.symbol, ltp, origEntry: signal.entryPrice }, "Discarding BUY suggestion: live price has already passed planned entry point (Late Entry / Chased)");
+        return false;
+      }
+      const liveRisk = ltp - signal.stopLoss;
+      const liveReward = signal.target1 - ltp;
+      const liveRR = liveRisk > 0 ? liveReward / liveRisk : 0;
+      if (ltp <= signal.stopLoss || ltp >= signal.target1 || liveRR < minRequiredRR) {
+        logger.warn({ symbol: signal.symbol, ltp, origEntry: signal.entryPrice, liveRR, minRequiredRR }, "Discarding suggestion: live price has hit target/stop or risk-reward < minRequiredRR");
+        return false;
+      }
+      signal.riskReward = Number(liveRR.toFixed(2));
+    } else if (signal.signal === "SELL") {
+      if (ltp < signal.entryPrice * 0.998) {
+        logger.warn({ symbol: signal.symbol, ltp, origEntry: signal.entryPrice }, "Discarding SELL suggestion: live price has already passed planned entry point (Late Entry / Chased)");
+        return false;
+      }
+      const liveRisk = signal.stopLoss - ltp;
+      const liveReward = ltp - signal.target1;
+      const liveRR = liveRisk > 0 ? liveReward / liveRisk : 0;
+      if (ltp >= signal.stopLoss || ltp <= signal.target1 || liveRR < minRequiredRR) {
+        logger.warn({ symbol: signal.symbol, ltp, origEntry: signal.entryPrice, liveRR, minRequiredRR }, "Discarding suggestion: live price has hit target/stop or risk-reward < minRequiredRR");
+        return false;
+      }
+      signal.riskReward = Number(liveRR.toFixed(2));
+    }
+  }
+
+  const todayStart = todayStartUTC();
+  
+  const [latestOpen] = await db
+    .select({ id: suggestionsTable.id })
+    .from(suggestionsTable)
+    .where(
+      and(
+        eq(suggestionsTable.symbol, signal.symbol),
+        or(
+          gte(suggestionsTable.generatedAt, todayStart),
+          eq(suggestionsTable.status, "ACTIVE")
+        )
+      )
+    )
+    .limit(1);
+
+  if (latestOpen) return false;
+
+  const isIntraday = options?.isIntraday ?? false;
+  const tradeType = isIntraday ? "INTRADAY" : "SWING";
+  
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const validityTill = isIntraday ? tomorrow.toISOString().slice(0, 10) : "3d";
+
+  const [inserted] = await db
+    .insert(suggestionsTable)
+    .values({
+      symbol: signal.symbol,
+      name: signal.name,
+      exchange: "NSE",
+      direction: signal.signal,
+      tradeType,
+      setupType: signal.setupType,
+      entryPrice: signal.entryPrice.toString(),
+      stopLoss: signal.stopLoss.toString(),
+      target1: signal.target1.toString(),
+      target2: signal.target2 ? signal.target2.toString() : null,
+      riskReward: signal.riskReward.toString(),
+      quantity: signal.positionSize,
+      maxRiskInr: signal.maxRiskInr.toString(),
+      stopDistancePct: signal.stopDistancePct.toString(),
+      marketRegime: signal.regime,
+      confidence: signal.confidence,
+      aiScore: signal.aiScore,
+      patternScore: signal.patternScore,
+      chronosScore: signal.chronosScore,
+      technicalScore: signal.technicalScore,
+      sentimentScore: signal.sentimentScore,
+      rankingMode: signal.rankingProvider,
+      reasoning: `[SENTIMENT: ${signal.sentimentScore > 60 ? "BULLISH" : signal.sentimentScore < 40 ? "BEARISH" : "NEUTRAL"}] ${signal.reasoning} Confluence: ${signal.confluence.slice(0, 2).join(", ")}.`,
+      validityTill,
+      status: "ACTIVE",
+      atr: signal.featureVector?.atr14?.toString() || "0",
+      highestPrice: signal.entryPrice.toString(),
+      lowestPrice: signal.entryPrice.toString(),
+      signalFactors: signal.signalFactors,
+    })
+    .returning();
+
+  if (inserted) {
+    logger.info({
+      id: inserted.id,
+      symbol: inserted.symbol,
+      setupType: inserted.setupType,
+      direction: inserted.direction,
+      entryPrice: inserted.entryPrice
+    }, "Database write: auto suggestion generated and inserted");
+
+    broadcast(
+      createServerEvent.newSuggestion({
+        id: inserted.id,
+        symbol: inserted.symbol,
+        direction: signal.signal as "BUY" | "SELL",
+        entryPrice: signal.entryPrice,
+        stopLoss: signal.stopLoss,
+        target1: signal.target1,
+        setupType: signal.setupType,
+        riskReward: signal.riskReward,
+        scanSessionId: options?.scanSessionId,
+      }),
+      "suggestions"
+    );
+
+    intelligenceBus.publish("suggestionGenerated", {
+      suggestion: {
+        id: inserted.id,
+        instrumentKey: `NSE_EQ|${inserted.symbol}`,
+        symbol: inserted.symbol,
+        direction: signal.signal as "BUY" | "SELL",
+        setup: signal.setupType,
+        confidence: signal.confidence,
+        entry: signal.entryPrice,
+        stopLoss: signal.stopLoss,
+        target: signal.target1,
+        target1: signal.target1,
+        riskReward: signal.riskReward,
+        reasoning: [signal.reasoning],
+        generatedAt: Date.now(),
+        expiresAt: Date.now() + 20 * 60_000,
+      } as any
+    });
+
+    logger.info(
+      {
+        symbol: signal.symbol,
+        setup: signal.setupType,
+        direction: signal.signal,
+        rr: signal.riskReward,
+        confidence: signal.confidence,
+      },
+      "New suggestion generated via Layer 7 Pipeline"
+    );
+    return true;
+  }
+  return false;
 }

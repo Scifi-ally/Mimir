@@ -38,7 +38,7 @@ export class SuggestionGenerator {
           symbol: row.symbol,
           direction: row.direction as Direction,
           setup: row.setupType,
-          confidence: Math.round((Number(row.riskReward) || 2) * 10),
+          confidence: row.confidence ?? Math.round((Number(row.riskReward) || 2) * 10),
           entry: Number(row.entryPrice),
           stopLoss: Number(row.stopLoss),
           target: Number(row.target1),
@@ -47,14 +47,6 @@ export class SuggestionGenerator {
           generatedAt: generatedAtMs,
           expiresAt: expiresAtMs,
         };
-
-        const parsedConfidence = row.reasoning?.match(/CF:([0-9.]+)/);
-        if (parsedConfidence) {
-          const confidenceVal = Math.round(Number(parsedConfidence[1]));
-          if (!isNaN(confidenceVal)) {
-            active.confidence = confidenceVal;
-          }
-        }
 
         this.suggestions.set(canonicalKey, active);
         logger.info({ symbol: row.symbol, id: row.id }, "Recovered active suggestion from database");

@@ -231,12 +231,7 @@ function serializeSuggestion(
         : s.outcomePrice != null
           ? parseFloat(s.outcomePrice)
           : null,
-    confidence: (() => {
-      const match = s.reasoning?.match(/CF:(\d+)/);
-      if (match) return parseInt(match[1], 10);
-      const signalFactors = s.signalFactors as { confidence?: number } | null;
-      return signalFactors?.confidence ?? 82;
-    })(),
+    confidence: s.confidence ?? 0,
     generatedAt: s.generatedAt.toISOString(),
     closedAt: s.closedAt?.toISOString() ?? null,
     signalFactors: s.signalFactors,

@@ -688,6 +688,21 @@ export function startScheduler(): void {
     resetMarketFeedCache();
   });
 
+  scheduleJob("alpha-score-ic-monitor", "0 6 * * 6", async () => {
+    try {
+      const { exec } = await import("child_process");
+      const { promisify } = await import("util");
+      const path = await import("path");
+      const execAsync = promisify(exec);
+      logger.info("Running weekly Alpha Score IC recalculation");
+      const scriptPath = path.resolve(__dirname, "../../../ai_service/backtest/run_weekly_ic.py");
+      const { stdout, stderr } = await execAsync(`python ${scriptPath}`);
+      logger.info({ stdout, stderr }, "Weekly IC recalculation completed");
+    } catch (err) {
+      logger.error({ err }, "Weekly IC recalculation failed");
+    }
+  });
+
   // Register callback to dynamically hot-reload/swap monitored stocks if overnight/mid-day scan completes mid-session.
   registerOnScanCompleted(async () => {
     try {

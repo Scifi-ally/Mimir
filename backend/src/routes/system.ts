@@ -90,13 +90,6 @@ function getUnifiedScanStatus() {
   };
 }
 
-function parseConfidenceFromReasoning(reasoning: string | null | undefined): number | null {
-  if (!reasoning) return null;
-  const match = reasoning.match(/CF:([0-9.]+)/);
-  if (!match) return null;
-  const value = Number(match[1]);
-  return Number.isFinite(value) ? value : null;
-}
 
 // GET /api/system/status
 router.get("/system/status", async (req, res) => {
@@ -137,13 +130,13 @@ router.get("/system/status", async (req, res) => {
 
     // Query real count of signals generated today (Issue #8)
     const todaySuggestions = await db
-      .select({ reasoning: suggestionsTable.reasoning, riskReward: suggestionsTable.riskReward })
+      .select({ confidence: suggestionsTable.confidence, riskReward: suggestionsTable.riskReward })
       .from(suggestionsTable)
       .where(gte(suggestionsTable.generatedAt, todayStartUTC()));
     signalsGenerated = todaySuggestions.length;
 
     const confidenceValues = todaySuggestions
-      .map((row) => parseConfidenceFromReasoning(row.reasoning))
+      .map((row) => row.confidence)
       .filter((value): value is number => value != null);
 
     averageConfidence = confidenceValues.length > 0
