@@ -61,3 +61,6 @@ frontend/playwright-report/
 frontend/test-results/
 backend/NSE.json.gz
 backend/complete.csv.gz
+
+# AI Agent Configuration
+.agents/
