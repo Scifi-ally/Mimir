@@ -44,6 +44,16 @@ export function useWebSocket() {
     let worker: Worker | null = null;
     let socketInt: WebSocket | null = null;
     let socketMd: WebSocket | null = null;
+    
+    // Use a dictionary to debounce invalidations of specific query keys
+    const invalidationTimeouts: Record<string, ReturnType<typeof setTimeout>> = {};
+    const debouncedInvalidate = (key: string[]) => {
+      const keyStr = key.join("-");
+      if (invalidationTimeouts[keyStr]) clearTimeout(invalidationTimeouts[keyStr]);
+      invalidationTimeouts[keyStr] = setTimeout(() => {
+        void queryClient.invalidateQueries({ queryKey: key });
+      }, 300);
+    };
     let isIntConnected = false;
     let isMdConnected = false;
     let lastMessageTimeInt = Date.now();
@@ -222,10 +232,10 @@ export function useWebSocket() {
               break;
             case "scan_completed":
               setScanState({ scanning: false });
-              void queryClient.invalidateQueries({ queryKey: ["watchlist"] });
-              void queryClient.invalidateQueries({ queryKey: ["suggestions"] });
-              void queryClient.invalidateQueries({ queryKey: ["monitoring"] });
-              void queryClient.invalidateQueries({ queryKey: ["monitored-symbols"] });
+              debouncedInvalidate(["watchlist"]);
+              debouncedInvalidate(["suggestions"]);
+              debouncedInvalidate(["monitoring"]);
+              debouncedInvalidate(["monitored-symbols"]);
               break;
             case "monitoring_update":
               queryClient.setQueryData(
@@ -234,7 +244,7 @@ export function useWebSocket() {
               );
               break;
             case "new_suggestion":
-              void queryClient.invalidateQueries({ queryKey: ["suggestions"] });
+              debouncedInvalidate(["suggestions"]);
               useStore.getState().showIsland({
                 title: `New ${event.data.direction} Signal`,
                 subtitle: event.data.symbol,
@@ -242,13 +252,13 @@ export function useWebSocket() {
               });
               break;
             case "suggestion_updated":
-              void queryClient.invalidateQueries({ queryKey: ["suggestions"] });
+              debouncedInvalidate(["suggestions"]);
               break;
             case "market_regime_changed":
-              void queryClient.invalidateQueries({ queryKey: ["regime"] });
+              debouncedInvalidate(["regime"]);
               break;
             case "alert":
-              void queryClient.invalidateQueries({ queryKey: ["alerts"] });
+              debouncedInvalidate(["alerts"]);
               useStore.getState().showIsland({
                 title: event.data.symbol || "Alert",
                 subtitle: event.data.message,
@@ -265,8 +275,8 @@ export function useWebSocket() {
               }
               break;
             case "session_state_changed":
-              void queryClient.invalidateQueries({ queryKey: ["session"] });
-              void queryClient.invalidateQueries({ queryKey: ["watchlist"] });
+              debouncedInvalidate(["session"]);
+              debouncedInvalidate(["watchlist"]);
               break;
             case "indices_update":
               mergeIndices(event.data);

@@ -86,6 +86,7 @@ export const api = {
     apiFetch<import("@/types/api").DashboardIndices & { degraded?: boolean; reason?: string }>(
       "/api/market/dashboard-indices",
     ),
+  fetchOFI: (symbol: string) => apiFetch<{ buyVolume: number; sellVolume: number; ofi: number; ofiRatio: number; ticksEvaluated: number }>(`/api/market/ofi?symbol=${encodeURIComponent(symbol)}`),
   marketRegime: () => apiFetch<import("@/types/api").MarketRegime>("/api/market/regime").then(res => MarketRegimeSchema.parse(res)),
   marketMacro: () => apiFetch<unknown>("/api/market/macro"),
   intradayMonitoring: () =>

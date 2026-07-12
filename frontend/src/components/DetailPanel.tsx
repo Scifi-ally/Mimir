@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { Activity, CheckCircle, Flame, BarChart3, Cpu, ChevronLeft, Copy, Check } from "lucide-react";
@@ -55,6 +55,20 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
 
   const techEdgeVal = forecast?.techEdge ?? data.tech_edge ?? selectedSignal?.signalFactors?.techEdge ?? selectedSignal?.signalFactors?.technical?.score;
   const regimeAlignVal = forecast?.regimeAlign ?? data.regime_align ?? selectedSignal?.signalFactors?.regime?.align;
+
+  const { data: quote } = useQuery({
+    queryKey: ["quote", selectedSymbol],
+    queryFn: () => api.quote(selectedSymbol),
+    refetchInterval: session?.isMarketOpen ? 2000 : false,
+    enabled: !!selectedSymbol && session?.isMarketOpen,
+  });
+
+  const { data: ofi } = useQuery({
+    queryKey: ["ofi", selectedSymbol],
+    queryFn: () => api.fetchOFI(selectedSymbol),
+    refetchInterval: session?.isMarketOpen ? 2000 : false,
+    enabled: !!selectedSymbol && session?.isMarketOpen,
+  });
 
   const scoreHistoryQuery = useQuery({
     queryKey: ["score-history", selectedSymbol],
@@ -149,6 +163,51 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
            <Tooltip content="Mimir's proprietary score based on trend strength, momentum, volume profiles, and ML models. >70 is bullish, <40 is bearish." align="end">
               <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mt-1 whitespace-nowrap border-b border-dotted border-muted-foreground/40 cursor-help">Composite Score</div>
             </Tooltip>
+            <div className="flex-1 overflow-y-auto pr-1 pb-4">
+            {ofi && ofi.ticksEvaluated > 5 && (
+              <div className="mb-4 bg-foreground/5 p-3 rounded-lg border border-foreground/10">
+                <div className="flex justify-between items-center mb-2">
+                  <span className="text-xs font-semibold text-foreground/70 uppercase tracking-wider">Order Flow Imbalance (5m)</span>
+                  <span className={cn("text-xs font-bold", ofi.ofiRatio > 0 ? "text-bull" : ofi.ofiRatio < 0 ? "text-bear" : "text-foreground")}>
+                    {(ofi.ofiRatio * 100).toFixed(1)}%
+                  </span>
+                </div>
+                <div className="h-2 w-full bg-foreground/10 rounded-full overflow-hidden flex relative">
+                  {/* Center line */}
+                  <div className="absolute left-1/2 top-0 bottom-0 w-px bg-background z-10" />
+                  
+                  {/* If ofiRatio > 0, draw green bar from center right. If < 0, red bar from center left */}
+                  <div className="w-1/2 h-full flex justify-end">
+                    {ofi.ofiRatio < 0 && (
+                      <div className="h-full bg-bear" style={{ width: `${Math.min(100, Math.abs(ofi.ofiRatio) * 100)}%` }} />
+                    )}
+                  </div>
+                  <div className="w-1/2 h-full flex justify-start">
+                    {ofi.ofiRatio > 0 && (
+                      <div className="h-full bg-bull" style={{ width: `${Math.min(100, Math.abs(ofi.ofiRatio) * 100)}%` }} />
+                    )}
+                  </div>
+                </div>
+                <div className="flex justify-between mt-1 text-[9px] text-foreground/50">
+                  <span>Sell: {fmtNum(ofi.sellVolume)}</span>
+                  <span>Buy: {fmtNum(ofi.buyVolume)}</span>
+                </div>
+              </div>
+            )}
+            {forecast?.components && Object.keys(forecast.components).length > 0 && (
+              <div className="w-full flex h-1.5 rounded-full overflow-hidden mt-2 opacity-90 gap-[1px]">
+                {Object.entries(forecast.components).map(([k, v]) => {
+                   if (v <= 0 && k !== "macro_penalty") return null;
+                   const colors: Record<string, string> = { trend_alignment: "bg-blue-500", forecast_momentum: "bg-purple-500", confidence: "bg-emerald-500", sentiment: "bg-amber-500", macro_penalty: "bg-red-500" };
+                   const total = 100; // max possible score before penalty
+                   return (
+                     <Tooltip key={k} content={`${k.replace('_', ' ').toUpperCase()}: ${v}`}>
+                       <div className={`${colors[k] || "bg-neutral-500"} h-full`} style={{ width: `${(Math.abs(v) / total) * 100}%` }} />
+                     </Tooltip>
+                   );
+                })}
+              </div>
+            )}
         </div>
       </motion.div>
 
@@ -409,22 +468,28 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
 });
 
 function DecryptText({ text }: { text: string }) {
-  const [display, setDisplay] = useState(text);
+  const ref = useRef<HTMLSpanElement>(null);
+  
   useEffect(() => {
-    if (!text) return;
+    if (!text || !ref.current) return;
     const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*";
     let iteration = 0;
     const interval = setInterval(() => {
-      setDisplay(() => text.split("").map((_, index) => {
+      if (!ref.current) return;
+      ref.current.innerText = text.split("").map((_, index) => {
         if(index < iteration) return text[index];
         return chars[Math.floor(Math.random() * chars.length)];
-      }).join(""));
-      if(iteration >= text.length) clearInterval(interval);
+      }).join("");
+      if(iteration >= text.length) {
+        clearInterval(interval);
+        if (ref.current) ref.current.innerText = text;
+      }
       iteration += 1 / 2;
     }, 20);
     return () => clearInterval(interval);
   }, [text]);
-  return <>{display}</>;
+  
+  return <span ref={ref}>{text}</span>;
 }
 
 function TerminalStat({ label, value, xl, color }: { label: string; value: React.ReactNode; xl?: boolean; color?: string }) {

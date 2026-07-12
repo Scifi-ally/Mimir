@@ -374,13 +374,11 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
 
     // Always fit content on data load/update so X-axis doesn't squish or extend infinitely
     if (lastFitKey.current !== loadedChartKey && loadedChartKey === currentChartKey && candles.length > 0) {
-      setTimeout(() => {
-        const timeScale = chartRef.current?.timeScale();
-        if (timeScale) {
-          timeScale.fitContent();
-        }
-        lastFitKey.current = currentChartKey;
-      }, 180);
+      const timeScale = chartRef.current?.timeScale();
+      if (timeScale) {
+        timeScale.fitContent();
+      }
+      lastFitKey.current = currentChartKey;
     }
   }, [candles, currentChartKey, loadedChartKey]);
 

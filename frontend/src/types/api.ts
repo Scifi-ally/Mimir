@@ -33,6 +33,7 @@ export interface WatchlistItem {
   suggestionLabel?: string;
   signalGenerated?: boolean;
   compositeScore?: number;
+  components?: Record<string, number>;
   signalTags?: string[];
 }
 
@@ -48,12 +49,23 @@ export interface Watchlist {
 
 // Suggestion exported above
 
+export interface DivergenceResult {
+  fiiNet5d: number;
+  diiNet5d: number;
+  totalFlow5d: number;
+  niftyReturn5d: number;
+  isDiverging: boolean;
+  divergenceType: "BULLISH" | "BEARISH" | "NONE";
+  penaltyOrBoost: number;
+}
+
 export interface DashboardIndices {
   nifty50: IndexQuote;
   sensex: IndexQuote;
   bankNifty: IndexQuote;
   finnifty: IndexQuote;
   indiaVix: IndexQuote;
+  fiiDiiDivergence?: DivergenceResult | null;
   fetchedAt: string;
 }
 
@@ -129,6 +141,7 @@ export interface SymbolForecast {
     q90?: number[];
   };
   compositeScore?: number;
+  components?: Record<string, number>;
   lastClose?: number | null;
   error?: string;
 }
@@ -163,6 +176,7 @@ export interface SymbolInsights {
   monitoring: MonitoredStock | null;
   ai: {
     compositeScore: number;
+    components?: Record<string, number>;
     trend: string;
     forecastReturnPct: number;
     technicalPatterns: string[];

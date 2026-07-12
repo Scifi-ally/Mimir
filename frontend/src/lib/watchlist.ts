@@ -11,6 +11,7 @@ export interface StockRow {
   suggestion: string;
   signalGenerated?: boolean;
   compositeScore?: number;
+  components?: Record<string, number>;
   signalTags?: string[];
   activeSignalDirection?: "BUY" | "SELL" | null;
 }
@@ -72,6 +73,7 @@ export function buildStockRows(
       suggestion: item.suggestionLabel || "HOLD",
       signalGenerated: item.signalGenerated || mon?.signalGenerated,
       compositeScore: item.compositeScore,
+      components: item.components,
       signalTags: item.signalTags,
       activeSignalDirection,
     };

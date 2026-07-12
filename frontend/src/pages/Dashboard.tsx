@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, startTransition, lazy, Suspense } from "react";
+import { useEffect, useMemo, useState, startTransition, lazy, Suspense, useRef } from "react";
 import { useHotkeys } from "react-hotkeys-hook";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
@@ -45,6 +45,9 @@ export default function Dashboard() {
   const indianContextQuery = useQuery({ queryKey: ["indian-context"], queryFn: api.indianContext, refetchInterval: 60000 });
   const scanning = scanState.scanning || Boolean(sessionQuery.data?.scanRunning);
   const scanLogs = useStore((s) => s.scanLogs);
+  const activeSymbols = useMemo(() => {
+    return new Set((suggestionsQuery.data ?? []).filter(s => s.status === "ACTIVE").map(s => s.symbol));
+  }, [suggestionsQuery.data]);
 
   const watchlistItems = useMemo(() => {
     if (scanning) {
@@ -57,14 +60,12 @@ export default function Dashboard() {
       }));
     }
     const items = flattenWatchlist(watchlistQuery.data);
-    const suggestionsData = suggestionsQuery.data ?? [];
-    const activeSymbols = new Set(suggestionsData.filter(s => s.status === "ACTIVE").map(s => s.symbol));
     return items.sort((a, b) => {
       const aActive = activeSymbols.has(a.symbol) ? 1 : 0;
       const bActive = activeSymbols.has(b.symbol) ? 1 : 0;
       return bActive - aActive;
     });
-  }, [watchlistQuery.data, scanning, scanLogs, suggestionsQuery.data]);
+  }, [watchlistQuery.data, scanning, scanLogs, activeSymbols]);
 
   const watchlistSymbols = useMemo(() => {
     return watchlistItems.map(r => r.symbol);
@@ -72,11 +73,26 @@ export default function Dashboard() {
 
   const [debouncedSymbols, setDebouncedSymbols] = useState<string[]>(watchlistSymbols);
 
+  const lastUpdateRef = useRef(Date.now());
+  const handlerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
-    const handler = setTimeout(() => {
+    const now = Date.now();
+    // Use a throttle pattern so rapid updates don't completely stall the sparkline requests
+    if (now - lastUpdateRef.current > 2000) {
       setDebouncedSymbols(watchlistSymbols);
-    }, 1500);
-    return () => clearTimeout(handler);
+      lastUpdateRef.current = now;
+      if (handlerRef.current) clearTimeout(handlerRef.current);
+    } else {
+      if (handlerRef.current) clearTimeout(handlerRef.current);
+      handlerRef.current = setTimeout(() => {
+        setDebouncedSymbols(watchlistSymbols);
+        lastUpdateRef.current = Date.now();
+      }, 1500);
+    }
+    return () => {
+      if (handlerRef.current) clearTimeout(handlerRef.current);
+    };
   }, [watchlistSymbols]);
 
   const sparklinesQuery = useQuery({
@@ -112,12 +128,7 @@ export default function Dashboard() {
     }
   }, [watchlistSymbols, wsConnected]);
 
-  // Clear stale selection if watchlist is empty, allowing indices to persist
-  useEffect(() => {
-    if (watchlistItems.length === 0 && selectedSymbol && !isIndex && !watchlistQuery.isPending) {
-      startTransition(() => setSelectedSymbol(""));
-    }
-  }, [watchlistItems.length, selectedSymbol, isIndex, setSelectedSymbol, watchlistQuery.isPending]);
+  // Removed the stale selection clear block so users can keep custom command-palette selections even when the watchlist is empty.
 
   // Auto-select the first candidate found during a fresh live scan
   useEffect(() => {

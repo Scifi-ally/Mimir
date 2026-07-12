@@ -168,6 +168,19 @@ export const TopBar = memo(function TopBar({
 
         <div className="flex shrink-0 items-center gap-4">
           <div className="flex shrink-0 items-center gap-3 text-[11px] text-foreground/70">
+            {indices?.fiiDiiDivergence && indices.fiiDiiDivergence.isDiverging && (
+              <span 
+                className={cn(
+                  "px-2 py-0.5 rounded-full font-bold uppercase tracking-wider text-[9px] border",
+                  indices.fiiDiiDivergence.divergenceType === "BULLISH" 
+                    ? "bg-bull/10 text-bull border-bull/20" 
+                    : "bg-bear/10 text-bear border-bear/20"
+                )}
+                title={`5D Net Flow: ₹${Math.round(indices.fiiDiiDivergence.totalFlow5d)}Cr | Nifty: ${indices.fiiDiiDivergence.niftyReturn5d.toFixed(1)}%`}
+              >
+                {indices.fiiDiiDivergence.divergenceType === "BULLISH" ? "Inst. Buy Divergence" : "Inst. Sell Divergence"}
+              </span>
+            )}
             <span className="truncate">
               <span className="hidden sm:inline">{watchlistDate}</span>
             </span>
