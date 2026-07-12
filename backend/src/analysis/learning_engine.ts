@@ -239,7 +239,7 @@ async function analyzeConfidence(): Promise<void> {
       id: suggestionsTable.id,
       status: suggestionsTable.status,
       pnlInr: suggestionsTable.pnlInr,
-      reasoning: suggestionsTable.reasoning,
+      confidence: suggestionsTable.confidence,
     })
     .from(suggestionsTable)
     .where(sql`status IN ('TARGET_1_HIT', 'TARGET_2_HIT', 'STOP_HIT', 'EXPIRED')`);
@@ -252,11 +252,9 @@ async function analyzeConfidence(): Promise<void> {
   };
 
   for (const trade of results) {
-    // Extract confidence from reasoning string, e.g. [CF:82.4|...]
-    const match = trade.reasoning?.match(/CF:([0-9.]+)/);
-    if (!match) continue;
+    if (trade.confidence == null) continue;
 
-    const cf = parseFloat(match[1]!);
+    const cf = trade.confidence;
     let range = "Below 70 (Low)";
     if (cf >= 90) range = "90-100 (Elite)";
     else if (cf >= 80) range = "80-89 (High)";

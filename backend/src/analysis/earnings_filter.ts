@@ -10,7 +10,8 @@
  */
 
 import { logger } from "../lib/logger";
-
+import { db } from "../../db/src";
+import { fundamentalSnapshotsTable } from "../../db/src/schema/fundamentals";
 // ── In-memory cache to avoid re-fetching the same symbol within a session ────
 
 interface EarningsCache {
@@ -88,6 +89,17 @@ export async function getNextEarningsDate(
     earningsCache.set(symbol, { earningsDate, fetchedAt: Date.now() });
 
     if (earningsDate) {
+      try {
+        await db.insert(fundamentalSnapshotsTable).values({
+          symbol,
+          fieldName: "earningsDate",
+          textValue: earningsDate.toISOString(),
+          filedDate: new Date(), // Known as of now
+        });
+      } catch (dbErr) {
+        logger.error({ err: dbErr, symbol }, "Failed to save fundamental snapshot for earnings");
+      }
+
       logger.debug(
         { symbol, earningsDate: earningsDate.toISOString() },
         "Fetched next earnings date",

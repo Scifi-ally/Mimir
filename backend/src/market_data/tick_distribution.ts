@@ -45,6 +45,8 @@ export interface DiagnosticsTelemetry {
 class TickDistributionServer {
   // O(1) Symbol lookup cache
   private tickCache = new Map<string, NormalizedTick>();
+  private historyCache = new Map<string, NormalizedTick[]>();
+  private readonly MAX_HISTORY_MS = 5 * 60 * 1000; // 5 mins
   
   // Pre-allocated array for UI streaming (MAX 5000 pending ticks per flush)
   private batchPool: unknown[] = new Array(5000);
@@ -139,8 +141,23 @@ class TickDistributionServer {
         ask: rawTick.ask ?? ltp,
         volume: rawTick.volume ?? 0,
         timestamp: tickTime,
+        sequence: rawTick.sequence,
       };
       this.tickCache.set(rawTick.symbol, normalized);
+      
+      let hist = this.historyCache.get(rawTick.symbol);
+      if (!hist) {
+        hist = [];
+        this.historyCache.set(rawTick.symbol, hist);
+      }
+      hist.push({ ...normalized });
+      
+      const cutoff = tickTime - this.MAX_HISTORY_MS;
+      let shiftCount = 0;
+      while (shiftCount < hist.length && hist[shiftCount].timestamp < cutoff) {
+        shiftCount++;
+      }
+      if (shiftCount > 0) hist.splice(0, shiftCount);
     }
 
     normalized.ltp = Math.round(ltp * 100) / 100;
@@ -238,6 +255,9 @@ class TickDistributionServer {
       batchQueueSize: this.pendingUISymbols.size,
       lastFlushDurationMs: this.lastFlushDuration,
     };
+  }
+  public getTickHistory(symbol: string): NormalizedTick[] {
+    return this.historyCache.get(symbol) || [];
   }
 }
 

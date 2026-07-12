@@ -3,6 +3,8 @@ import xml.etree.ElementTree as ET
 import logging
 from typing import List, Dict, Optional
 import httpx
+import os
+import datetime
 
 logger = logging.getLogger("ai_service.sentiment")
 
@@ -122,6 +124,35 @@ async def analyze_sentiment(symbol: str) -> Dict[str, float]:
     composite = (symbol_specific_score * SYMBOL_SPECIFIC_WEIGHT) + \
                 (market_wide_score * MARKET_WIDE_WEIGHT) + \
                 (world_score * WORLD_POLITICS_WEIGHT)
+
+    # Save to PIT database in a background thread
+    def save_to_db():
+        db_url = os.getenv("DATABASE_URL")
+        if not db_url:
+            return
+        try:
+            import psycopg2
+            conn = psycopg2.connect(db_url)
+            cur = conn.cursor()
+            now = datetime.datetime.now()
+            
+            cur.execute("""
+                INSERT INTO fundamental_snapshots (symbol, field_name, value, filed_date, fetched_at)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (symbol, 'sentiment_composite', composite, now, now))
+            
+            cur.execute("""
+                INSERT INTO fundamental_snapshots (symbol, field_name, value, filed_date, fetched_at)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (symbol, 'sentiment_symbol', symbol_specific_score, now, now))
+            
+            conn.commit()
+            cur.close()
+            conn.close()
+        except Exception as e:
+            logger.error(f"Failed to save sentiment snapshot: {e}")
+
+    asyncio.create_task(asyncio.to_thread(save_to_db))
 
     return {
         "symbol_specific_score": symbol_specific_score,

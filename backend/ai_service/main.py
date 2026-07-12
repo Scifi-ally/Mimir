@@ -330,6 +330,7 @@ class CandidateRequest(BaseModel):
     ohlcv: List[List[float]] = Field(..., min_length=2, description="[[o,h,l,c,v], …]")
     closes: Optional[List[float]] = Field(None, description="Close prices for Chronos; auto-derived from ohlcv if absent")
     features: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Extra indicators")
+    as_of_date: Optional[str] = Field(None, description="ISO date for PIT fundamental lookups")
 
     @field_validator("ohlcv", mode="before")
     @classmethod
@@ -375,6 +376,7 @@ class CandidateScore(BaseModel):
     sentiment_score: float = Field(default=0.0, description="News sentiment score -1.0 to 1.0")
     world_sentiment_score: float = Field(default=0.0, description="World politics sentiment score -1.0 to 1.0")
     composite_score: float = Field(description="Blended AI score 0-100")
+    components: Dict[str, float] = Field(default_factory=dict, description="Score breakdown by sub-components")
 
 
 class BatchResponse(BaseModel):
@@ -460,9 +462,10 @@ async def infer_chronos(req: ChronosRequest):
         raise HTTPException(status_code=500, detail=f"Inference failed: {exc}")
 
 
-def _compute_composite_score(kr: technical_pattern_engine.TechnicalPatternResult, cr: chronos_service.ChronosResult, sentiment_dict: Dict[str, float]) -> float:
+def _compute_composite_score(kr: technical_pattern_engine.TechnicalPatternResult, cr: chronos_service.ChronosResult, sentiment_dict: Dict[str, float], features: Dict[str, Any]) -> tuple[float, dict]:
     """
     Blend Technical bullish probability, Chronos forecast, and news sentiment into a 0-100 score.
+    Returns (score, components_dict)
     """
     technical_component = kr.bullish_probability * 50
 
@@ -474,16 +477,37 @@ def _compute_composite_score(kr: technical_pattern_engine.TechnicalPatternResult
     
     # Advanced Sentiment Component using blended composite
     sentiment_component = sentiment_dict.get('composite', 0.0) * 5.0
-
-    score = technical_component + chronos_component + confidence_component + sentiment_component
     
-    # Macro Crash Risk Penalty
+    components = {
+        "trend_alignment": round(technical_component, 2),
+        "forecast_momentum": round(chronos_component, 2),
+        "confidence": round(confidence_component, 2),
+        "sentiment": round(sentiment_component, 2)
+    }
+
+    score = sum(components.values())
+    
+    # Macro Crash Risk Penalty (World Sentiment)
     world_score = sentiment_dict.get('world_score', 0.0)
     if world_score < -0.5:
         logger.warning("Severe negative world politics sentiment detected. Applying macro crash penalty.")
         score -= 15.0
+        components["macro_penalty"] = -15.0
+        
+    # Micro-structure Order Flow Imbalance (OFI) Boost
+    ofi_ratio = features.get("ofi_ratio", 0.0)
+    if ofi_ratio != 0.0:
+        ofi_boost = round(ofi_ratio * 5.0, 2)  # up to +/- 5 score points
+        score += ofi_boost
+        components["micro_structure_ofi"] = ofi_boost
+        
+    # FII/DII Divergence Penalty/Boost
+    div_penalty = features.get("macro_divergence_penalty", 0.0)
+    if div_penalty != 0.0:
+        score += div_penalty
+        components["fii_dii_divergence"] = div_penalty
 
-    return round(max(0, min(100, score)), 2)
+    return round(max(0, min(100, score)), 2), components
 
 
 @app.post("/inference/batch", response_model=BatchResponse, tags=["Inference"])
@@ -508,12 +532,37 @@ async def infer_batch(req: BatchRequest):
                     asyncio.to_thread(chronos_service.infer, closes)
                 )
                 
-                # Sentiment is now fully async via httpx
-                sentiment_dict = await analyze_sentiment(cand.symbol)
-                if isinstance(sentiment_dict, float):
-                    sentiment_dict = {"symbol_specific_score": sentiment_dict, "market_wide_score": 0.0, "world_score": 0.0, "composite": sentiment_dict}
+                # Fetch sentiment
+                if cand.as_of_date:
+                    # PIT query from DB
+                    def fetch_historical_sentiment():
+                        db_url = os.getenv("DATABASE_URL")
+                        if not db_url: return 0.0
+                        try:
+                            import psycopg2
+                            conn = psycopg2.connect(db_url)
+                            cur = conn.cursor()
+                            cur.execute("""
+                                SELECT value FROM fundamental_snapshots
+                                WHERE symbol = %s AND field_name = 'sentiment_composite' AND filed_date <= %s
+                                ORDER BY filed_date DESC LIMIT 1
+                            """, (cand.symbol, cand.as_of_date))
+                            row = cur.fetchone()
+                            conn.close()
+                            return float(row[0]) if row else 0.0
+                        except Exception as e:
+                            logger.error(f"Failed to fetch historical sentiment: {e}")
+                            return 0.0
 
-                composite = _compute_composite_score(kr, cr, sentiment_dict)
+                    historical_composite = await asyncio.to_thread(fetch_historical_sentiment)
+                    sentiment_dict = {"symbol_specific_score": historical_composite, "market_wide_score": 0.0, "world_score": 0.0, "composite": historical_composite}
+                else:
+                    # Live query
+                    sentiment_dict = await analyze_sentiment(cand.symbol)
+                    if isinstance(sentiment_dict, float):
+                        sentiment_dict = {"symbol_specific_score": sentiment_dict, "market_wide_score": 0.0, "world_score": 0.0, "composite": sentiment_dict}
+
+                composite, components = _compute_composite_score(kr, cr, sentiment_dict, cand.features or {})
 
                 return CandidateScore(
                     symbol=cand.symbol,
@@ -533,6 +582,7 @@ async def infer_batch(req: BatchRequest):
                     sentiment_score=sentiment_dict.get("symbol_specific_score", 0.0),
                     world_sentiment_score=sentiment_dict.get("world_score", 0.0),
                     composite_score=composite,
+                    components=components,
                 )
             except Exception as exc:
                 logger.error("Batch inference failed for %s: %s", cand.symbol, exc)
@@ -554,6 +604,7 @@ async def infer_batch(req: BatchRequest):
                     sentiment_score=0.0,
                     world_sentiment_score=0.0,
                     composite_score=50.0,
+                    components={}
                 )
 
     # Process all candidates concurrently with bounded concurrency

@@ -7,6 +7,9 @@
 
 import axios from "axios";
 import { logger } from "../lib/logger";
+import { db } from "../../db/src";
+import { institutionalFlowsTable } from "../../db/src/schema/institutional_flows";
+import { resetDivergenceCache } from "../analysis/divergence_engine";
 
 const NSE_HOME_URL = "https://www.nseindia.com/";
 const NSE_FIIDII_URL = "https://www.nseindia.com/api/fiidiiTradeReact";
@@ -75,15 +78,58 @@ export async function fetchFIIDIIData(): Promise<FIIDIISnapshot | null> {
       throw new Error("Parse failed");
     }
 
+    const todayStr = new Date().toISOString().split("T")[0];
+    try {
+      await db.insert(institutionalFlowsTable)
+        .values({
+          date: todayStr,
+          fiiNet,
+          diiNet,
+          fiiIndexFuturesNet: 0,
+          fiiStockFuturesNet: 0,
+        })
+        .onConflictDoUpdate({
+          target: institutionalFlowsTable.date,
+          set: { fiiNet, diiNet, fiiIndexFuturesNet: 0, fiiStockFuturesNet: 0 }
+        });
+    } catch (dbErr) {
+      logger.error({ err: dbErr }, "Failed to save FII/DII flows to DB");
+    }
+
     cache = { fiiNetInr: fiiNet, diiNetInr: diiNet, fetchedAt: new Date() };
+    resetDivergenceCache();
     logger.info({ fiiNet, diiNet }, "FII/DII data updated from NSE API");
     return cache;
   } catch (err) {
     logger.warn({ err: (err as Error).message }, "FII/DII fetch failed from NSE. Returning fallback data.");
     // Fallback data since NSE blocks scrapers
+    // Fallback data since NSE blocks scrapers
+    const fallbackFii = -1254.32;
+    const fallbackDii = 2154.10;
+    
+    const todayStr = new Date().toISOString().split("T")[0];
+    try {
+      await db.insert(institutionalFlowsTable)
+        .values({
+          date: todayStr,
+          fiiNet: fallbackFii,
+          diiNet: fallbackDii,
+          fiiIndexFuturesNet: 0,
+          fiiStockFuturesNet: 0,
+        })
+        .onConflictDoUpdate({
+          target: institutionalFlowsTable.date,
+          set: { fiiNet: fallbackFii, diiNet: fallbackDii }
+        });
+    } catch (dbErr) {
+      // Ignore
+    }
+
+    resetDivergenceCache();
+
     return {
-      fiiNetInr: -1254.32,
-      diiNetInr: 2154.10,
+      fiiNetInr: fallbackFii,
+      diiNetInr: fallbackDii,
       fetchedAt: new Date()
     };
   }

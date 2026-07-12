@@ -1,6 +1,8 @@
 import axios from "axios";
 import { logger } from "../lib/logger";
 import { getGlobalMacroState } from "./global_macro";
+import { getFiiDiiDivergence } from "./divergence_engine";
+import { computeOFI } from "./order_flow";
 import { fetchFIIDIIData } from "../market_data/fii_dii";
 import { fetchOptionChainData } from "../market_data/option_chain";
 import { buildSnapshot, computeMACD, type OHLCV } from "./technical";
@@ -31,6 +33,7 @@ export interface BatchResult {
   sentiment_score: number;
   world_sentiment_score?: number;
   composite_score: number;
+  components?: Record<string, number>;
 }
 
 export interface BatchResponse {
@@ -120,9 +123,19 @@ export async function batchInference(
 
   if (aiCircuitBreaker.canRequest()) {
     try {
+      const divergence = await getFiiDiiDivergence();
+      const enrichedCandidates = candidates.map((c) => ({
+        ...c,
+        features: {
+          ...(c.features || {}),
+          macro_divergence_penalty: divergence.penaltyOrBoost,
+          ofi_ratio: computeOFI(c.symbol).ofiRatio
+        }
+      }));
+
       const url = `${getAiServiceUrl()}/inference/batch`;
-      logger.debug({ url, candidates: candidates.length }, "Calling Python AI service for batch inference");
-      const response = await axios.post<BatchResponse>(url, { candidates }, { timeout: 15000 });
+      logger.debug({ url, candidates: enrichedCandidates.length }, "Calling Python AI service for batch inference");
+      const response = await axios.post<BatchResponse>(url, { candidates: enrichedCandidates }, { timeout: 15000 });
       
       if (response.data && Array.isArray(response.data.results)) {
         aiCircuitBreaker.recordSuccess();
