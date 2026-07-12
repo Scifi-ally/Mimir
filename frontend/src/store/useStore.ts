@@ -106,7 +106,6 @@ export const useStore = create<AppStore>()(
       name: "mimir-store",
       partialize: (state) => ({
         selectedSymbol: state.selectedSymbol,
-        scanLogs: state.scanLogs,
       }),
     }
   )

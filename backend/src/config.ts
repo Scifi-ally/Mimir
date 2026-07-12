@@ -161,7 +161,9 @@ function toDbUpdateValues(cfg: TradingConfig): Partial<typeof tradingConfigTable
   // eslint-disable-next-line @typescript-eslint/no-unused-vars, unused-imports/no-unused-vars
   const { id, ...values } = toDbValues(cfg);
   return values;
-}export async function initConfigFromDb(): Promise<TradingConfig> {
+}
+
+export async function initConfigFromDb(): Promise<TradingConfig> {
   try {
     const [row] = await db
       .select()

@@ -643,7 +643,6 @@ const htmlResponse = (title: string, message: string, isError = false) => {
           max-width: 440px;
           padding: 32px;
           display: flex;
-          flex-col;
           flex-direction: column;
           align-items: center;
           gap: 16px;
