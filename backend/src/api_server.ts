@@ -7,8 +7,7 @@ import { initWebSocketServer, broadcast } from "./ws/websocket_server";
 import { initConfigFromDb } from "./config";
 import { initAccessTokenFromDb } from "./upstox/auth";
 import { logSecurityMode } from "./lib/security";
-import Redis from "ioredis";
-import { defaultOptions } from "./lib/redis";
+import { createRedisClient } from "./lib/redis";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -46,9 +45,7 @@ try {
   logger.warn({ err }, "API Server: Startup state restore failed; continuing with defaults");
 }
 
-// Setup Redis subscriber client for process bridging
-const redisUrl = process.env["REDIS_URL"] || "redis://localhost:6379";
-const redisSub = new Redis(redisUrl, defaultOptions);
+const redisSub = createRedisClient("api_server_sub");
 
 redisSub.on("error", (err) => {
   logger.debug({ err }, "API Server Redis subscriber error");

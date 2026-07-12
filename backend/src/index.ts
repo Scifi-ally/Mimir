@@ -17,11 +17,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Global process-level crash guards to prevent automatic server shutdowns
 process.on("unhandledRejection", (reason, promise) => {
-  logger.error({ promise, reason }, "CRITICAL: Unhandled Promise Rejection detected in process");
+  logger.fatal({ promise, reason }, "CRITICAL: Unhandled Promise Rejection detected in process");
+  process.exit(1);
 });
 
 process.on("uncaughtException", (err) => {
-  logger.error({ err }, "CRITICAL: Uncaught Exception detected in process");
+  logger.fatal({ err }, "CRITICAL: Uncaught Exception detected in process");
+  process.exit(1);
 });
 
 dotenvConfig({ path: path.resolve(__dirname, "../.env.local"), override: true });
@@ -59,5 +61,5 @@ startMarketIntelligence().catch((err) => {
 
 server.listen(port, "0.0.0.0", () => {
   logger.info({ port }, "Server listening on 0.0.0.0");
-  logger.info("API server ready on :5000 — frontend served by nginx on :3000");
+  logger.info(`API server ready on :${port} — frontend served by nginx on :3000`);
 });

@@ -1,25 +1,9 @@
 import Redis from "ioredis";
 import { logger } from "./logger";
-import { defaultOptions } from "./redis";
-
-let redis: Redis | null = null;
-let disabled = false;
+import { redisClient } from "./redis";
 
 export function getRedisClient(): Redis | null {
-  if (disabled) return null;
-  if (redis) return redis;
-  const url = process.env["REDIS_URL"] || "redis://localhost:6379";
-  try {
-    redis = new Redis(url, defaultOptions);
-    redis.on("error", (err) => {
-      logger.debug({ err }, "Redis state client error");
-    });
-  } catch (err) {
-    logger.warn({ err }, "Failed to initialize Redis state client");
-    disabled = true;
-    return null;
-  }
-  return redis;
+  return redisClient;
 }
 
 export const stateStore = {

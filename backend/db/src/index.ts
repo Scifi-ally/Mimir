@@ -23,7 +23,7 @@ if (!process.env.DATABASE_URL) {
 
 export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  max: 100, // Increased to support heavy concurrency during bulk market scanning
+  max: 20, // Reduced from 100 to prevent exhausting connections (Issue #12)
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 60000, // 60s timeout to allow heavy bulk queries to queue during I/O spikes
 });
