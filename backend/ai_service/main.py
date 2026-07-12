@@ -517,7 +517,7 @@ async def infer_batch(req: BatchRequest):
 
                 return CandidateScore(
                     symbol=cand.symbol,
-                    technical_ranking=TechnicalRankingResponse(
+                    kronos=TechnicalRankingResponse(
                         bullish_probability=kr.bullish_probability,
                         confidence=kr.confidence,
                         detected_patterns=kr.detected_patterns,
@@ -538,7 +538,7 @@ async def infer_batch(req: BatchRequest):
                 logger.error("Batch inference failed for %s: %s", cand.symbol, exc)
                 return CandidateScore(
                     symbol=cand.symbol,
-                    technical_ranking=TechnicalRankingResponse(
+                    kronos=TechnicalRankingResponse(
                         bullish_probability=0.5,
                         confidence=0.0,
                         detected_patterns=[],

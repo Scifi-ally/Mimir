@@ -207,11 +207,11 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
     });
     volumeRef.current = chart.addSeries(HistogramSeries, {
       priceFormat: { type: "volume" },
-      priceScaleId: "",
+      priceScaleId: "vol",
       lastValueVisible: false,
       priceLineVisible: false,
     });
-    volumeRef.current.priceScale().applyOptions({ scaleMargins: { top: 0.7, bottom: 0 } });
+    chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.7, bottom: 0 } });
 
     const resize = new ResizeObserver(([entry]) => {
       if (entry && chartRef.current) {
@@ -289,8 +289,9 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
     return () => window.removeEventListener("themechange", handleThemeChange);
   }, []);
 
+  // 1. Candles Effect - Only runs when actual historical data changes
   useEffect(() => {
-    if (!candleRef.current || !medianRef.current || !upperRef.current || !lowerRef.current || !upper90Ref.current || !lower10Ref.current || !emaRef.current || !vwapRef.current || !volumeRef.current) return;
+    if (!candleRef.current || !emaRef.current || !vwapRef.current || !volumeRef.current) return;
 
     // Sanitize candles to ensure strictly increasing time
     const sortedCandles = [...candles].sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
@@ -303,7 +304,11 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
         lastTime = time;
       }
     }
-    liveBarRef.current = null;
+    
+    // Only reset liveBar if the latest candle from API has caught up or surpassed it
+    if (liveBarRef.current && (liveBarRef.current.time as number) <= lastTime) {
+      liveBarRef.current = null;
+    }
 
     const formatted = uniqueLiveCandles.map((c) => {
       const open = Number.isFinite(c.open) ? c.open : Number.isFinite(c.close) ? c.close : 0;
@@ -318,18 +323,38 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
         low: Math.min(open, close, rawHigh, rawLow),
       };
     });
-    const closes = uniqueLiveCandles.map((c) => ({
-      time: c.parsedTime,
-      value: Number.isFinite(c.close) ? c.close : 0,
+    
+    // If we have an active live bar that is newer than API data, preserve it in the chart!
+    if (liveBarRef.current && (liveBarRef.current.time as number) > lastTime) {
+      formatted.push(liveBarRef.current);
+    }
+
+    const closes = formatted.map((c) => ({
+      time: c.time,
+      value: c.close,
     }));
 
     candleRef.current.setData(formatted);
     emaRef.current.setData(calcEma(closes, 20));
-    vwapRef.current.setData(calcVwap(uniqueLiveCandles as Candle[]));
     
-    const volSma = calcEma(uniqueLiveCandles.map(c => ({ time: 0 as Time, value: Number.isFinite(c.volume) ? c.volume : 0 })), 20);
+    // For VWAP, we need Candle[] format, we can approximate the live bar for vwap calculation
+    const vwapCandles = [...uniqueLiveCandles];
+    if (liveBarRef.current && (liveBarRef.current.time as number) > lastTime) {
+      vwapCandles.push({
+        ts: new Date((liveBarRef.current.time as number) * 1000).toISOString(),
+        open: liveBarRef.current.open,
+        high: liveBarRef.current.high,
+        low: liveBarRef.current.low,
+        close: liveBarRef.current.close,
+        volume: 0, // Fallback volume
+        parsedTime: liveBarRef.current.time
+      } as any);
+    }
+    vwapRef.current.setData(calcVwap(vwapCandles as Candle[]));
+    
+    const volSma = calcEma(vwapCandles.map(c => ({ time: 0 as Time, value: Number.isFinite(c.volume) ? c.volume : 0 })), 20);
     volumeRef.current.setData(
-      uniqueLiveCandles.map((c, i) => {
+      vwapCandles.map((c, i) => {
         const isBull = c.close >= c.open;
         const safeVol = Number.isFinite(c.volume) ? c.volume : 0;
         const avgVol = volSma[i]?.value || safeVol;
@@ -340,13 +365,29 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
         else if (ratio < 0.5) opacity = 0.1;
 
         return {
-          time: c.parsedTime,
+          time: (c as any).parsedTime,
           value: safeVol,
           color: isBull ? `rgba(34,197,94,${opacity})` : `rgba(239,68,68,${opacity})`,
         };
       })
     );
 
+    // Always fit content on data load/update so X-axis doesn't squish or extend infinitely
+    if (lastFitKey.current !== loadedChartKey && loadedChartKey === currentChartKey && candles.length > 0) {
+      setTimeout(() => {
+        const timeScale = chartRef.current?.timeScale();
+        if (timeScale) {
+          timeScale.fitContent();
+        }
+        lastFitKey.current = currentChartKey;
+      }, 180);
+    }
+  }, [candles, currentChartKey, loadedChartKey]);
+
+  // 2. Forecast & Projection Effect
+  useEffect(() => {
+    if (!medianRef.current || !upperRef.current || !lowerRef.current || !upper90Ref.current || !lower10Ref.current) return;
+    
     const projection = buildForecastProjection(candles, forecast);
     const showProj = chartMode === "forecast" && projection.median.length > 0;
     
@@ -363,7 +404,12 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
       upper90Ref.current.setData([]);
       lower10Ref.current.setData([]);
     }
-    
+  }, [candles, forecast, chartMode]);
+
+  // 3. Price Lines Effect (Suggestion, Position, AI Target)
+  useEffect(() => {
+    if (!candleRef.current) return;
+
     // Clean up all existing price lines
     if (entryLineRef.current) candleRef.current.removePriceLine(entryLineRef.current);
     if (stopLineRef.current) candleRef.current.removePriceLine(stopLineRef.current);
@@ -372,6 +418,7 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
     if (posStopLineRef.current) candleRef.current.removePriceLine(posStopLineRef.current);
     if (posTargetLineRef.current) candleRef.current.removePriceLine(posTargetLineRef.current);
     if (aiTargetLineRef.current) candleRef.current.removePriceLine(aiTargetLineRef.current);
+    
     entryLineRef.current = null;
     stopLineRef.current = null;
     targetLineRef.current = null;
@@ -439,7 +486,7 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
     if (candles.length > 0) {
       const liveData = marketDataStore.get(symbol);
       const basePrice = liveData?.ltp || forecast?.lastClose || candles[candles.length - 1].close;
-      if (forecast && forecast.forecastReturnPct !== undefined) {
+      if (forecast && forecast.forecastReturnPct !== undefined && chartMode === "forecast") {
         const targetPrice = basePrice * (1 + (forecast.forecastReturnPct || 0) / 100);
         const fReturn = forecast.forecastReturnPct || 0;
         
@@ -453,6 +500,11 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
         });
       }
     }
+  }, [candles, suggestion, position, forecast, symbol, chartMode]);
+
+  // 4. Visibility & Chart Options Effect
+  useEffect(() => {
+    if (!emaRef.current || !vwapRef.current || !medianRef.current || !upperRef.current || !lowerRef.current || !upper90Ref.current || !lower10Ref.current) return;
 
     // Color median based on trend
     if (forecast?.trend === "bullish") {
@@ -463,32 +515,22 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
       medianRef.current.applyOptions({ color: "rgba(255, 255, 255, 0.9)" });
     }
 
+    const showProj = chartMode === "forecast" && forecast?.available;
+
     emaRef.current.applyOptions({ visible: showEma && chartMode === "actual" });
     vwapRef.current.applyOptions({ visible: showVwap && chartMode === "actual" });
-    medianRef.current.applyOptions({ visible: showProj });
-    upperRef.current.applyOptions({ visible: showProj });
-    lowerRef.current.applyOptions({ visible: showProj });
-    upper90Ref.current.applyOptions({ visible: showProj });
-    lower10Ref.current.applyOptions({ visible: showProj });
+    medianRef.current.applyOptions({ visible: Boolean(showProj) });
+    upperRef.current.applyOptions({ visible: Boolean(showProj) });
+    lowerRef.current.applyOptions({ visible: Boolean(showProj) });
+    upper90Ref.current.applyOptions({ visible: Boolean(showProj) });
+    lower10Ref.current.applyOptions({ visible: Boolean(showProj) });
     
     // Adjust boundaries dynamically based on mode
     chartRef.current?.timeScale().applyOptions({
       fixRightEdge: chartMode === "actual",
       rightOffset: chartMode === "actual" ? 0 : 20,
     });
-
-    // Always fit content on data load/update so X-axis doesn't squish or extend infinitely
-    if (lastFitKey.current !== loadedChartKey && loadedChartKey === currentChartKey && candles.length > 0) {
-      // Use a slightly longer timeout (180ms) so the loading overlay finishes fading out before fitContent animates left-to-right
-      setTimeout(() => {
-        const timeScale = chartRef.current?.timeScale();
-        if (timeScale) {
-          timeScale.fitContent();
-        }
-        lastFitKey.current = currentChartKey;
-      }, 180);
-    }
-  }, [candles, forecast, showEma, showVwap, chartMode, suggestion, position, currentChartKey, loadedChartKey]);
+  }, [showEma, showVwap, chartMode, forecast]);
 
   useEffect(() => {
     if (candles.length === 0 || !symbol) return;

@@ -173,9 +173,11 @@ describe("risk engine", async () => {
   it("rejects when aggregate deployed capital exceeds limit", async () => {
     // @ts-ignore
     config.maxDeployedCapitalPct = 50;
+    config.maxSameDirectionOpenPositions = 5;
+    config.maxSectorExposure = 5;
     risk.updateOpenPositions([
       { symbol: "TCS", sector: "IT", direction: "BUY", entryPrice: 3000, quantity: 10, maxRiskInr: 500 },
-      { symbol: "WIPRO", sector: "IT", direction: "BUY", entryPrice: 500, quantity: 20, maxRiskInr: 200 },
+      { symbol: "WIPRO", sector: "IT", direction: "BUY", entryPrice: 500, quantity: 40, maxRiskInr: 200 },
     ]);
     // Already deployed: 3000*10 + 500*20 = 40,000. Max at 50% = 50,000. New trade = 100*200 = 20,000. Total = 60,000 > 50,000
     const result = await risk.assessRisk(setup, snapshot, "IT", { symbol: "RELIANCE" } as never);

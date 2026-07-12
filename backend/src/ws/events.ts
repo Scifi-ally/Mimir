@@ -4,6 +4,7 @@
  */
 import { z } from "zod";
 import { Packr } from "msgpackr";
+import { logger } from "../lib/logger";
 
 export const packr = new Packr({
   useRecords: false,

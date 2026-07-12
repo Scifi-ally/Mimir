@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 import numpy as np
+import pandas as pd
+import ta
 
 logger = logging.getLogger("ai_service.technical_pattern_engine")
 
@@ -272,6 +274,46 @@ def _infer_engine(ohlcv: np.ndarray, features: Dict[str, Any]) -> TechnicalPatte
     # Boost confidence significantly if there's high volume confirmation
     if abs(vol_sig) > 0.15:
         confidence_accum += 0.20
+
+    # -------------------------------------------------------------
+    # Advanced Technical Indicators (ta)
+    # -------------------------------------------------------------
+    try:
+        df = pd.DataFrame(ohlcv, columns=['open', 'high', 'low', 'close', 'volume'])
+        if len(df) >= 20:
+            # 1. ADX (Trend Strength)
+            adx_ind = ta.trend.ADXIndicator(df['high'], df['low'], df['close'], window=14)
+            adx_val = adx_ind.adx().iloc[-1]
+            if not pd.isna(adx_val):
+                if adx_val > 25:
+                    confidence_accum += 0.05  # Strong trend
+                elif adx_val < 20:
+                    confidence_accum -= 0.05  # Choppy market
+                    bias *= 0.5  # Dampen heuristic bias in chop
+
+            # 2. Stochastic RSI (Momentum Extremes)
+            stoch_ind = ta.momentum.StochRSIIndicator(df['close'], window=14, smooth1=3, smooth2=3)
+            # ta library outputs 0-1, so multiply by 100 to match standard 0-100 scale
+            stoch_k = stoch_ind.stochrsi_k().iloc[-1] * 100
+            stoch_d = stoch_ind.stochrsi_d().iloc[-1] * 100
+            if not pd.isna(stoch_k) and not pd.isna(stoch_d):
+                if stoch_k < 20 and stoch_d < 20:
+                    bias += 0.15
+                    confidence_accum += 0.05
+                elif stoch_k > 80 and stoch_d > 80:
+                    bias -= 0.15
+                    confidence_accum += 0.05
+
+            # 3. ATR (Volatility check - dampens confidence in ultra-high volatility)
+            atr_ind = ta.volatility.AverageTrueRange(df['high'], df['low'], df['close'], window=14)
+            atr_val = atr_ind.average_true_range().iloc[-1]
+            if not pd.isna(atr_val) and atr_val > 0:
+                close_price = df['close'].iloc[-1]
+                atr_pct = atr_val / close_price
+                if atr_pct > 0.05:  # >5% candle moves = high risk/chop
+                    confidence_accum -= 0.10
+    except Exception as e:
+        logger.warning(f"Failed to compute advanced TA indicators: {e}")
 
     # RSI-like feature if provided
     rsi = features.get("rsi")

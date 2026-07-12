@@ -1,0 +1,1 @@
+﻿import { resolveSymbolInsightContext, findStockBySymbol } from './src/analysis/stock_scanner'; (async () => { const s = await findStockBySymbol('TCS'); const c = await resolveSymbolInsightContext(s, [], true); console.log('Length:', c?.candles?.length, 'Snapshot:', !!c?.snapshot); process.exit(0); })();

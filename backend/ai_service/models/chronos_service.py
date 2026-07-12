@@ -1,7 +1,7 @@
 """
 Chronos-Bolt wrapper — probabilistic time-series forecasting on close prices.
 
-Loads amazon/chronos-bolt-tiny from HuggingFace at startup.
+Loads amazon/chronos-bolt-small from HuggingFace at startup.
 If the model is unavailable, a momentum + mean-reversion fallback generates
 5-step probabilistic forecasts with synthetic quantiles.
 """
@@ -42,7 +42,7 @@ def load_model() -> None:
 
     try:
         started_at = time.time()
-        logger.info("Loading amazon/chronos-bolt-tiny …")
+        logger.info("Loading amazon/chronos-bolt-small …")
         import torch
         from chronos import BaseChronosPipeline
 
@@ -52,7 +52,7 @@ def load_model() -> None:
 
         torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
         _pipeline = BaseChronosPipeline.from_pretrained(
-            "amazon/chronos-bolt-tiny",
+            "amazon/chronos-bolt-small",
             device_map=device_map,
             torch_dtype=torch_dtype,
         )
@@ -60,7 +60,7 @@ def load_model() -> None:
         _model_loaded = True
         _healthy = True
         _model_load_time_ms = round((time.time() - started_at) * 1000, 2)
-        logger.info("Chronos-Bolt-Tiny loaded successfully.")
+        logger.info("Chronos-Bolt-Small loaded successfully.")
     except Exception as exc:
         _load_error = str(exc)
         _healthy = False
@@ -76,7 +76,7 @@ def is_loaded() -> bool:
 
 def get_status() -> Dict[str, Any]:
     return {
-        "model": "amazon/chronos-bolt-tiny",
+        "model": "amazon/chronos-bolt-small",
         "loaded": _model_loaded,
         "healthy": _healthy,
         "fallback_active": not _model_loaded,

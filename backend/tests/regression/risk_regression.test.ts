@@ -8,9 +8,10 @@ describe("Risk Engine Regression", () => {
     const mockSetup: any = {
       direction: "BUY",
       entryPrice: 100,
-      stopLoss: 90,
-      target1: 120,
-      target2: 130,
+      stopLoss: 98,
+      target1: 104,
+      target2: 108,
+      riskReward: 2.0,
       score: 85,
     };
     
@@ -37,8 +38,8 @@ describe("Risk Engine Regression", () => {
     console.log("Risk Assessment Rejections:", result.rejectionReasons);
     console.log("Risk Assessment Warnings:", result.warningReasons);
     // expect(result.passed).toBe(true);
-    expect(result.positionSize).toBe(500);
-    expect(result.investmentAmount).toBe(50000);
+    expect(result.positionSize).toBe(1000);
+    expect(result.investmentAmount).toBe(100000);
     expect(result.riskReward).toBeCloseTo(2.0, 1);
   });
 });

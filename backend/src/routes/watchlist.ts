@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { logger } from "../lib/logger";
 import { db } from "../../db/src";
 import { overnightWatchlistTable, suggestionsTable } from "../../db/src";
 import { desc, eq, inArray } from "drizzle-orm";
