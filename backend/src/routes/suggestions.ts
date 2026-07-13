@@ -131,8 +131,18 @@ router.get("/suggestions/history", async (req, res) => {
       db.select({ count: count() }).from(suggestionsTable).where(whereClause),
     ]);
 
+    const activeSymbols = rows
+      .filter((r) => r.status === "ACTIVE")
+      .map((r) => r.symbol);
+    
+    let prices: Record<string, number> = {};
+    if (activeSymbols.length > 0) {
+      const { fetchLTPForSymbols } = await import("../suggestions/generator");
+      prices = await fetchLTPForSymbols([...new Set(activeSymbols)]);
+    }
+
     res.json({
-      data: rows.map((row) => serializeSuggestion(row)),
+      data: rows.map((row) => serializeSuggestion(row, prices)),
       total: totalResult[0]?.count ?? 0,
       page,
       limit,

@@ -55,8 +55,6 @@ export function buildStockRows(
     const activeDir = activeSuggestionsMap.get(item.symbol);
     if (activeDir) {
       activeSignalDirection = activeDir;
-    } else if (item.suggestionLabel === "BUY" || item.suggestionLabel === "SELL") {
-      activeSignalDirection = item.suggestionLabel;
     }
 
     return {
