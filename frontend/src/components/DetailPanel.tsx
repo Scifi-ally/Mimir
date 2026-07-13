@@ -9,7 +9,7 @@ import { Sparkline } from "@/components/Sparkline";
 import { SupportResistancePanel } from "@/components/SupportResistancePanel";
 import { LivePrice } from "@/components/atoms/LivePrice";
 import { LiveChangePct } from "@/components/atoms/LiveChangePct";
-import { useSymbolData } from "@/providers/MarketDataProvider";
+import { useSymbolData, useSymbolDataSelector } from "@/providers/MarketDataProvider";
 import type { Suggestion, SessionState } from "@/types/api";
 
 interface DetailPanelProps {
@@ -19,7 +19,10 @@ interface DetailPanelProps {
 }
 
 export const DetailPanel = React.memo(function DetailPanel({ suggestions, selectedSymbol, session }: DetailPanelProps) {
-  const data = useSymbolData(selectedSymbol);
+  const ltp = useSymbolDataSelector(selectedSymbol, (d) => d.ltp);
+  const tech_edge = useSymbolDataSelector(selectedSymbol, (d) => d.tech_edge);
+  const regime_align = useSymbolDataSelector(selectedSymbol, (d) => d.regime_align);
+  const data = { ltp, tech_edge, regime_align };
   const [selectedMetric, setSelectedMetric] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 

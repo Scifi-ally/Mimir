@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState } from 'react';
-import { useSymbolData, marketDataStore } from '@/providers/MarketDataProvider';
+import { useSymbolDataSelector, marketDataStore } from '@/providers/MarketDataProvider';
 
 interface LiveChangePctProps {
   symbol: string;
@@ -9,7 +9,7 @@ interface LiveChangePctProps {
 }
 
 export const LiveChangePct = memo(({ symbol, className, decimals = 2, fallback }: LiveChangePctProps) => {
-  const { change_pct: changePct } = useSymbolData(symbol);
+  const changePct = useSymbolDataSelector(symbol, (d) => d.change_pct);
   const prevChange = useRef(changePct);
   const [flash, setFlash] = useState<'up' | 'down' | null>(null);
   
@@ -29,20 +29,25 @@ export const LiveChangePct = memo(({ symbol, className, decimals = 2, fallback }
   }, [symbol, changePct, fallback]);
   
   const displayChange = changePct ?? fallback;
-  const sign = (displayChange ?? 0) > 0 ? '+' : '';
-  const color = (displayChange ?? 0) > 0 ? '#22C55E' : (displayChange ?? 0) < 0 ? '#EF4444' : 'inherit';
 
+  if (displayChange == null) {
+    return <span className={`text-muted-foreground ${className || ''}`}>-</span>;
+  }
+
+  const isPositive = displayChange > 0;
+  const isNegative = displayChange < 0;
+  
   return (
     <span 
-      className={className}
-      style={{ 
-        color: flash ? (flash === 'up' ? '#22C55E' : '#EF4444') : color,
-        textShadow: flash === 'up' ? '0 0 12px rgba(34,197,94,0.6)' : flash === 'down' ? '0 0 12px rgba(239,68,68,0.6)' : 'none',
-        transition: flash ? 'none' : 'all 300ms ease-out'
-      }}
+      className={`transition-colors duration-200 ${
+        flash === 'up' ? 'text-green-400' :
+        flash === 'down' ? 'text-red-400' :
+        isPositive ? 'text-green-500' :
+        isNegative ? 'text-red-500' :
+        'text-muted-foreground'
+      } ${className || ''}`}
     >
-      {displayChange != null ? `${sign}${displayChange.toFixed(decimals)}%` : '—'}
+      {isPositive ? '+' : ''}{displayChange.toFixed(decimals)}%
     </span>
   );
 });
-LiveChangePct.displayName = 'LiveChangePct';

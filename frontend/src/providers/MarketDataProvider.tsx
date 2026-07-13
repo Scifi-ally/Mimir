@@ -205,13 +205,25 @@ class MarketDataStore {
 // Singleton — one instance for the entire app
 export const marketDataStore = new MarketDataStore();
 
-// React hook for components
+// React hook for components (gets whole object - CAUTION: causes re-renders on ANY field change)
 export function useSymbolData(symbol: string): SymbolData {
   const subscribe = useCallback(
     (cb: () => void) => marketDataStore.subscribe(symbol, cb),
     [symbol]
   );
   return useSyncExternalStore(subscribe, () => marketDataStore.get(symbol));
+}
+
+// Optimized React hook for selecting specific primitives to prevent massive re-renders
+export function useSymbolDataSelector<T>(symbol: string, selector: (data: SymbolData) => T): T {
+  const subscribe = useCallback(
+    (cb: () => void) => marketDataStore.subscribe(symbol, cb),
+    [symbol]
+  );
+  // useSyncExternalStore will only trigger a re-render if the returned value (snapshot) changes
+  // according to Object.is. This is perfect for primitive selectors like (d) => d.ltp
+  const getSnapshot = useCallback(() => selector(marketDataStore.get(symbol)), [symbol, selector]);
+  return useSyncExternalStore(subscribe, getSnapshot);
 }
 
 export function useMarketTelemetry(): MarketTelemetry {

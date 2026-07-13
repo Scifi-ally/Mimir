@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { calculateSRLevels } from "@/lib/technicalAnalysis";
-import { useSymbolData } from "@/providers/MarketDataProvider";
+import { useSymbolDataSelector } from "@/providers/MarketDataProvider";
 import { fmtNum, fmtPct } from "@/lib/format";
 import { Activity } from "lucide-react";
 import { cn } from "@/lib/format";
@@ -24,8 +24,7 @@ export const SupportResistancePanel = React.memo(function SupportResistancePanel
     refetchInterval: 5 * 60 * 1000, // refresh every 5 mins for new daily highs/lows
   });
 
-  const liveData = useSymbolData(selectedSymbol);
-  const currentPrice = liveData?.ltp || 0;
+  const currentPrice = useSymbolDataSelector(selectedSymbol, d => d.ltp) || 0;
 
   const baseLevels = useMemo(() => {
     if (!candlesQuery.data?.candles || candlesQuery.data.candles.length === 0) return null;

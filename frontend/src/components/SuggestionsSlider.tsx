@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { cn, fmtNum, calcPnLPct } from '@/lib/format';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import { useSymbolData } from '@/providers/MarketDataProvider';
+import { useSymbolDataSelector } from '@/providers/MarketDataProvider';
 
 type FilterTab = 'ALL' | 'ACTIVE' | 'COMPLETED';
 
@@ -309,8 +309,8 @@ function SuggestionCard({ s, onSelectSymbol, onClose }: {
   const isLoss = s.status === 'STOP_HIT';
   const isActive = s.status === 'ACTIVE';
   
-  const symbolData = useSymbolData(isActive ? s.symbol : '');
-  const currentPrice = isActive && symbolData.ltp ? symbolData.ltp : (s.currentPrice || s.outcomePrice);
+  const ltp = useSymbolDataSelector(isActive ? s.symbol : '', d => d.ltp);
+  const currentPrice = isActive && ltp ? ltp : (s.currentPrice || s.outcomePrice);
 
   const pnlRaw = calcPnLPct(currentPrice, s.entryPrice);
   const pnlFromCurrent = isActive && pnlRaw != null

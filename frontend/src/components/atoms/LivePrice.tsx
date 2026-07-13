@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef, useState } from 'react';
-import { useSymbolData, marketDataStore } from '@/providers/MarketDataProvider';
-import { fmtNum } from '@/lib/format';
+import { useSymbolDataSelector, marketDataStore } from '@/providers/MarketDataProvider';
+import { cn, fmtNum } from '@/lib/format';
 
 interface LivePriceProps {
   symbol: string;
@@ -10,7 +10,7 @@ interface LivePriceProps {
 }
 
 export const LivePrice = memo(({ symbol, className, decimals = 2, fallback }: LivePriceProps) => {
-  const { ltp } = useSymbolData(symbol);
+  const ltp = useSymbolDataSelector(symbol, (d) => d.ltp);
   const prevLtp = useRef(ltp);
   const [flash, setFlash] = useState<'up' | 'down' | null>(null);
   
@@ -31,17 +31,20 @@ export const LivePrice = memo(({ symbol, className, decimals = 2, fallback }: Li
   
   const displayPrice = ltp ?? fallback;
 
+  if (displayPrice == null) {
+    return <span className={cn("text-muted-foreground", className)}>-</span>;
+  }
+
   return (
     <span 
-      className={className}
-      style={{ 
-        color: flash === 'up' ? '#22C55E' : flash === 'down' ? '#EF4444' : 'inherit',
-        textShadow: flash === 'up' ? '0 0 12px rgba(34,197,94,0.6)' : flash === 'down' ? '0 0 12px rgba(239,68,68,0.6)' : 'none',
-        transition: flash ? 'none' : 'all 300ms ease-out'
-      }}
+      className={cn(
+        "transition-colors duration-75",
+        flash === 'up' && "text-green-500",
+        flash === 'down' && "text-red-500",
+        className
+      )}
     >
-      {fmtNum(displayPrice, decimals)}
+      ₹{fmtNum(displayPrice, decimals)}
     </span>
   );
 });
-LivePrice.displayName = 'LivePrice';

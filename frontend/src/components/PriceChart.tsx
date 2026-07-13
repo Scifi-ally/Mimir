@@ -569,7 +569,7 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
       // If now is in a new bar period beyond lastCandle, advance the timestamp so we append rather than corrupt historical bars
       let targetTime = lastCandleSec;
       if (nowSec - lastCandleSec >= intervalSec) {
-        targetTime = Math.floor(nowSec / intervalSec) * intervalSec;
+        targetTime = lastCandleSec + Math.floor((nowSec - lastCandleSec) / intervalSec) * intervalSec;
       }
       const time = targetTime as Time;
       const isOpenNewBar = targetTime > lastCandleSec;

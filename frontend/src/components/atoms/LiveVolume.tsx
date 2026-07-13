@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState } from 'react';
-import { useSymbolData } from '@/providers/MarketDataProvider';
+import { useSymbolDataSelector } from '@/providers/MarketDataProvider';
 
 interface LiveVolumeProps {
   symbol: string;
@@ -8,7 +8,7 @@ interface LiveVolumeProps {
 }
 
 export const LiveVolume = memo(({ symbol, className, fallback }: LiveVolumeProps) => {
-  const { volume } = useSymbolData(symbol);
+  const volume = useSymbolDataSelector(symbol, (d) => d.volume);
   const prevVolume = useRef(volume);
   const [flash, setFlash] = useState<'up' | null>(null);
   
@@ -23,17 +23,27 @@ export const LiveVolume = memo(({ symbol, className, fallback }: LiveVolumeProps
     prevVolume.current = volume;
   }, [volume]);
 
-  // Format volume (e.g., 1.2M, 500K)
-  const formatVolume = (vol: number) => {
-    if (vol >= 1000000) return (vol / 1000000).toFixed(1) + 'M';
-    if (vol >= 1000) return (vol / 1000).toFixed(1) + 'K';
-    return vol.toString();
+  const displayVolume = volume ?? fallback;
+
+  if (displayVolume == null) {
+    return <span className={`text-muted-foreground ${className || ''}`}>-</span>;
+  }
+
+  // Format volume (e.g. 1.5M, 200K)
+  const formatVol = (v: number) => {
+    if (v >= 10000000) return (v / 10000000).toFixed(2) + 'Cr';
+    if (v >= 100000) return (v / 100000).toFixed(2) + 'L';
+    if (v >= 1000) return (v / 1000).toFixed(1) + 'K';
+    return v.toString();
   };
 
   return (
-    <span className={`${className} ${flash === 'up' ? 'text-green-500' : ''}`}>
-      {volume != null ? formatVolume(volume) : (fallback ?? '—')}
+    <span 
+      className={`transition-colors duration-200 ${
+        flash === 'up' ? 'text-blue-400' : 'text-foreground'
+      } ${className || ''}`}
+    >
+      {formatVol(displayVolume)}
     </span>
   );
 });
-LiveVolume.displayName = 'LiveVolume';
