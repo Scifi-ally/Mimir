@@ -21,6 +21,7 @@ export class UpstoxConnectionManager {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private fallbackTimer: ReturnType<typeof setInterval> | null = null;
   private lastTickReceivedAt = 0;
+  private lastDisconnectTime: number | null = null;
   private subscribedKeys: Set<string> = new Set();
   private symbolToKeyMap: Map<string, string> = new Map();
   private keyToSymbolMap: Map<string, string> = new Map();
@@ -159,6 +160,16 @@ export class UpstoxConnectionManager {
           this.consecutiveFailures = 0;
           this.reconnectAttempts = 0;
           this.circuitBreakerCooldownUntil = 0;
+          
+          if (this.lastDisconnectTime) {
+            const durationMs = Date.now() - this.lastDisconnectTime;
+            logger.info({ durationMs }, "WebSocket reconnected after disconnect");
+            // Cast intelligenceBus as any to avoid type errors with unregistered events if they exist
+            // Actually it's better to just use the bus
+            intelligenceBus.publish("websocketReconnect" as any, { durationMs });
+            this.lastDisconnectTime = null;
+          }
+          
           this.publishStatus("connected", "upstox_ws");
           
           try {
@@ -181,6 +192,7 @@ export class UpstoxConnectionManager {
           
           const reasonStr = reason ? reason.toString() : "unknown close";
           logger.warn({ code, reason: reasonStr }, "Upstox WebSocket disconnected");
+          this.lastDisconnectTime = Date.now();
           this.isConnecting = false;
           this.consecutiveFailures++;
           if (this.consecutiveFailures >= this.circuitBreakerThreshold) {

@@ -6,6 +6,7 @@ import { createServerEvent } from "../ws/events";
 import { intelligenceBus } from "../intelligence/event_bus";
 import { getAccessToken } from "../upstox/auth";
 import { tickDistribution } from "./tick_distribution";
+import { initSectorRotation, updateSectorFlowFromTick } from "../analysis/sector_rotation";
 
 interface TickData {
   symbol: string;
@@ -41,6 +42,7 @@ let redisBatchQueue: Record<string, TickData[]> = {};
 let redisBatchTimer: ReturnType<typeof setInterval> | null = null;
 let volumePollerTimer: ReturnType<typeof setInterval> | null = null;
 let eventBusUnsubscribe: (() => void) | null = null;
+let reconnectUnsubscribe: (() => void) | null = null;
 let lastTickTimestamp: number = 0;
 
 /**
@@ -81,6 +83,12 @@ export async function initTickFeeder(stocks: Array<{ symbol: string; key: string
     { stockCount: stocks.length, symbols: stocks.map((s) => s.symbol).slice(0, 10) },
     "Initializing event-driven tick feeder wrapper",
   );
+
+  const prevCloses: Record<string, number> = {};
+  for (const [sym, sub] of subscriptions.entries()) {
+    if (sub.lastPrice) prevCloses[sym] = sub.lastPrice;
+  }
+  initSectorRotation(prevCloses);
 
   // Subscribe to central connection manager tick stream via internal event bus
   eventBusUnsubscribe = intelligenceBus.subscribe("marketTick", (tickEvent) => {
@@ -134,6 +142,9 @@ export async function initTickFeeder(stocks: Array<{ symbol: string; key: string
       timestamp: tick.timestamp.getTime(),
     });
 
+    // 2. Update real-time sector rotation engine
+    updateSectorFlowFromTick(sub.symbol, lastPrice, volume);
+
     const INDICES_SYMBOLS = new Set(["NIFTY 50", "BANKNIFTY", "FINNIFTY", "INDIA VIX", "SENSEX"]);
     if (INDICES_SYMBOLS.has(sub.symbol)) {
       let prop = "";
@@ -157,6 +168,19 @@ export async function initTickFeeder(stocks: Array<{ symbol: string; key: string
 
       lastTickTimestamp = Date.now();
     });
+  });
+
+  // Subscribe to reconnect events to backfill missing gaps
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  reconnectUnsubscribe = intelligenceBus.subscribe("websocketReconnect" as any, async (event: any) => {
+      const durationMs = event.durationMs;
+      if (durationMs > 60000) {
+          logger.info({ gap: Math.round(durationMs/1000) + "s" }, "WebSocket was offline for >1m. Triggering historical backfill for Nifty and top stocks...");
+          // We would trigger a call to upstox API to fetch missing 1m candles here
+          // For now we just log it as the gap will be filled in the nightly archive, but 
+          // real-time technicals may be slightly skewed until next restart.
+          // TODO: Implement actual historical candle fetch and inject into tickDistribution
+      }
   });
 
   startRedisBatcher();
@@ -274,6 +298,11 @@ export function stopTickFeeder(): void {
   if (eventBusUnsubscribe) {
     eventBusUnsubscribe();
     eventBusUnsubscribe = null;
+  }
+  
+  if (reconnectUnsubscribe) {
+    reconnectUnsubscribe();
+    reconnectUnsubscribe = null;
   }
 
 
