@@ -77,8 +77,8 @@ export function buildStockRows(
   // Sort rows so that active signals and watches appear at the top,
   // then sort by composite score descending.
   rows.sort((a, b) => {
-    const aSignal = a.suggestion !== "HOLD";
-    const bSignal = b.suggestion !== "HOLD";
+    const aSignal = a.activeSignalDirection != null;
+    const bSignal = b.activeSignalDirection != null;
     if (aSignal && !bSignal) return -1;
     if (!aSignal && bSignal) return 1;
     
