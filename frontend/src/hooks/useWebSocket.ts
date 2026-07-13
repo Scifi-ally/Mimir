@@ -54,12 +54,13 @@ export function useWebSocket() {
         void queryClient.invalidateQueries({ queryKey: key });
       }, 300);
     };
-    let isIntConnected = false;
     let isMdConnected = false;
     let lastMessageTimeInt = Date.now();
     let lastMessageTimeMd = Date.now();
 
-    const checkConnected = () => setWsConnected(isIntConnected && isMdConnected);
+    // The dashboard's "Live" indicator describes the price feed. Intelligence
+    // events may reconnect independently without making displayed ticks stale.
+    const checkConnected = () => setWsConnected(isMdConnected);
 
     const clearPing = () => {
       if (pingTimer != null) {
@@ -92,17 +93,18 @@ export function useWebSocket() {
       nextSocketInt.onopen = () => {
         if (cancelled) return;
         sendAuth(nextSocketInt);
-        isIntConnected = true;
         checkConnected();
         lastMessageTimeInt = Date.now();
         nextSocketInt.send(JSON.stringify({ event: "subscribe", data: { topic: "system" } }));
         nextSocketInt.send(JSON.stringify({ event: "subscribe", data: { topic: "suggestions" } }));
         nextSocketInt.send(JSON.stringify({ event: "subscribe", data: { topic: "alerts" } }));
+        void queryClient.invalidateQueries({ queryKey: ["scan-status"] });
+        void queryClient.invalidateQueries({ queryKey: ["monitoring"] });
+        void queryClient.invalidateQueries({ queryKey: ["suggestions"] });
       };
 
       const handleCloseInt = () => {
         if (cancelled) return;
-        isIntConnected = false;
         checkConnected();
         if (socketInt && socketInt.readyState !== WebSocket.CLOSED) socketInt.close();
 
@@ -142,6 +144,7 @@ export function useWebSocket() {
         }
         nextSocketMd.send(JSON.stringify({ event: "subscribe", data: { topic: "monitoring" } }));
         subscribeSymbol(nextSocketMd);
+        void queryClient.invalidateQueries({ queryKey: ["indices"] });
       };
 
       const handleCloseMd = () => {
@@ -206,7 +209,7 @@ export function useWebSocket() {
             break;
           case "scan_started":
             clearScanLogs();
-            setScanState({ scanning: true, current: 0, total: event.data.stocksToAnalyze });
+            setScanState({ scanning: true, phase: "running", current: 0, total: event.data.stocksToAnalyze, message: "Scanner started", updatedAt: Date.now() });
             break;
             case "scan_progress":
               if (event.data.currentStock && event.data.status) {
@@ -218,15 +221,30 @@ export function useWebSocket() {
               }
               setScanState({
                 scanning: true,
+                phase: "running",
                 current: event.data.current,
                 total: event.data.total,
                 currentStock: event.data.currentStock,
                 status: event.data.status,
                 reason: event.data.reason,
+                message: event.data.reason || event.data.status || "Scanning",
+                updatedAt: Date.now(),
               });
               break;
             case "scan_completed":
-              setScanState({ scanning: false });
+              {
+                const phase = event.data.outcome === "FAILED"
+                  ? "failed"
+                  : event.data.outcome === "STOPPED"
+                    ? "stopped"
+                    : "completed";
+                setScanState({
+                  scanning: false,
+                  phase,
+                  message: event.data.message || (phase === "completed" ? "Scan completed" : `Scan ${phase}`),
+                  updatedAt: Date.now(),
+                });
+              }
               debouncedInvalidate(["watchlist"]);
               debouncedInvalidate(["suggestions"]);
               debouncedInvalidate(["monitoring"]);

@@ -92,6 +92,15 @@ export interface ScanStatus {
   mode: string;
   lastScanMessage: string;
   lastScanStatus?: string;
+  scanSessionId?: string | null;
+  postMarket?: {
+    running: boolean;
+    totalStocks: number;
+    analyzedCount: number;
+    candidatesFound: number;
+    lastStatus: string;
+    lastMessage: string | null;
+  };
   offhours?: {
     running?: boolean;
     lastScanFinishedAt?: string | null;

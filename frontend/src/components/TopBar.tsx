@@ -151,7 +151,7 @@ export const TopBar = memo(function TopBar({
     <>
       <header 
         className={cn(
-          "sticky top-0 z-50 flex shrink-0 flex-col justify-center bg-background/90 backdrop-blur-md border-0 px-4 sm:px-6 py-2"
+          "sticky top-0 z-50 flex shrink-0 flex-col justify-center bg-background/50 backdrop-blur-2xl border-b border-white/5 shadow-sm px-4 sm:px-6 py-2"
         )}
       >
         <div className="flex flex-col w-full gap-2">

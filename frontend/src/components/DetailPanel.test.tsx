@@ -5,7 +5,11 @@ import { describe, it, expect, vi } from 'vitest';
 
 // Mock dependencies
 vi.mock('@/providers/MarketDataProvider', () => ({
-  useSymbolData: () => ({ ltp: 100, pc: -1, prevClose: 101, volume: 1000 })
+  useSymbolData: () => ({ ltp: 100, pc: -1, prevClose: 101, volume: 1000 }),
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  useSymbolDataSelector: (_symbol: string, selector: (data: any) => any) => {
+    return selector({ ltp: 100, pc: -1, prevClose: 101, volume: 1000, tech_edge: 0.5, regime_align: 0.8 });
+  }
 }));
 
 vi.mock('@/components/Sparkline', () => ({

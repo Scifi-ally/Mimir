@@ -10,6 +10,8 @@ export interface ScanLog {
   time: string;
 }
 
+export type ScanPhase = "idle" | "running" | "completed" | "failed" | "stopped";
+
 export type IslandConfig = {
   icon?: React.ReactNode;
   title: string;
@@ -31,8 +33,8 @@ interface AppStore {
   setSelectedSymbol: (symbol: string) => void;
   wsConnected: boolean;
   setWsConnected: (connected: boolean) => void;
-  scanState: ScanProgress & { scanning: boolean };
-  setScanState: (state: Partial<ScanProgress & { scanning: boolean }>) => void;
+  scanState: ScanProgress & { scanning: boolean; phase: ScanPhase; message?: string; updatedAt?: number };
+  setScanState: (state: Partial<ScanProgress & { scanning: boolean; phase: ScanPhase; message?: string; updatedAt?: number }>) => void;
   scanLogs: ScanLog[];
   addScanLog: (log: Omit<ScanLog, "id" | "time">) => void;
   clearScanLogs: () => void;
@@ -59,7 +61,7 @@ export const useStore = create<AppStore>()(
       setSelectedSymbol: (symbol) => set({ selectedSymbol: symbol }),
       wsConnected: false,
       setWsConnected: (connected) => set({ wsConnected: connected }),
-  scanState: { scanning: false, current: 0, total: 0 },
+  scanState: { scanning: false, current: 0, total: 0, phase: "idle" },
   setScanState: (partial) =>
     set((state) => ({
       scanState: { ...state.scanState, ...partial },

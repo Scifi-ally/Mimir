@@ -44,6 +44,8 @@ export const SuggestionSchema = z.object({
   marketRegime: z.string(),
   reasoning: z.string(),
   validityTill: z.string(),
+  expectedHoldMinutes: z.number().nullable().optional(),
+  expiresAt: z.string().nullable().optional(),
   status: z.string(),
   outcomePrice: z.number().nullable(),
   pnlInr: z.number().nullable(),

@@ -20,9 +20,10 @@ interface WatchlistStackProps {
   selectedSymbol: string;
   sparklines?: Record<string, number[]>;
   onSelect: (symbol: string) => void;
+  headerLeft?: React.ReactNode;
 }
 
-export function WatchlistStack({ items, monitored, suggestions, selectedSymbol, sparklines, onSelect }: WatchlistStackProps) {
+export function WatchlistStack({ items, monitored, suggestions, selectedSymbol, sparklines, onSelect, headerLeft }: WatchlistStackProps) {
   const watchlistCounts = useStore((s) => s.watchlistCounts);
   
   const rows = useMemo(
@@ -184,50 +185,46 @@ export function WatchlistStack({ items, monitored, suggestions, selectedSymbol, 
   return (
     <Card className="@container flex h-full min-h-0 flex-col border-0 bg-transparent">
       {rows.length > 0 && (
-        <CardHeader className="shrink-0 px-2 py-1">
-          <div className="flex flex-col gap-1">
-            {/* Category Tabs */}
-            <div className="flex overflow-x-auto whitespace-nowrap flex-nowrap gap-4 text-[10px] font-bold uppercase tracking-wider [&::-webkit-scrollbar]:hidden pb-1">
+        <CardHeader className="shrink-0 px-2 py-1 flex flex-row items-center justify-between gap-4">
+          {headerLeft}
+          <div className="flex overflow-x-auto whitespace-nowrap flex-nowrap gap-4 text-[10px] font-bold uppercase tracking-wider [&::-webkit-scrollbar]:hidden pb-1 justify-end w-full">
+            <button
+              type="button"
+              onClick={() => handleCategorySelect(null)}
+              className={cn(
+                "transition-all duration-300 relative group font-medium",
+                "@max-md:px-3 @max-md:py-1.5 @max-md:rounded-full",
+                selectedCategory === null 
+                  ? "@max-md:bg-foreground @max-md:text-background @min-md:text-foreground @min-md:border-foreground"
+                  : "@max-md:bg-secondary/40 @max-md:text-foreground/70 @min-md:text-foreground @min-md:border-transparent hover:@min-md:text-foreground/80 hover:@min-md:border-foreground/40",
+                "@min-md:px-0 @min-md:py-0 @min-md:border-b-2 @min-md:pb-0.5"
+              )}
+            >
+              All {watchlistCounts["ALL"] ?? rows.length}
+              {selectedCategory !== null && (
+                <span className="hidden @min-md:block absolute inset-x-0 -bottom-0.5 h-0.5 bg-foreground/30 rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
+              )}
+            </button>
+            {categories.map(([cat, n]) => (
               <button
+                key={cat}
                 type="button"
-                onClick={() => handleCategorySelect(null)}
+                onClick={() => handleCategorySelect(cat)}
                 className={cn(
                   "transition-all duration-300 relative group font-medium",
                   "@max-md:px-3 @max-md:py-1.5 @max-md:rounded-full",
-                  selectedCategory === null 
+                  selectedCategory === cat
                     ? "@max-md:bg-foreground @max-md:text-background @min-md:text-foreground @min-md:border-foreground"
-                    : "@max-md:bg-secondary/40 @max-md:text-foreground/70 @min-md:text-foreground/50 @min-md:border-transparent hover:@min-md:text-foreground/80 hover:@min-md:border-foreground/40",
+                    : "@max-md:bg-secondary/40 @max-md:text-foreground/70 @min-md:text-foreground/60 @min-md:border-transparent hover:@min-md:text-foreground/80 hover:@min-md:border-foreground/40",
                   "@min-md:px-0 @min-md:py-0 @min-md:border-b-2 @min-md:pb-0.5"
                 )}
               >
-                All {watchlistCounts["ALL"] ?? rows.length}
-                {selectedCategory !== null && (
+                {cat} {watchlistCounts[cat] ?? n}
+                {selectedCategory !== cat && (
                   <span className="hidden @min-md:block absolute inset-x-0 -bottom-0.5 h-0.5 bg-foreground/30 rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
                 )}
               </button>
-              {categories.map(([cat, n]) => (
-                <button
-                  key={cat}
-                  type="button"
-                  onClick={() => handleCategorySelect(cat)}
-                  className={cn(
-                    "transition-all duration-300 relative group font-medium",
-                    "@max-md:px-3 @max-md:py-1.5 @max-md:rounded-full",
-                    selectedCategory === cat
-                      ? "@max-md:bg-foreground @max-md:text-background @min-md:text-foreground @min-md:border-foreground"
-                      : "@max-md:bg-secondary/40 @max-md:text-foreground/70 @min-md:text-foreground/60 @min-md:border-transparent hover:@min-md:text-foreground/80 hover:@min-md:border-foreground/40",
-                    "@min-md:px-0 @min-md:py-0 @min-md:border-b-2 @min-md:pb-0.5"
-                  )}
-                >
-                  {cat} {watchlistCounts[cat] ?? n}
-                  {selectedCategory !== cat && (
-                    <span className="hidden @min-md:block absolute inset-x-0 -bottom-0.5 h-0.5 bg-foreground/30 rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
-                  )}
-                </button>
-              ))}
-            </div>
-
-
+            ))}
           </div>
         </CardHeader>
       )}

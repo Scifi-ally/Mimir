@@ -1,9 +1,10 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
 @import "@fontsource/geist-mono";
+@import "@fontsource/inter";
 
 @theme {
-  --font-sans: "Geist Mono", ui-monospace, monospace;
+  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, monospace;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -86,7 +87,6 @@
   * {
     @apply border-border;
     box-sizing: border-box;
-    font-family: "Geist Mono", monospace !important;
   }
   
   html,
@@ -428,5 +428,13 @@ html {
 }
 * {
   scrollbar-width: none;
-  -ms-overflow-style: none;
+}
+
+@layer utilities {
+  .glass-panel {
+    @apply bg-zinc-900/40 backdrop-blur-xl border border-white/5 shadow-2xl;
+  }
+  .light .glass-panel {
+    @apply bg-white/40 border-black/5 shadow-xl;
+  }
 }

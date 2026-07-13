@@ -325,6 +325,12 @@ function SuggestionCard({ s, onSelectSymbol, onClose }: {
     targetTimeStr = `${distanceToTargetPct.toFixed(2)}%`;
   }
 
+  const expectedHold = s.expectedHoldMinutes != null
+    ? s.expectedHoldMinutes >= 60
+      ? `~${Math.floor(s.expectedHoldMinutes / 60)}h ${s.expectedHoldMinutes % 60}m`
+      : `~${s.expectedHoldMinutes}m`
+    : null;
+
   return (
     <div
       onClick={() => {
@@ -374,6 +380,15 @@ function SuggestionCard({ s, onSelectSymbol, onClose }: {
               <span className="text-foreground/40 text-[10px] uppercase tracking-wider">GEN</span>
               <span className="font-mono font-medium text-foreground/80">{new Date(s.generatedAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
             </span>
+            {expectedHold && (
+              <>
+                <span className="text-border/40">â€¢</span>
+                <span className="flex items-center gap-1">
+                  <span className="text-foreground/40 text-[10px] uppercase tracking-wider">HOLD</span>
+                  <span className="font-mono font-medium text-foreground/80">{expectedHold}</span>
+                </span>
+              </>
+            )}
             {isActive && (
               <>
                 <span className="text-border/40">•</span>

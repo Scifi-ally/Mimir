@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState, startTransition, lazy, Suspense, useRef }
 import { useHotkeys } from "react-hotkeys-hook";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
-import { cn } from "@/lib/format";
 import { TopBar } from "@/components/TopBar";
 import { PriceChart } from "@/components/PriceChart";
 import { WatchlistStack } from "@/components/WatchlistStack";
@@ -50,7 +49,7 @@ export default function Dashboard() {
   const activeSymbols = useMemo(() => {
     const symbols = new Set<string>();
     (suggestionsQuery.data ?? []).filter(s => s.status === "ACTIVE").forEach(s => symbols.add(s.symbol));
-    (monitoringQuery.data?.monitoredStocks ?? []).filter(s => s.status === "ACTIVE").forEach(s => symbols.add(s.symbol));
+    (monitoringQuery.data?.monitoredStocks ?? []).forEach(s => symbols.add(s.symbol));
     return symbols;
   }, [suggestionsQuery.data, monitoringQuery.data]);
 
@@ -240,8 +239,13 @@ export default function Dashboard() {
   const apiError = authError || sessionQuery.error?.message || watchlistQuery.error?.message || null;
 
   return (
-    <div className="relative flex h-[100dvh] flex-col overflow-hidden bg-background text-foreground">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_var(--tw-gradient-stops))] from-accent/5 via-background to-background" />
+    <div className="relative flex h-[100dvh] flex-col overflow-hidden bg-background text-foreground font-sans">
+      {/* Sci-Fi Vibrant Orbs Background */}
+      <div className="pointer-events-none absolute inset-0 overflow-hidden">
+        <div className="absolute top-[-20%] left-[-10%] w-[50vw] h-[50vw] rounded-full bg-indigo-500/10 blur-[120px] mix-blend-screen animate-breathe" />
+        <div className="absolute top-[20%] right-[-10%] w-[40vw] h-[40vw] rounded-full bg-emerald-500/10 blur-[120px] mix-blend-screen animate-breathe" style={{ animationDelay: '2s' }} />
+        <div className="absolute bottom-[-20%] left-[20%] w-[60vw] h-[60vw] rounded-full bg-purple-500/5 blur-[120px] mix-blend-screen animate-breathe" style={{ animationDelay: '4s' }} />
+      </div>
       
       <div className="z-10 flex h-full flex-col overflow-hidden">
         <motion.div
@@ -285,7 +289,7 @@ export default function Dashboard() {
             {/* Left Column: Chart (Top) & Watchlist (Bottom) */}
             <div className="flex flex-col w-[65%] xl:w-[72%] min-w-0 h-full pr-2">
                   <motion.div 
-                    className="flex-[60] w-full min-h-0 min-w-0 pb-2"
+                    className="flex-[60] w-full min-h-0 min-w-0 glass-panel rounded-2xl mb-3 p-1 relative z-10"
                     initial={{ opacity: 0, y: 30, scale: 0.97, filter: "blur(10px)" }}
                     animate={{ opacity: 1, y: 0, scale: 1, filter: "blur(0px)" }}
                     transition={{ type: "spring", stiffness: 300, damping: 30, mass: 0.9, delay: 0.1 }}
@@ -302,38 +306,33 @@ export default function Dashboard() {
                   </motion.div>
                 
                   <motion.div 
-                    className="flex-[40] w-full min-h-0 min-w-0 pt-2 flex flex-col"
+                    className="flex-[40] w-full min-h-0 min-w-0 pt-3 px-2 glass-panel rounded-2xl flex flex-col relative z-10"
                     initial={{ opacity: 0, y: 30, scale: 0.97, filter: "blur(10px)" }}
                     animate={{ opacity: 1, y: 0, scale: 1, filter: "blur(0px)" }}
                     transition={{ type: "spring", stiffness: 300, damping: 30, mass: 0.9, delay: 0.18 }}
                   >
-                    <div className="flex items-center justify-start mb-2 shrink-0">
-                      <div className="flex items-center p-0.5 bg-foreground/5 rounded-full relative">
-                        <button
-                          type="button"
-                          onClick={() => setSidebarTab("watchlist")}
-                          className={cn("relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors", sidebarTab === "watchlist" ? "text-background" : "text-muted-foreground hover:text-foreground")}
-                        >
-                          {sidebarTab === "watchlist" && (
-                            <motion.div layoutId="desktopTabIndicator" className="absolute inset-0 bg-foreground rounded-full" transition={{ type: "spring", bounce: 0.2, duration: 0.6 }} />
-                          )}
-                          <span className="relative z-10">Watchlist</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setSidebarTab("screener")}
-                          className={cn("relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors", sidebarTab === "screener" ? "text-background" : "text-muted-foreground hover:text-foreground")}
-                        >
-                          {sidebarTab === "screener" && (
-                            <motion.div layoutId="desktopTabIndicator" className="absolute inset-0 bg-foreground rounded-full" transition={{ type: "spring", bounce: 0.2, duration: 0.6 }} />
-                          )}
-                          <span className="relative z-10">Screener</span>
-                        </button>
-                      </div>
-                    </div>
-                    <div className="flex-1 min-h-0 relative">
+                    <div className="flex-1 min-h-0 relative -mx-2">
                       {sidebarTab === "watchlist" ? (
                         <WatchlistStack 
+                          headerLeft={
+                            <div className="flex items-center p-0.5 bg-foreground/5 rounded-full relative border border-white/5 shadow-inner shrink-0 mr-4">
+                              <button
+                                type="button"
+                                onClick={() => setSidebarTab("watchlist")}
+                                className="relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors text-background"
+                              >
+                                <motion.div layoutId="desktopTabIndicator" className="absolute inset-0 bg-foreground rounded-full shadow-sm" transition={{ type: "spring", bounce: 0.2, duration: 0.6 }} />
+                                <span className="relative z-10">Watchlist</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setSidebarTab("screener")}
+                                className="relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors text-muted-foreground hover:text-foreground"
+                              >
+                                <span className="relative z-10">Screener</span>
+                              </button>
+                            </div>
+                          }
                           items={watchlistItems} 
                           monitored={monitoring?.monitoredStocks} 
                           suggestions={suggestions} 
@@ -343,6 +342,25 @@ export default function Dashboard() {
                         />
                       ) : (
                         <ScreenerTargetsStack 
+                          headerLeft={
+                            <div className="flex items-center p-0.5 bg-foreground/5 rounded-full relative border border-white/5 shadow-inner shrink-0 mr-4">
+                              <button
+                                type="button"
+                                onClick={() => setSidebarTab("watchlist")}
+                                className="relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors text-muted-foreground hover:text-foreground"
+                              >
+                                <span className="relative z-10">Watchlist</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setSidebarTab("screener")}
+                                className="relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors text-background"
+                              >
+                                <motion.div layoutId="desktopTabIndicator" className="absolute inset-0 bg-foreground rounded-full shadow-sm" transition={{ type: "spring", bounce: 0.2, duration: 0.6 }} />
+                                <span className="relative z-10">Screener</span>
+                              </button>
+                            </div>
+                          }
                           selectedSymbol={activeSymbol} 
                           sparklines={sparklinesQuery.data} 
                           onSelect={(s) => startTransition(() => setSelectedSymbol(s))} 
@@ -355,7 +373,7 @@ export default function Dashboard() {
             {/* Right Column: Detail Panel */}
             <div className="flex flex-col w-[35%] xl:w-[28%] min-w-0 h-full pl-2">
               <motion.div 
-                className="h-full w-full min-h-0 min-w-0"
+                className="h-full w-full min-h-0 min-w-0 glass-panel rounded-2xl relative z-10 overflow-hidden"
                 initial={{ opacity: 0, x: 20, filter: "blur(10px)" }}
                 animate={{ opacity: 1, x: 0, filter: "blur(0px)" }}
                 transition={{ type: "spring", stiffness: 300, damping: 30, mass: 0.9, delay: 0.25 }}
@@ -378,40 +396,58 @@ export default function Dashboard() {
                 onChartModeChange={(m) => startTransition(() => setChartMode(m))} 
                 isMarketOpen={session?.isMarketOpen} 
                 suggestion={suggestions.find(s => s.symbol === activeSymbol)} 
-                position={positions.find((p: import("@/types/api").PaperPosition) => p.symbol === activeSymbol && p.status === "OPEN")}
+                position={positions.find((p: import("@/types/api").PaperPosition) => p.symbol === activeSymbol && (p as any).status === "OPEN")}
                 isAuthenticated={status?.upstoxAuthenticated} 
               />
             </div>
             <div className="h-[400px] flex flex-col">
-              <div className="flex items-center justify-start mb-2 shrink-0 mx-2">
-                <div className="flex items-center p-0.5 bg-foreground/5 rounded-full relative">
-                  <button
-                    type="button"
-                    onClick={() => setSidebarTab("watchlist")}
-                    className={cn("relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors", sidebarTab === "watchlist" ? "text-background" : "text-muted-foreground hover:text-foreground")}
-                  >
-                    {sidebarTab === "watchlist" && (
-                      <motion.div layoutId="mobileTabIndicator" className="absolute inset-0 bg-foreground rounded-full" transition={{ type: "spring", bounce: 0.2, duration: 0.6 }} />
-                    )}
-                    <span className="relative z-10">Watchlist</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSidebarTab("screener")}
-                    className={cn("relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors", sidebarTab === "screener" ? "text-background" : "text-muted-foreground hover:text-foreground")}
-                  >
-                    {sidebarTab === "screener" && (
-                      <motion.div layoutId="mobileTabIndicator" className="absolute inset-0 bg-foreground rounded-full" transition={{ type: "spring", bounce: 0.2, duration: 0.6 }} />
-                    )}
-                    <span className="relative z-10">Screener</span>
-                  </button>
-                </div>
-              </div>
               <div className="flex-1 min-h-0 relative">
                 {sidebarTab === "watchlist" ? (
-                  <WatchlistStack items={watchlistItems} monitored={monitoring?.monitoredStocks} suggestions={suggestions} selectedSymbol={activeSymbol} sparklines={sparklinesQuery.data} onSelect={(s) => startTransition(() => setSelectedSymbol(s))} />
+                  <WatchlistStack 
+                    headerLeft={
+                      <div className="flex items-center p-0.5 bg-foreground/5 rounded-full relative shrink-0 mr-4">
+                        <button
+                          type="button"
+                          onClick={() => setSidebarTab("watchlist")}
+                          className="relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors text-background"
+                        >
+                          <motion.div layoutId="mobileTabIndicator" className="absolute inset-0 bg-foreground rounded-full" transition={{ type: "spring", bounce: 0.2, duration: 0.6 }} />
+                          <span className="relative z-10">Watchlist</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSidebarTab("screener")}
+                          className="relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors text-muted-foreground hover:text-foreground"
+                        >
+                          <span className="relative z-10">Screener</span>
+                        </button>
+                      </div>
+                    }
+                    items={watchlistItems} monitored={monitoring?.monitoredStocks} suggestions={suggestions} selectedSymbol={activeSymbol} sparklines={sparklinesQuery.data} onSelect={(s) => startTransition(() => setSelectedSymbol(s))} 
+                  />
                 ) : (
-                  <ScreenerTargetsStack selectedSymbol={activeSymbol} sparklines={sparklinesQuery.data} onSelect={(s) => startTransition(() => setSelectedSymbol(s))} />
+                  <ScreenerTargetsStack 
+                    headerLeft={
+                      <div className="flex items-center p-0.5 bg-foreground/5 rounded-full relative shrink-0 mr-4">
+                        <button
+                          type="button"
+                          onClick={() => setSidebarTab("watchlist")}
+                          className="relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors text-muted-foreground hover:text-foreground"
+                        >
+                          <span className="relative z-10">Watchlist</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSidebarTab("screener")}
+                          className="relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors text-background"
+                        >
+                          <motion.div layoutId="mobileTabIndicator" className="absolute inset-0 bg-foreground rounded-full" transition={{ type: "spring", bounce: 0.2, duration: 0.6 }} />
+                          <span className="relative z-10">Screener</span>
+                        </button>
+                      </div>
+                    }
+                    selectedSymbol={activeSymbol} sparklines={sparklinesQuery.data} onSelect={(s) => startTransition(() => setSelectedSymbol(s))} 
+                  />
                 )}
               </div>
             </div>

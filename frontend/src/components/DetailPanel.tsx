@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { Activity, CheckCircle, Flame, BarChart3, Cpu, ChevronLeft, Copy, Check } from "lucide-react";
+import { Activity, Flame, BarChart3, Cpu, ChevronLeft, Copy, Check } from "lucide-react";
 import { cn, fmtNum, fmtPct, calcPnLPct } from "@/lib/format";
 import { api } from "@/lib/api";
 import { Tooltip } from "@/components/mimir/tooltip";
@@ -9,7 +9,7 @@ import { Sparkline } from "@/components/Sparkline";
 import { SupportResistancePanel } from "@/components/SupportResistancePanel";
 import { LivePrice } from "@/components/atoms/LivePrice";
 import { LiveChangePct } from "@/components/atoms/LiveChangePct";
-import { useSymbolData, useSymbolDataSelector } from "@/providers/MarketDataProvider";
+import { useSymbolDataSelector } from "@/providers/MarketDataProvider";
 import type { Suggestion, SessionState } from "@/types/api";
 
 interface DetailPanelProps {

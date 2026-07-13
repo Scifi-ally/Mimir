@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from "react";
+import { useState, useMemo } from "react";
 import { api } from "@/lib/api";
 import { Wallet, Activity, History, RotateCcw, TrendingUp, TrendingDown, X, Shield } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -23,7 +23,7 @@ const staggerItem: Variants = {
   show: { opacity: 1, y: 0, scale: 1, filter: "blur(0px)", transition: { type: "spring", stiffness: 260, damping: 24, mass: 0.8 } }
 };
 
-import type { PaperAccount, PaperPosition } from "@/types/api";
+import type { PaperPosition } from "@/types/api";
 
 export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClose?: () => void }) {
   const [activeTab, setActiveTab] = useState<"positions" | "history">("positions");

@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, FileText, Calendar } from "lucide-react";
+import { X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { api } from "@/lib/api";
 
@@ -24,7 +24,7 @@ export function ReportsLibrary({ isOpen, onClose }: ReportsLibraryProps) {
     enabled: isOpen,
   });
 
-  const reports = reportsQuery.data ?? [];
+  const reports: DailyReport[] = reportsQuery.data ?? [];
 
   return (
     <AnimatePresence>
@@ -50,7 +50,6 @@ export function ReportsLibrary({ isOpen, onClose }: ReportsLibraryProps) {
             {/* Header */}
             <div className="relative px-8 pt-6 pb-4 flex flex-col sm:flex-row items-center justify-between shrink-0 border-b border-border/10">
               <h2 className="text-[10px] font-mono font-bold tracking-widest uppercase text-muted-foreground flex items-center gap-2">
-                <FileText className="w-3.5 h-3.5" />
                 Daily Reports
                 <span className="text-foreground/40 hidden sm:inline ml-2">— End of day market summaries</span>
               </h2>
@@ -88,7 +87,6 @@ export function ReportsLibrary({ isOpen, onClose }: ReportsLibraryProps) {
                       <div className="flex items-center gap-3 mb-6">
                         <div className="w-1 h-6 bg-primary rounded-full" />
                         <h3 className="font-mono font-bold text-lg text-foreground flex items-center gap-2">
-                          <Calendar className="w-4 h-4 text-primary" />
                           {report.date}
                         </h3>
                       </div>

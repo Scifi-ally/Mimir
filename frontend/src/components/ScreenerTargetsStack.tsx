@@ -14,6 +14,7 @@ interface ScreenerTargetsStackProps {
   selectedSymbol: string;
   sparklines?: Record<string, number[]>;
   onSelect: (symbol: string) => void;
+  headerLeft?: React.ReactNode;
 }
 
 type RuleNode = {
@@ -97,7 +98,7 @@ function splitBadges(notes?: string | null) {
   return notes.split(",").map((item) => item.trim()).filter(Boolean).slice(0, 3);
 }
 
-export function ScreenerTargetsStack({ selectedSymbol, sparklines, onSelect }: ScreenerTargetsStackProps) {
+export function ScreenerTargetsStack({ selectedSymbol, sparklines, onSelect, headerLeft }: ScreenerTargetsStackProps) {
   const queryClient = useQueryClient();
   const showIsland = useStore((s) => s.showIsland);
   const setCommandPaletteOpen = useStore((s) => s.setCommandPaletteOpen);
@@ -327,6 +328,7 @@ export function ScreenerTargetsStack({ selectedSymbol, sparklines, onSelect }: S
         <CardHeader className="shrink-0 p-3 pb-1">
           <div className="flex items-center gap-3 justify-between w-full">
             <div className="flex items-center gap-3">
+              {headerLeft}
               <button onClick={() => setActiveWatchlist(null)} className="p-1 hover:bg-secondary/20 rounded-full transition-colors text-muted-foreground hover:text-foreground">
                 <ArrowLeft className="h-4 w-4" />
               </button>
@@ -470,8 +472,7 @@ export function ScreenerTargetsStack({ selectedSymbol, sparklines, onSelect }: S
     );
   }
 
-  const totalCustomTargets = customWatchlists.reduce((total, watchlist) => total + (targetsByWatchlist[watchlist.id]?.length || 0), 0);
-  const activeRules = customWatchlists.filter((watchlist) => watchlist.status !== "PAUSED").length;
+  const totalCustomTargets = Object.values(targetsByWatchlist).reduce((acc: number, list: any) => acc + list.length, 0);
 
   if (customWatchlists.length === 0 && (!targetsByWatchlist.GLOBAL || targetsByWatchlist.GLOBAL.length === 0)) {
     return (
@@ -485,28 +486,25 @@ export function ScreenerTargetsStack({ selectedSymbol, sparklines, onSelect }: S
 
   return (
     <Card className="@container flex h-full min-h-0 flex-col border-0 bg-transparent">
-      <CardHeader className="shrink-0 px-3 pb-1 pt-2">
-        <div className="relative mb-2 flex items-start justify-between gap-3 px-1">
-          <div className="min-w-0">
-            <CardTitle className="text-lg font-extrabold tracking-tight text-foreground drop-shadow-sm dark:drop-shadow-md">
-              Custom Watchlists
-            </CardTitle>
-            <div className="mt-1 flex flex-wrap items-center gap-2 font-mono text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/80">
-              <span className="text-foreground/70">{customWatchlists.length} lists</span>
-              <span className="text-foreground/20">/</span>
-              <span className="text-foreground/70">{totalCustomTargets} symbols</span>
-              <span className="text-foreground/20">/</span>
-              <span className="text-primary/90">{activeRules} active</span>
-            </div>
-          </div>
+      <CardHeader className="shrink-0 px-2 py-1 flex flex-row items-center justify-between gap-4">
+        {headerLeft}
+        <div className="flex overflow-x-auto whitespace-nowrap flex-nowrap gap-4 text-[10px] font-bold uppercase tracking-wider [&::-webkit-scrollbar]:hidden pb-1 justify-end w-full">
+          <span className="text-foreground/70 self-center hidden @min-md:inline">
+            {customWatchlists.length} lists / {totalCustomTargets} sym
+          </span>
           <button
             type="button"
             onClick={() => setCommandPaletteOpen(true, "scan ")}
-            className="group relative flex shrink-0 items-center gap-1.5 overflow-hidden rounded-full bg-white/5 px-4 py-2 text-[11px] font-bold text-foreground transition-all hover:bg-white/10 hover:shadow-[0_0_20px_rgba(255,255,255,0.1)] hover:scale-105 active:scale-95"
+            className={cn(
+              "transition-all duration-300 relative group font-medium flex items-center gap-1",
+              "@max-md:px-3 @max-md:py-1.5 @max-md:rounded-full",
+              "@max-md:bg-foreground @max-md:text-background @min-md:text-foreground @min-md:border-foreground",
+              "@min-md:px-0 @min-md:py-0 @min-md:border-b-2 @min-md:pb-0.5"
+            )}
           >
-            <div className="absolute inset-0 bg-gradient-to-r from-primary/10 to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
-            <Plus className="relative h-3.5 w-3.5 text-primary" />
-            <span className="relative">New</span>
+            <Plus className="h-3.5 w-3.5" />
+            New Screener
+            <span className="hidden @min-md:block absolute inset-x-0 -bottom-0.5 h-0.5 bg-foreground/30 rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
           </button>
         </div>
       </CardHeader>

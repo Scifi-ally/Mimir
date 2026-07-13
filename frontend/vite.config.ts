@@ -15,7 +15,7 @@ export default defineConfig({
   },
   server: {
     port: 3000,
-    host: "127.0.0.1",
+    host: true,
     allowedHosts: true,
     proxy: {
       "/api": {
@@ -30,7 +30,7 @@ export default defineConfig({
   },
   preview: {
     port: 3000,
-    host: "127.0.0.1",
+    host: true,
     allowedHosts: true,
     proxy: {
       "/api": {

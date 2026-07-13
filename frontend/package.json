@@ -13,6 +13,7 @@
     "test:all": "playwright test"
   },
   "dependencies": {
+    "@fontsource/inter": "^5.2.8",
     "@tailwindcss/typography": "^0.5.20",
     "@tanstack/react-query": "^5.90.21",
     "@tanstack/react-virtual": "^3.14.3",
