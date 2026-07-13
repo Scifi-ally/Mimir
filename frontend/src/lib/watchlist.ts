@@ -57,9 +57,6 @@ export function buildStockRows(
       activeSignalDirection = activeDir;
     } else if (item.suggestionLabel === "BUY" || item.suggestionLabel === "SELL") {
       activeSignalDirection = item.suggestionLabel;
-    } else if ((item.signalGenerated || mon?.signalGenerated) && item.suggestionLabel !== "HOLD") {
-      if (item.category && item.category.toUpperCase().includes("SELL")) activeSignalDirection = "SELL";
-      else activeSignalDirection = "BUY";
     }
 
     return {
