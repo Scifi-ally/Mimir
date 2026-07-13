@@ -252,7 +252,7 @@ export default function Dashboard() {
             onAuthorize={authorizeUpstox}
             authorizing={authorizing}
             watchlistDate={undefined}
-            activeSignals={activeSymbols.size}
+            activeSignals={(suggestionsQuery.data ?? []).filter(s => s.status === "ACTIVE").length}
             scanning={scanning}
             scanProgress={scanState.total > 0 ? (scanState.current / scanState.total) * 100 : undefined}
             onOpenSuggestions={() => startTransition(() => setIsSuggestionsOpen(true))}
