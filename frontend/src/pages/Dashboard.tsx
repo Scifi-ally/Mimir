@@ -48,8 +48,11 @@ export default function Dashboard() {
   const scanning = scanState.scanning || Boolean(sessionQuery.data?.scanRunning);
   const scanLogs = useStore((s) => s.scanLogs);
   const activeSymbols = useMemo(() => {
-    return new Set((suggestionsQuery.data ?? []).filter(s => s.status === "ACTIVE").map(s => s.symbol));
-  }, [suggestionsQuery.data]);
+    const symbols = new Set<string>();
+    (suggestionsQuery.data ?? []).filter(s => s.status === "ACTIVE").forEach(s => symbols.add(s.symbol));
+    (monitoringQuery.data?.monitoredStocks ?? []).filter(s => s.status === "ACTIVE").forEach(s => symbols.add(s.symbol));
+    return symbols;
+  }, [suggestionsQuery.data, monitoringQuery.data]);
 
   const watchlistItems = useMemo(() => {
     if (scanning) {
@@ -253,7 +256,7 @@ export default function Dashboard() {
             onAuthorize={authorizeUpstox}
             authorizing={authorizing}
             watchlistDate={undefined}
-            activeSignals={(suggestionsQuery.data ?? []).filter(s => s.status === "ACTIVE").length}
+            activeSignals={activeSymbols.size}
             scanning={scanning}
             scanProgress={scanState.total > 0 ? (scanState.current / scanState.total) * 100 : undefined}
             onOpenSuggestions={() => startTransition(() => setIsSuggestionsOpen(true))}
@@ -427,7 +430,7 @@ export default function Dashboard() {
       </div>
       
       <Suspense fallback={null}>
-        <SuggestionsSlider isOpen={isSuggestionsOpen} onClose={() => startTransition(() => setIsSuggestionsOpen(false))} onSelectSymbol={(s) => startTransition(() => setSelectedSymbol(s))} />
+        <SuggestionsSlider isOpen={isSuggestionsOpen} onClose={() => startTransition(() => setIsSuggestionsOpen(false))} onSelectSymbol={(s) => startTransition(() => setSelectedSymbol(s))} activeSuggestions={suggestions} />
       </Suspense>
       <Suspense fallback={null}>
         <PaperTradingPanel isOpen={isPaperTradingOpen} onClose={() => startTransition(() => setIsPaperTradingOpen(false))} />

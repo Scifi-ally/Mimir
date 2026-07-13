@@ -281,12 +281,6 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
               <TerminalStat label="RISK/REWARD" value={`${fmtNum(selectedSignal.riskReward, 1)}x`} xl />
             </>
           )}
-
-          {monitoring?.signalGenerated && (
-             <div className="flex items-center gap-1.5 px-3 py-1 bg-bull/10 text-bull rounded text-xs font-black uppercase tracking-widest">
-               <CheckCircle className="h-3.5 w-3.5" /> Active
-             </div>
-          )}
         </motion.div>
 
         {/* ROW 3: Dense Technical Matrix (Checklist + AI Factors) */}

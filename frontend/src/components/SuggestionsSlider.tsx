@@ -45,7 +45,7 @@ function CopyButton({ text, tooltip, className }: { text: string; tooltip?: stri
   );
 }
 
-export function SuggestionsSlider({ isOpen, onClose, onSelectSymbol }: { isOpen: boolean; onClose: () => void; onSelectSymbol?: (symbol: string) => void }) {
+export function SuggestionsSlider({ isOpen, onClose, onSelectSymbol, activeSuggestions }: { isOpen: boolean; onClose: () => void; onSelectSymbol?: (symbol: string) => void; activeSuggestions?: import("@/types/api").Suggestion[] }) {
   const [activeTab, setActiveTab] = useState<FilterTab>('ALL');
 
   const { data: suggestionsData, isPending, error } = useQuery({
@@ -56,11 +56,11 @@ export function SuggestionsSlider({ isOpen, onClose, onSelectSymbol }: { isOpen:
     enabled: isOpen,
   });
 
-  const suggestions = suggestionsData?.data || [];
-
-  const activeTrades = suggestions.filter(s => s.status === 'ACTIVE');
-  const expiredTrades = suggestions.filter(s => s.status === 'EXPIRED');
-  const completedTrades = suggestions.filter(s => s.status !== 'ACTIVE' && s.status !== 'EXPIRED');
+  const historySuggestions = suggestionsData?.data || [];
+  
+  const activeTrades = (activeSuggestions || []).filter(s => s.status === 'ACTIVE');
+  const expiredTrades = historySuggestions.filter(s => s.status === 'EXPIRED');
+  const completedTrades = historySuggestions.filter(s => s.status !== 'ACTIVE' && s.status !== 'EXPIRED');
   const winningTrades = completedTrades.filter(s => s.status.includes('TARGET'));
 
   const grossProfit = completedTrades.reduce((sum, s) => s.pnlInr && s.pnlInr > 0 ? sum + s.pnlInr : sum, 0);
@@ -73,6 +73,8 @@ export function SuggestionsSlider({ isOpen, onClose, onSelectSymbol }: { isOpen:
 
   const showActive = activeTab === 'ALL' || activeTab === 'ACTIVE';
   const showCompleted = activeTab === 'ALL' || activeTab === 'COMPLETED';
+  
+  const suggestions = [...activeTrades, ...completedTrades, ...expiredTrades];
 
   // Group by date
   const grouped = suggestions.reduce((acc, s) => {

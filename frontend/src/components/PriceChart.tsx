@@ -63,7 +63,30 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
     refetchInterval: 300000,
   });
 
-  const candles = useMemo(() => candleData?.candles ?? [], [candleData?.candles]);
+  const candles = useMemo(() => {
+    const raw = candleData?.candles ?? [];
+    if (!raw.length) return [];
+    
+    const sorted = [...raw].sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
+    const clean: Candle[] = [];
+    
+    for (let i = 0; i < sorted.length; i++) {
+      const c = sorted[i]!;
+      if (i > 0 && Date.parse(c.ts) === Date.parse(sorted[i - 1]!.ts)) continue;
+      
+      if (!Number.isFinite(c.close) || c.close <= 0 || !Number.isFinite(c.open) || c.open <= 0) continue;
+      
+      if (clean.length > 0) {
+        const prevClose = clean[clean.length - 1]!.close;
+        if (prevClose > 0 && Math.abs(c.close - prevClose) / prevClose > 0.25) {
+          // It's a spike, skip it
+          continue;
+        }
+      }
+      clean.push(c);
+    }
+    return clean;
+  }, [candleData?.candles]);
   const forecast = forecastData?.available ? forecastData : null;
   const loading = isCandlesLoading;
   const error = isCandlesError ? "Unavailable" : null;
@@ -294,30 +317,10 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
   useEffect(() => {
     if (!candleRef.current || !emaRef.current || !vwapRef.current || !volumeRef.current) return;
 
-    // Sanitize candles to ensure strictly increasing time
-    const sortedCandles = [...candles].sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
-    const uniqueLiveCandles = sortedCandles
-      .filter((c, i, a) => {
-        if (i === 0) return true;
-        if (Date.parse(c.ts) === Date.parse(a[i - 1]!.ts)) return false;
-        
-        // Ensure data is valid
-        if (!Number.isFinite(c.close) || c.close <= 0 || !Number.isFinite(c.open) || c.open <= 0) {
-          return false;
-        }
-        
-        // Outlier rejection (spike filter for historical candles)
-        const prevClose = a[i - 1]!.close;
-        if (prevClose > 0 && Math.abs(c.close - prevClose) / prevClose > 0.25) {
-          // If a candle closes >25% away from previous close, it's almost certainly a bad tick.
-          return false;
-        }
-        return true;
-      })
-      .map(c => ({
-        ...c,
-        parsedTime: Math.floor(Date.parse(c.ts) / 1000) as Time,
-      }));
+    const uniqueLiveCandles = candles.map(c => ({
+      ...c,
+      parsedTime: Math.floor(Date.parse(c.ts) / 1000) as Time,
+    }));
     
     let lastTime = uniqueLiveCandles.length > 0 ? (uniqueLiveCandles[uniqueLiveCandles.length - 1].parsedTime as number) : 0;
     

@@ -318,8 +318,8 @@ export function WatchlistStack({ items, monitored, suggestions, selectedSymbol, 
                     <div className="flex flex-col gap-1.5 min-w-0 flex-1">
                       <div className="flex items-center gap-2 min-w-0">
                         <span className={cn("truncate font-bold text-[15px]", selected ? "text-background" : "text-foreground")}>{row.symbol}</span>
-                        {row.suggestion !== "HOLD" && (
-                          <span className={cn("h-2 w-2 rounded-full", row.suggestion === "BUY" ? "bg-bull" : row.suggestion === "SELL" ? "bg-bear" : "bg-accent")} />
+                        {row.activeSignalDirection && (
+                          <span className={cn("h-2 w-2 rounded-full", row.activeSignalDirection === "BUY" ? "bg-bull" : "bg-bear")} />
                         )}
                       </div>
                     </div>
