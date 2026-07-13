@@ -24,7 +24,7 @@ export function ReportsLibrary({ isOpen, onClose }: ReportsLibraryProps) {
     enabled: isOpen,
   });
 
-  const reports: DailyReport[] = reportsQuery.data ?? [];
+  const reports = reportsQuery.data ?? [];
 
   return (
     <AnimatePresence>

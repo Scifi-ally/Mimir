@@ -2,6 +2,9 @@ import { useEffect, useMemo, useState, startTransition, lazy, Suspense, useRef }
 import { useHotkeys } from "react-hotkeys-hook";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
+import { ResponsiveGridLayout, useContainerWidth } from "react-grid-layout";
+import "react-grid-layout/css/styles.css";
+import "react-resizable/css/styles.css";
 import { TopBar } from "@/components/TopBar";
 import { PriceChart } from "@/components/PriceChart";
 import { WatchlistStack } from "@/components/WatchlistStack";
@@ -34,6 +37,9 @@ export default function Dashboard() {
   const [isPaperTradingOpen, setIsPaperTradingOpen] = useState(false);
   const [isReportsOpen, setIsReportsOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<"watchlist" | "screener">("watchlist");
+
+  // react-grid-layout v2: measure container width via hook (replaces WidthProvider)
+  const { width: gridWidth, mounted: gridMounted, containerRef: gridContainerRef } = useContainerWidth();
 
   const sessionQuery = useQuery({ queryKey: ["session"], queryFn: api.sessionState, refetchInterval: 60000 });
   const statusQuery = useQuery({ queryKey: ["status"], queryFn: api.systemStatus, refetchInterval: 10000 });
@@ -285,106 +291,90 @@ export default function Dashboard() {
         </AnimatePresence>
 
         <div className="min-h-0 flex-1 overflow-hidden p-4 pt-2">
-          <div className="hidden lg:flex w-full h-full gap-0">
-            {/* Left Column: Chart (Top) & Watchlist (Bottom) */}
-            <div className="flex flex-col w-[65%] xl:w-[72%] min-w-0 h-full pr-2">
-                  <motion.div 
-                    className="flex-[60] w-full min-h-0 min-w-0 glass-panel rounded-2xl mb-3 p-1 relative z-10"
-                    initial={{ opacity: 0, y: 30, scale: 0.97, filter: "blur(10px)" }}
-                    animate={{ opacity: 1, y: 0, scale: 1, filter: "blur(0px)" }}
-                    transition={{ type: "spring", stiffness: 300, damping: 30, mass: 0.9, delay: 0.1 }}
-                  >
-                    <PriceChart 
-                      symbol={activeSymbol} 
-                      chartMode={chartMode} 
-                      onChartModeChange={(m) => startTransition(() => setChartMode(m))} 
-                      isMarketOpen={session?.isMarketOpen} 
-                      suggestion={suggestions.find(s => s.symbol === activeSymbol)} 
-                      position={positions.find((p: import("@/types/api").PaperPosition) => p.symbol === activeSymbol && p.status === "OPEN")}
-                      isAuthenticated={status?.upstoxAuthenticated}
-                    />
-                  </motion.div>
-                
-                  <motion.div 
-                    className="flex-[40] w-full min-h-0 min-w-0 pt-3 px-2 glass-panel rounded-2xl flex flex-col relative z-10"
-                    initial={{ opacity: 0, y: 30, scale: 0.97, filter: "blur(10px)" }}
-                    animate={{ opacity: 1, y: 0, scale: 1, filter: "blur(0px)" }}
-                    transition={{ type: "spring", stiffness: 300, damping: 30, mass: 0.9, delay: 0.18 }}
-                  >
-                    <div className="flex-1 min-h-0 relative -mx-2">
-                      {sidebarTab === "watchlist" ? (
-                        <WatchlistStack 
-                          headerLeft={
-                            <div className="flex items-center p-0.5 bg-foreground/5 rounded-full relative border border-white/5 shadow-inner shrink-0 mr-4">
-                              <button
-                                type="button"
-                                onClick={() => setSidebarTab("watchlist")}
-                                className="relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors text-background"
-                              >
-                                <motion.div layoutId="desktopTabIndicator" className="absolute inset-0 bg-foreground rounded-full shadow-sm" transition={{ type: "spring", bounce: 0.2, duration: 0.6 }} />
-                                <span className="relative z-10">Watchlist</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setSidebarTab("screener")}
-                                className="relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors text-muted-foreground hover:text-foreground"
-                              >
-                                <span className="relative z-10">Screener</span>
-                              </button>
-                            </div>
-                          }
-                          items={watchlistItems} 
-                          monitored={monitoring?.monitoredStocks} 
-                          suggestions={suggestions} 
-                          selectedSymbol={activeSymbol} 
-                          sparklines={sparklinesQuery.data}
-                          onSelect={(s) => startTransition(() => setSelectedSymbol(s))} 
-                        />
-                      ) : (
-                        <ScreenerTargetsStack 
-                          headerLeft={
-                            <div className="flex items-center p-0.5 bg-foreground/5 rounded-full relative border border-white/5 shadow-inner shrink-0 mr-4">
-                              <button
-                                type="button"
-                                onClick={() => setSidebarTab("watchlist")}
-                                className="relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors text-muted-foreground hover:text-foreground"
-                              >
-                                <span className="relative z-10">Watchlist</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setSidebarTab("screener")}
-                                className="relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors text-background"
-                              >
-                                <motion.div layoutId="desktopTabIndicator" className="absolute inset-0 bg-foreground rounded-full shadow-sm" transition={{ type: "spring", bounce: 0.2, duration: 0.6 }} />
-                                <span className="relative z-10">Screener</span>
-                              </button>
-                            </div>
-                          }
-                          selectedSymbol={activeSymbol} 
-                          sparklines={sparklinesQuery.data} 
-                          onSelect={(s) => startTransition(() => setSelectedSymbol(s))} 
-                        />
-                      )}
-                    </div>
-                  </motion.div>
-            </div>
+          <div ref={gridContainerRef} className="hidden lg:block w-full h-full relative">
+            {gridMounted && <ResponsiveGridLayout
+              className="layout h-full"
+              width={gridWidth}
+              layouts={{
+                lg: [
+                  { i: "chart", x: 0, y: 0, w: 8, h: 6 },
+                  { i: "watchlist", x: 0, y: 6, w: 8, h: 4 },
+                  { i: "detail", x: 8, y: 0, w: 4, h: 10 }
+                ]
+              }}
+              breakpoints={{ lg: 1024, md: 768, sm: 640, xs: 480, xxs: 0 }}
+              cols={{ lg: 12, md: 10, sm: 6, xs: 4, xxs: 2 }}
+              rowHeight={Math.max((window.innerHeight - 150) / 10, 50)}
+              dragConfig={{ enabled: true, handle: ".drag-handle" }}
+              resizeConfig={{ enabled: true, handles: ["se"] }}
+              margin={[16, 16] as const}
+            >
+              <div key="chart" className="flex flex-col min-h-0 min-w-0 glass-panel rounded-2xl p-1 z-10">
+                <div className="drag-handle h-2 w-full flex justify-center items-center cursor-move opacity-20 hover:opacity-100 transition-opacity"><div className="w-8 h-1 rounded-full bg-foreground" /></div>
+                <PriceChart 
+                  symbol={activeSymbol} 
+                  chartMode={chartMode} 
+                  onChartModeChange={(m) => startTransition(() => setChartMode(m))} 
+                  isMarketOpen={session?.isMarketOpen} 
+                  suggestion={suggestions.find(s => s.symbol === activeSymbol)} 
+                  position={positions.find((p: import("@/types/api").PaperPosition) => p.symbol === activeSymbol && p.status === "OPEN")}
+                  isAuthenticated={status?.upstoxAuthenticated}
+                />
+              </div>
 
-            {/* Right Column: Detail Panel */}
-            <div className="flex flex-col w-[35%] xl:w-[28%] min-w-0 h-full pl-2">
-              <motion.div 
-                className="h-full w-full min-h-0 min-w-0 glass-panel rounded-2xl relative z-10 overflow-hidden"
-                initial={{ opacity: 0, x: 20, filter: "blur(10px)" }}
-                animate={{ opacity: 1, x: 0, filter: "blur(0px)" }}
-                transition={{ type: "spring", stiffness: 300, damping: 30, mass: 0.9, delay: 0.25 }}
-              >
+              <div key="watchlist" className="flex flex-col min-h-0 min-w-0 z-10 glass-panel rounded-2xl overflow-hidden pt-1">
+                <div className="drag-handle h-2 w-full flex justify-center items-center cursor-move opacity-20 hover:opacity-100 transition-opacity"><div className="w-8 h-1 rounded-full bg-foreground" /></div>
+                <div className="flex-1 min-h-0 relative">
+                  {sidebarTab === "watchlist" ? (
+                    <WatchlistStack 
+                      headerLeft={
+                        <div className="flex items-center p-0.5 bg-foreground/5 rounded-full relative shrink-0">
+                          <button onClick={() => setSidebarTab("watchlist")} className="relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full text-background">
+                            <motion.div layoutId="desktopTabIndicator" className="absolute inset-0 bg-foreground rounded-full" />
+                            <span className="relative z-10">Watchlist</span>
+                          </button>
+                          <button onClick={() => setSidebarTab("screener")} className="relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full text-muted-foreground hover:text-foreground">
+                            <span className="relative z-10">Screener</span>
+                          </button>
+                        </div>
+                      }
+                      items={watchlistItems} 
+                      monitored={monitoring?.monitoredStocks} 
+                      suggestions={suggestions} 
+                      selectedSymbol={activeSymbol} 
+                      sparklines={sparklinesQuery.data}
+                      onSelect={(s) => startTransition(() => setSelectedSymbol(s))} 
+                    />
+                  ) : (
+                    <ScreenerTargetsStack 
+                      headerLeft={
+                        <div className="flex items-center p-0.5 bg-foreground/5 rounded-full relative shrink-0">
+                          <button onClick={() => setSidebarTab("watchlist")} className="relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full text-muted-foreground hover:text-foreground">
+                            <span className="relative z-10">Watchlist</span>
+                          </button>
+                          <button onClick={() => setSidebarTab("screener")} className="relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full text-background">
+                            <motion.div layoutId="desktopTabIndicator" className="absolute inset-0 bg-foreground rounded-full" />
+                            <span className="relative z-10">Screener</span>
+                          </button>
+                        </div>
+                      }
+                      selectedSymbol={activeSymbol} 
+                      sparklines={sparklinesQuery.data} 
+                      onSelect={(s) => startTransition(() => setSelectedSymbol(s))} 
+                    />
+                  )}
+                </div>
+              </div>
+
+              <div key="detail" className="flex flex-col min-h-0 min-w-0 glass-panel rounded-2xl z-10 overflow-hidden pt-1">
+                <div className="drag-handle h-2 w-full flex justify-center items-center cursor-move opacity-20 hover:opacity-100 transition-opacity"><div className="w-8 h-1 rounded-full bg-foreground" /></div>
                 <DetailPanel
                   suggestions={suggestions}
                   selectedSymbol={activeSymbol}
                   session={session}
                 />
-              </motion.div>
-            </div>
+              </div>
+            </ResponsiveGridLayout>}
           </div>
 
           {/* Mobile Fallback */}

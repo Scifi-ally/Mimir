@@ -14,9 +14,9 @@ interface WatchlistCardProps {
 
 export const WatchlistCard = memo(({ row, selected, onSelect, sparkline }: WatchlistCardProps) => {
   const score = row.compositeScore || 0;
-  let scoreColor = "text-bear";
-  if (score > 65) scoreColor = "text-bull";
-  else if (score >= 40) scoreColor = "text-amber-500";
+  let scoreColor = "text-bear font-mono";
+  if (score > 65) scoreColor = "text-bull font-mono";
+  else if (score >= 40) scoreColor = "text-amber-500 font-mono";
 
   const topTag = row.signalTags && row.signalTags.length > 0 ? row.signalTags[0] : null;
 
@@ -27,10 +27,10 @@ export const WatchlistCard = memo(({ row, selected, onSelect, sparkline }: Watch
       aria-selected={selected}
       onClick={() => onSelect(row.symbol)}
       className={cn(
-        "flex flex-col justify-center rounded-xl px-2.5 py-1.5 text-left transition-all relative overflow-hidden group border h-[52px] w-full min-w-0 apple-hover",
+        "flex flex-col justify-center rounded px-2.5 py-1.5 text-left transition-colors relative overflow-hidden group border h-[52px] w-full min-w-0 border-transparent font-mono",
         selected
-          ? "bg-foreground/10 text-foreground border-l-[3px] border-l-indigo-500 border-y-transparent border-r-transparent shadow-md"
-          : "border-transparent text-foreground/70 hover:bg-foreground/5 hover:text-foreground"
+          ? "bg-secondary/60 text-foreground"
+          : "text-foreground/70 hover:bg-secondary/30 hover:text-foreground"
       )}
     >
       <div className="grid grid-cols-[1fr_auto] gap-1.5 relative z-10 min-w-0 w-full h-full items-center">

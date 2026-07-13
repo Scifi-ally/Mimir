@@ -52,6 +52,10 @@ interface AppStore {
   setCommandPaletteOpen: (open: boolean, search?: string, targetWatchlist?: number | null, editRuleId?: number | null) => void;
   watchlistCounts: Record<string, number>;
   updateWatchlistCounts: (counts: Record<string, number>) => void;
+  layoutMode: "comfortable" | "compact";
+  setLayoutMode: (mode: "comfortable" | "compact") => void;
+  theme: "dark" | "light" | "quant";
+  setTheme: (theme: "dark" | "light" | "quant") => void;
 }
 
 export const useStore = create<AppStore>()(
@@ -61,7 +65,11 @@ export const useStore = create<AppStore>()(
       setSelectedSymbol: (symbol) => set({ selectedSymbol: symbol }),
       wsConnected: false,
       setWsConnected: (connected) => set({ wsConnected: connected }),
-  scanState: { scanning: false, current: 0, total: 0, phase: "idle" },
+      layoutMode: "comfortable",
+      setLayoutMode: (mode) => set({ layoutMode: mode }),
+      theme: "dark",
+      setTheme: (theme) => set({ theme }),
+      scanState: { scanning: false, current: 0, total: 0, phase: "idle" },
   setScanState: (partial) =>
     set((state) => ({
       scanState: { ...state.scanState, ...partial },

@@ -1,10 +1,9 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
 @import "@fontsource/geist-mono";
-@import "@fontsource/inter";
 
 @theme {
-  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+  --font-sans: "Geist Mono", ui-monospace, monospace;
   --font-mono: "Geist Mono", ui-monospace, monospace;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -87,6 +86,7 @@
   * {
     @apply border-border;
     box-sizing: border-box;
+    font-family: "Geist Mono", monospace !important;
   }
   
   html,
@@ -428,13 +428,99 @@ html {
 }
 * {
   scrollbar-width: none;
+  -ms-overflow-style: none;
 }
 
-@layer utilities {
-  .glass-panel {
-    @apply bg-zinc-900/40 backdrop-blur-xl border border-white/5 shadow-2xl;
-  }
-  .light .glass-panel {
-    @apply bg-white/40 border-black/5 shadow-xl;
-  }
+/* Glass Panel utility — frosted glassmorphism card */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* ── react-grid-layout overrides ── */
+.react-grid-layout {
+  position: relative;
+  transition: height 200ms ease;
+}
+.react-grid-item {
+  transition: all 200ms ease;
+  transition-property: left, top, width, height;
+}
+.react-grid-item.cssTransforms {
+  transition-property: transform, width, height;
+}
+.react-grid-item.resizing {
+  z-index: 30;
+  will-change: width, height;
+  opacity: 0.9;
+}
+.react-grid-item.react-draggable-dragging {
+  z-index: 30;
+  will-change: transform;
+  opacity: 0.85;
+  box-shadow: 0 20px 60px -10px rgba(0, 0, 0, 0.5);
+}
+/* Placeholder while dragging */
+.react-grid-item.react-grid-placeholder {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px dashed rgba(255, 255, 255, 0.15);
+  border-radius: 1rem;
+  opacity: 0.5;
+  transition-duration: 100ms;
+  z-index: 2;
+  user-select: none;
+}
+/* Resize handle */
+.react-resizable-handle {
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  bottom: 0;
+  right: 0;
+  cursor: se-resize;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+.react-grid-item:hover .react-resizable-handle {
+  opacity: 0.4;
+}
+.react-resizable-handle::after {
+  content: "";
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid rgba(255, 255, 255, 0.3);
+  border-bottom: 2px solid rgba(255, 255, 255, 0.3);
+  border-radius: 0 0 2px 0;
+}
+
+/* ── Quant Theme Variables ── */
+[data-theme="quant"] {
+  --background: #050a0e;
+  --foreground: #00ff88;
+  --card: #0a1118;
+  --card-foreground: #00ff88;
+  --popover: #0c1620;
+  --popover-foreground: #00ff88;
+  --primary: #00ff88;
+  --primary-foreground: #050a0e;
+  --secondary: #0d1f2d;
+  --secondary-foreground: #00ff88;
+  --muted: #0d1f2d;
+  --muted-foreground: #338866;
+  --accent: #0d1f2d;
+  --accent-foreground: #00ff88;
+  --destructive: #ff3366;
+  --destructive-foreground: #050a0e;
+  --border: #0d1f2d;
+  --input: #0d1f2d;
+  --ring: #00ff88;
+}
+[data-theme="quant"] .glass-panel {
+  background: rgba(0, 255, 136, 0.02);
+  border-color: rgba(0, 255, 136, 0.08);
 }

@@ -164,7 +164,16 @@ import { isAuthenticated } from "../upstox/auth";
 router.post("/screener/run", async (req, res, next) => {
   try {
     if (!isAuthenticated()) {
-      return res.status(401).json({ error: "Upstox is not authenticated. Please connect your broker account to run the custom scanner." });
+      return res.json({ 
+        success: false, 
+        message: "Waiting for Upstox authorization",
+        activeScreeners: 0,
+        newMatches: 0,
+        newTargets: 0,
+        totalMatches: 0,
+        totalTargets: 0,
+        runAt: new Date().toISOString()
+      });
     }
 
     const { screenerId } = req.body || {};

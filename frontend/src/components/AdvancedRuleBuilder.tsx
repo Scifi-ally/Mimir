@@ -300,17 +300,6 @@ export function AdvancedRuleBuilder({ onComplete, initialRule }: { onComplete: (
 
   const createRuleMutation = useMutation({
     mutationFn: async () => {
-      // Frontend validation
-      if (targetType === "CUSTOM" && !outputName.trim()) {
-        throw new Error("A custom watchlist name is required.");
-      }
-      if (conditions.rules.length === 0) {
-        throw new Error("At least one complete condition is required.");
-      }
-      if (scheduleMode === "TIME" && !scheduleTime) {
-        throw new Error("A run time is required for scheduled time mode.");
-      }
-
       const url = initialRule?.id ? `/api/screener/${initialRule.id}` : "/api/screener";
       const method = initialRule?.id ? "PUT" : "POST";
       const response = await fetch(url, {
@@ -327,14 +316,7 @@ export function AdvancedRuleBuilder({ onComplete, initialRule }: { onComplete: (
         }),
       });
       const body = await response.json().catch(() => null);
-      if (!response.ok) {
-        if (body?.issues?.[0]?.message) {
-          throw new Error(body.issues[0].message);
-        }
-        throw new Error(
-          typeof body?.error === "string" ? body.error : body?.error?.message || body?.message || "Failed to save screener"
-        );
-      }
+      if (!response.ok) throw new Error(body?.error?.message || body?.message || "Failed to save screener");
       return body;
     },
     onSuccess: async () => {

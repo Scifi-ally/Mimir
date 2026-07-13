@@ -326,9 +326,10 @@ export function ScreenerTargetsStack({ selectedSymbol, sparklines, onSelect, hea
     return (
       <Card className="@container flex h-full min-h-0 flex-col border-0 bg-transparent">
         <CardHeader className="shrink-0 p-3 pb-1">
-          <div className="flex items-center gap-3 justify-between w-full">
-            <div className="flex items-center gap-3">
-              {headerLeft}
+          <div className="flex items-center gap-4 w-full">
+            {headerLeft && headerLeft}
+            <div className="flex items-center gap-3 justify-between w-full">
+              <div className="flex items-center gap-3">
               <button onClick={() => setActiveWatchlist(null)} className="p-1 hover:bg-secondary/20 rounded-full transition-colors text-muted-foreground hover:text-foreground">
                 <ArrowLeft className="h-4 w-4" />
               </button>
@@ -389,7 +390,8 @@ export function ScreenerTargetsStack({ selectedSymbol, sparklines, onSelect, hea
               </div>
             )}
           </div>
-        </CardHeader>
+        </div>
+      </CardHeader>
 
         <ScrollArea className="block flex-1 min-h-0 px-2 pb-2 mt-2" role="listbox">
           <div className="flex flex-col gap-3">
@@ -472,42 +474,58 @@ export function ScreenerTargetsStack({ selectedSymbol, sparklines, onSelect, hea
     );
   }
 
-  const totalCustomTargets = Object.values(targetsByWatchlist).reduce((acc: number, list: any) => acc + list.length, 0);
+  const totalCustomTargets = customWatchlists.reduce((total, watchlist) => total + (targetsByWatchlist[watchlist.id]?.length || 0), 0);
+  const activeRules = customWatchlists.filter((watchlist) => watchlist.status !== "PAUSED").length;
 
   if (customWatchlists.length === 0 && (!targetsByWatchlist.GLOBAL || targetsByWatchlist.GLOBAL.length === 0)) {
     return (
-      <Card className="@container flex h-full min-h-0 flex-col border-0 bg-transparent items-center justify-center">
-        <button onClick={() => setCommandPaletteOpen(true, "scan ")} className="flex items-center gap-2 rounded-xl bg-primary px-5 py-3 text-[14px] font-bold text-primary-foreground transition-transform hover:scale-105 shadow-lg shadow-primary/20">
-          <Plus className="h-5 w-5" /> Create Watchlist
-        </button>
+      <Card className="@container flex h-full min-h-0 flex-col border-0 bg-transparent">
+        {headerLeft && (
+          <CardHeader className="shrink-0 p-3 pb-1">
+            <div className="flex items-center gap-4 w-full">
+              {headerLeft}
+            </div>
+          </CardHeader>
+        )}
+        <div className="flex-1 flex flex-col items-center justify-center">
+          <button onClick={() => setCommandPaletteOpen(true, "scan ")} className="flex items-center gap-2 rounded-xl bg-primary px-5 py-3 text-[14px] font-bold text-primary-foreground transition-transform hover:scale-105 shadow-lg shadow-primary/20">
+            <Plus className="h-5 w-5" /> Create Watchlist
+          </button>
+        </div>
       </Card>
     );
   }
 
   return (
     <Card className="@container flex h-full min-h-0 flex-col border-0 bg-transparent">
-      <CardHeader className="shrink-0 px-2 py-1 flex flex-row items-center justify-between gap-4">
-        {headerLeft}
-        <div className="flex overflow-x-auto whitespace-nowrap flex-nowrap gap-4 text-[10px] font-bold uppercase tracking-wider [&::-webkit-scrollbar]:hidden pb-1 justify-end w-full">
-          <span className="text-foreground/70 self-center hidden @min-md:inline">
-            {customWatchlists.length} lists / {totalCustomTargets} sym
-          </span>
+      <CardHeader className="shrink-0 px-3 pb-1 pt-2">
+        <div className="flex items-center gap-4 w-full relative mb-2">
+          {headerLeft && headerLeft}
+          <div className="flex items-start justify-between gap-3 px-1 w-full">
+            <div className="min-w-0">
+            <CardTitle className="text-lg font-extrabold tracking-tight text-foreground drop-shadow-sm dark:drop-shadow-md">
+              Custom Watchlists
+            </CardTitle>
+            <div className="mt-1 flex flex-wrap items-center gap-2 font-mono text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/80">
+              <span className="text-foreground/70">{customWatchlists.length} lists</span>
+              <span className="text-foreground/20">/</span>
+              <span className="text-foreground/70">{totalCustomTargets} symbols</span>
+              <span className="text-foreground/20">/</span>
+              <span className="text-primary/90">{activeRules} active</span>
+            </div>
+          </div>
           <button
             type="button"
             onClick={() => setCommandPaletteOpen(true, "scan ")}
-            className={cn(
-              "transition-all duration-300 relative group font-medium flex items-center gap-1",
-              "@max-md:px-3 @max-md:py-1.5 @max-md:rounded-full",
-              "@max-md:bg-foreground @max-md:text-background @min-md:text-foreground @min-md:border-foreground",
-              "@min-md:px-0 @min-md:py-0 @min-md:border-b-2 @min-md:pb-0.5"
-            )}
+            className="group relative flex shrink-0 items-center gap-1.5 overflow-hidden rounded-full bg-white/5 px-4 py-2 text-[11px] font-bold text-foreground transition-all hover:bg-white/10 hover:shadow-[0_0_20px_rgba(255,255,255,0.1)] hover:scale-105 active:scale-95"
           >
-            <Plus className="h-3.5 w-3.5" />
-            New Screener
-            <span className="hidden @min-md:block absolute inset-x-0 -bottom-0.5 h-0.5 bg-foreground/30 rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
+            <div className="absolute inset-0 bg-gradient-to-r from-primary/10 to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
+            <Plus className="relative h-3.5 w-3.5 text-primary" />
+            <span className="relative">New</span>
           </button>
         </div>
-      </CardHeader>
+      </div>
+    </CardHeader>
 
       <ScrollArea className="block flex-1 min-h-0 px-2 pb-2">
 

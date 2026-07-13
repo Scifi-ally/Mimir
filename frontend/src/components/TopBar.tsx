@@ -81,12 +81,9 @@ export const TopBar = memo(function TopBar({
         confirmText: "Stop Scan",
         isDestructive: true,
         onConfirm: async () => {
-          setStoppingScan(true);
+            setStoppingScan(true);
           try {
             await api.stopScan();
-            useStore.getState().setScanState({ scanning: false, current: 0, total: 0 });
-            // Invalidate queries if queryClient is available or let WS handle it, 
-            // but setting scanState to false immediately fixes the stuck UI.
           } catch (err) {
             showIsland({ isNotification: true, title: "Failed to stop scan", subtitle: err instanceof Error ? err.message : "Unknown error", showSuccessOnly: false });
           } finally {
@@ -151,7 +148,7 @@ export const TopBar = memo(function TopBar({
     <>
       <header 
         className={cn(
-          "sticky top-0 z-50 flex shrink-0 flex-col justify-center bg-background/50 backdrop-blur-2xl border-b border-white/5 shadow-sm px-4 sm:px-6 py-2"
+          "sticky top-0 z-50 flex shrink-0 flex-col justify-center bg-background/90 backdrop-blur-md border-0 px-4 sm:px-6 py-2"
         )}
       >
         <div className="flex flex-col w-full gap-2">

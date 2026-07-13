@@ -385,6 +385,7 @@ function extractIndicator(indicatorRaw: string, candles: any[]): number[] | null
   }
 
   if (ind === "MACD" || ind === "MACD_SIGNAL") {
+    if (closes.length < 26) return null;
     const fast = computeEMA(closes, 12);
     const slow = computeEMA(closes, 26);
     const macd = closes.map((_, index) => fast[index] - slow[index]);
@@ -394,17 +395,20 @@ function extractIndicator(indicatorRaw: string, candles: any[]): number[] | null
   const emaMatch = ind.match(/^EMA(\d+)$/);
   if (emaMatch) {
     const period = parseInt(emaMatch[1], 10);
+    if (closes.length < period) return null;
     return computeEMA(closes, period);
   }
 
   const smaMatch = ind.match(/^SMA(\d+)$/);
   if (smaMatch) {
     const period = parseInt(smaMatch[1], 10);
+    if (closes.length < period) return null;
     return computeSMA(closes, period);
   }
   const rsiMatch = ind.match(/^RSI(\d+)$/);
   if (rsiMatch) {
     const period = parseInt(rsiMatch[1], 10);
+    if (closes.length <= period) return null;
     const result = new Array(closes.length).fill(50);
     let avgGain = 0, avgLoss = 0;
     for (let i = 1; i < closes.length; i++) {
@@ -428,6 +432,7 @@ function extractIndicator(indicatorRaw: string, candles: any[]): number[] | null
   const atrMatch = ind.match(/^ATR(\d+)$/);
   if (atrMatch) {
     const period = parseInt(atrMatch[1], 10);
+    if (closes.length < period) return null;
     const trueRanges = candles.map((c, index) => {
       if (index === 0) return Math.abs((Number(c.high) || c.close) - (Number(c.low) || c.close));
       const previousClose = Number(candles[index - 1].close);
@@ -441,6 +446,7 @@ function extractIndicator(indicatorRaw: string, candles: any[]): number[] | null
   const rocMatch = ind.match(/^ROC(\d+)$/);
   if (rocMatch) {
     const period = parseInt(rocMatch[1], 10);
+    if (closes.length <= period) return null;
     return closes.map((close, index) => index < period || closes[index - period] === 0
       ? 0
       : ((close - closes[index - period]) / closes[index - period]) * 100);
@@ -450,6 +456,7 @@ function extractIndicator(indicatorRaw: string, candles: any[]): number[] | null
   if (bollingerMatch) {
     const band = bollingerMatch[1];
     const period = parseInt(bollingerMatch[2], 10);
+    if (closes.length < period) return null;
     const middle = computeSMA(closes, period);
     if (band === "MIDDLE") return middle;
     const deviation = computeStandardDeviation(closes, middle, period);
@@ -460,6 +467,7 @@ function extractIndicator(indicatorRaw: string, candles: any[]): number[] | null
   const adxMatch = ind.match(/^ADX(\d+)$/);
   if (adxMatch) {
     const period = parseInt(adxMatch[1], 10);
+    if (candles.length <= period) return null;
     const trs: number[] = [];
     const plusDMs: number[] = [];
     const minusDMs: number[] = [];
