@@ -132,23 +132,22 @@ async def analyze_sentiment(symbol: str) -> Dict[str, float]:
             return
         try:
             import psycopg2
-            conn = psycopg2.connect(db_url)
-            cur = conn.cursor()
-            now = datetime.datetime.now()
-            
-            cur.execute("""
-                INSERT INTO fundamental_snapshots (symbol, field_name, value, filed_date, fetched_at)
-                VALUES (%s, %s, %s, %s, %s)
-            """, (symbol, 'sentiment_composite', composite, now, now))
-            
-            cur.execute("""
-                INSERT INTO fundamental_snapshots (symbol, field_name, value, filed_date, fetched_at)
-                VALUES (%s, %s, %s, %s, %s)
-            """, (symbol, 'sentiment_symbol', symbol_specific_score, now, now))
-            
-            conn.commit()
-            cur.close()
-            conn.close()
+            from contextlib import closing
+            with closing(psycopg2.connect(db_url)) as conn:
+                with conn.cursor() as cur:
+                    now = datetime.datetime.now()
+                    
+                    cur.execute("""
+                        INSERT INTO fundamental_snapshots (symbol, field_name, value, filed_date, fetched_at)
+                        VALUES (%s, %s, %s, %s, %s)
+                    """, (symbol, 'sentiment_composite', composite, now, now))
+                    
+                    cur.execute("""
+                        INSERT INTO fundamental_snapshots (symbol, field_name, value, filed_date, fetched_at)
+                        VALUES (%s, %s, %s, %s, %s)
+                    """, (symbol, 'sentiment_symbol', symbol_specific_score, now, now))
+                    
+                    conn.commit()
         except Exception as e:
             logger.error(f"Failed to save sentiment snapshot: {e}")
 

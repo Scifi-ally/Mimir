@@ -61,6 +61,7 @@ class TickDistributionServer {
   private currentTicksPerSec = 0;
   private lastFeedLatency = 0;
   private lastFlushDuration = 0;
+  private intervals: NodeJS.Timeout[] = [];
   
 
 
@@ -71,14 +72,31 @@ class TickDistributionServer {
   private startTimers(): void {
     // UI Stream flush at ~50 FPS (20ms interval) to keep rendering fluid at 60 FPS
     // without flooding DOM or network sockets.
-    // without flooding DOM or network sockets.
-    setInterval(() => this.flushUIStream(), 20);
+    this.intervals.push(setInterval(() => this.flushUIStream(), 20));
 
     // Calculate ticks/sec every 1 second
-    setInterval(() => {
+    this.intervals.push(setInterval(() => {
       this.currentTicksPerSec = this.ticksInCurrentSecond;
       this.ticksInCurrentSecond = 0;
-    }, 1000);
+    }, 1000));
+    
+    // Cleanup history cache every minute
+    this.intervals.push(setInterval(() => this.cleanupHistoryCache(), 60000));
+  }
+
+  public stop(): void {
+    this.intervals.forEach(clearInterval);
+    this.intervals = [];
+  }
+
+  private cleanupHistoryCache(): void {
+    const cutoff = Date.now() - this.MAX_HISTORY_MS;
+    for (const [symbol, hist] of this.historyCache.entries()) {
+      // If the most recent tick in history is older than the cutoff, remove the symbol entirely
+      if (hist.length > 0 && hist[hist.length - 1].timestamp < cutoff) {
+        this.historyCache.delete(symbol);
+      }
+    }
   }
 
   /**
@@ -229,6 +247,11 @@ class TickDistributionServer {
       try {
         const payload = this.batchPool.slice(0, batchLength);
         broadcastMarketTicks(payload);
+        
+        // Clear slots to prevent memory leaks of tick objects
+        for (let i = 0; i < batchLength; i++) {
+          this.batchPool[i] = undefined;
+        }
       } catch (err) {
         logger.error({ err }, "Failed to broadcast UI tick stream");
       }

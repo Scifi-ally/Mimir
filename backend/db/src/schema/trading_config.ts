@@ -63,6 +63,9 @@ export const tradingConfigTable = pgTable("trading_config", {
   upstoxRedirectUri: text("upstox_redirect_uri"),
   upstoxDataApiKey: text("upstox_data_api_key"),
   upstoxDataApiSecret: text("upstox_data_api_secret"),
+  discordWebhookUrl: text("discord_webhook_url"),
+  telegramBotToken: text("telegram_bot_token"),
+  telegramChatId: text("telegram_chat_id"),
   stopLossMode: varchar("stop_loss_mode", { length: 20 }).notNull().default("FIXED"),
   updatedAt: timestamp("updated_at", { withTimezone: true })
     .notNull()

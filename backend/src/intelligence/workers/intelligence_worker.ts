@@ -200,9 +200,9 @@ async function rankAiOpportunities(
           aiScore,
           compositeScore: Number((opp.score * 0.4 + aiScore * 0.6).toFixed(2)),
           rankReasoning: [
-             `AI Score: ${aiResult.composite_score.toFixed(1)}`, 
+             `AI Score: ${aiResult.composite_score.toFixed(1)}`,
              `Technical Ranking Bullish: ${(aiResult.technicalRanking.bullish_probability * 100).toFixed(1)}%`,
-             `Chronos Trend: ${aiResult.chronos.trend}`,
+             `Chronos Trend: ${aiResult.chronos?.trend ?? "N/A"}`,
              ...(Array.isArray(opp?.reasoning) ? opp.reasoning : [])
           ],
         };
@@ -216,13 +216,14 @@ async function rankAiOpportunities(
 }
 
 interface AiRankResult {
+  symbol: string;
   world_sentiment_score?: number;
   composite_score: number;
   components?: Record<string, number>;
   technicalRanking: {
     bullish_probability: number;
   };
-  chronos: {
+  chronos?: {
     trend: string;
   };
 }

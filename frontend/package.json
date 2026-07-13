@@ -13,6 +13,7 @@
     "test:all": "playwright test"
   },
   "dependencies": {
+    "@tailwindcss/typography": "^0.5.20",
     "@tanstack/react-query": "^5.90.21",
     "@tanstack/react-virtual": "^3.14.3",
     "clsx": "^2.1.1",
@@ -24,6 +25,7 @@
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-hotkeys-hook": "^5.3.2",
+    "react-markdown": "^10.1.0",
     "tailwind-merge": "^3.3.1",
     "zod": "^3.25.76",
     "zustand": "^5.0.8"

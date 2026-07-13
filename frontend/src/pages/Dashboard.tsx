@@ -11,6 +11,7 @@ import { DetailPanel } from "@/components/DetailPanel";
 import { StatusBar } from "@/components/StatusBar";
 const SuggestionsSlider = lazy(() => import("@/components/SuggestionsSlider").then(m => ({ default: m.SuggestionsSlider })));
 const PaperTradingPanel = lazy(() => import("@/components/PaperTradingPanel").then(m => ({ default: m.PaperTradingPanel })));
+const ReportsLibrary = lazy(() => import("@/components/ReportsLibrary").then(m => ({ default: m.ReportsLibrary })));
 import { useWebSocket, subscribeWsSymbols } from "@/hooks/useWebSocket";
 import { useStore } from "@/store/useStore";
 import { api } from "@/lib/api";
@@ -32,17 +33,18 @@ export default function Dashboard() {
   const [chartMode, setChartMode] = useState<"actual" | "forecast">("actual");
   const [isSuggestionsOpen, setIsSuggestionsOpen] = useState(false);
   const [isPaperTradingOpen, setIsPaperTradingOpen] = useState(false);
+  const [isReportsOpen, setIsReportsOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<"watchlist" | "screener">("watchlist");
 
-  const sessionQuery = useQuery({ queryKey: ["session"], queryFn: api.sessionState, refetchInterval: 10000 });
+  const sessionQuery = useQuery({ queryKey: ["session"], queryFn: api.sessionState, refetchInterval: 60000 });
   const statusQuery = useQuery({ queryKey: ["status"], queryFn: api.systemStatus, refetchInterval: 10000 });
-  const watchlistQuery = useQuery({ queryKey: ["watchlist"], queryFn: api.watchlistToday, refetchInterval: 10000 });
+  const watchlistQuery = useQuery({ queryKey: ["watchlist"], queryFn: api.watchlistToday, refetchInterval: 30000 });
   const suggestionsQuery = useQuery<Suggestion[]>({ queryKey: ["suggestions"], queryFn: () => api.activeSuggestions(), refetchInterval: 10000 });
   const positionsQuery = useQuery({ queryKey: ["positions"], queryFn: () => api.paper.positions(), refetchInterval: 10000 });
   const indicesQuery = useQuery({ queryKey: ["indices"], queryFn: api.dashboardIndices, staleTime: Infinity });
-  const regimeQuery = useQuery({ queryKey: ["regime"], queryFn: api.marketRegime, refetchInterval: 10000 });
-  const monitoringQuery = useQuery({ queryKey: ["monitoring"], queryFn: api.intradayMonitoring, refetchInterval: 10000 });
-  const indianContextQuery = useQuery({ queryKey: ["indian-context"], queryFn: api.indianContext, refetchInterval: 60000 });
+  const regimeQuery = useQuery({ queryKey: ["regime"], queryFn: api.marketRegime, refetchInterval: 60000 });
+  const monitoringQuery = useQuery({ queryKey: ["monitoring"], queryFn: api.intradayMonitoring, refetchInterval: 30000 });
+  const indianContextQuery = useQuery({ queryKey: ["indian-context"], queryFn: api.indianContext, refetchInterval: 300000 });
   const scanning = scanState.scanning || Boolean(sessionQuery.data?.scanRunning);
   const scanLogs = useStore((s) => s.scanLogs);
   const activeSymbols = useMemo(() => {
@@ -73,7 +75,7 @@ export default function Dashboard() {
 
   const [debouncedSymbols, setDebouncedSymbols] = useState<string[]>(watchlistSymbols);
 
-  const lastUpdateRef = useRef(Date.now());
+  const lastUpdateRef = useRef(0);
   const handlerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -99,7 +101,7 @@ export default function Dashboard() {
     queryKey: ["sparklines", debouncedSymbols],
     queryFn: () => api.sparklines(debouncedSymbols),
     staleTime: 5 * 60 * 1000,
-    enabled: debouncedSymbols.length > 0
+    enabled: debouncedSymbols.length > 0 && !scanning
   });
 
   const session = sessionQuery.data;
@@ -110,7 +112,6 @@ export default function Dashboard() {
   const monitoring = monitoringQuery.data;
   const indianContext = indianContextQuery.data;
 
-  const indices = indicesQuery.data ?? null;
   const isIndex = ["NIFTY 50", "BANKNIFTY", "FINNIFTY", "INDIA VIX", "SENSEX"].includes(selectedSymbol);
   const activeSymbol = watchlistItems.length === 0 && !isIndex
     ? "NIFTY 50"
@@ -245,19 +246,20 @@ export default function Dashboard() {
           transition={{ type: "spring", stiffness: 350, damping: 35, mass: 0.8, delay: 0.05 }}
         >
           <TopBar
-          indices={indices}
-          status={status}
-          wsConnected={wsConnected}
-          onAuthorize={authorizeUpstox}
-          authorizing={authorizing}
-          watchlistDate={undefined}
-          activeSignals={suggestions.filter((s) => s.status === "ACTIVE").length}
-          scanning={scanning}
-          scanProgress={scanning && scanState.total > 0 ? (scanState.current / scanState.total) * 100 : 0}
-          onOpenSuggestions={() => startTransition(() => setIsSuggestionsOpen(true))}
-          onOpenPaperTrading={() => startTransition(() => setIsPaperTradingOpen(true))}
-          onSelectSymbol={(s: string) => startTransition(() => setSelectedSymbol(s))}
-        />
+            indices={indicesQuery.data ?? null}
+            status={statusQuery.data}
+            wsConnected={wsConnected}
+            onAuthorize={authorizeUpstox}
+            authorizing={authorizing}
+            watchlistDate={undefined}
+            activeSignals={activeSymbols.size}
+            scanning={scanning}
+            scanProgress={scanState.total > 0 ? (scanState.current / scanState.total) * 100 : undefined}
+            onOpenSuggestions={() => startTransition(() => setIsSuggestionsOpen(true))}
+            onOpenPaperTrading={() => startTransition(() => setIsPaperTradingOpen(true))}
+            onOpenReports={() => startTransition(() => setIsReportsOpen(true))}
+            onSelectSymbol={(s: string) => startTransition(() => setSelectedSymbol(s))}
+          />
         </motion.div>
 
         <AnimatePresence>
@@ -428,6 +430,9 @@ export default function Dashboard() {
       </Suspense>
       <Suspense fallback={null}>
         <PaperTradingPanel isOpen={isPaperTradingOpen} onClose={() => startTransition(() => setIsPaperTradingOpen(false))} />
+      </Suspense>
+      <Suspense fallback={null}>
+        <ReportsLibrary isOpen={isReportsOpen} onClose={() => startTransition(() => setIsReportsOpen(false))} />
       </Suspense>
     </div>
     );

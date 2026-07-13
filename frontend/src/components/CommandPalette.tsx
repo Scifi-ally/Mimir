@@ -19,6 +19,13 @@ export function CommandPalette({ onClose, onWidthChange }: { onClose: () => void
   const initialTargetWatchlist = useStore((s) => s.commandPaletteTargetWatchlist);
   const initialEditRuleId = useStore((s) => s.commandPaletteEditRuleId);
   const [search, setSearch] = useState(initialSearch || '');
+  const [debouncedSearch, setDebouncedSearch] = useState(search);
+  
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, symbol: string } | null>(null);
   const [targetWatchlist, setTargetWatchlist] = useState<number | null>(initialTargetWatchlist);
   
@@ -114,9 +121,9 @@ export function CommandPalette({ onClose, onWidthChange }: { onClose: () => void
   }, [initialTargetWatchlist]);
 
   const { data: searchResults, isPending, error } = useQuery({
-    queryKey: ['searchSymbols', search],
-    queryFn: () => api.searchSymbols(search, 40),
-    enabled: search.length > 0 && batchSymbols.length === 0 && !search.toLowerCase().startsWith('scan') && !("scan".startsWith(search.toLowerCase())),
+    queryKey: ['searchSymbols', debouncedSearch],
+    queryFn: () => api.searchSymbols(debouncedSearch, 40),
+    enabled: debouncedSearch.length > 0 && batchSymbols.length === 0 && !debouncedSearch.toLowerCase().startsWith('scan') && !("scan".startsWith(debouncedSearch.toLowerCase())),
   });
 
   const handleSelectSymbol = (symbol: string) => {

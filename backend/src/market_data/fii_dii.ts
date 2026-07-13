@@ -28,11 +28,11 @@ export interface FIIDIISnapshot {
 
 let cache: FIIDIISnapshot | null = null;
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24h
+let isFetching = false;
 
-export async function fetchFIIDIIData(): Promise<FIIDIISnapshot | null> {
-  if (cache && Date.now() - cache.fetchedAt.getTime() < CACHE_TTL_MS) {
-    return cache;
-  }
+async function doFetchFIIDIIData(): Promise<FIIDIISnapshot | null> {
+  if (isFetching) return cache;
+  isFetching = true;
 
   try {
     // 1. Get cookies from NSE homepage
@@ -98,39 +98,23 @@ export async function fetchFIIDIIData(): Promise<FIIDIISnapshot | null> {
 
     cache = { fiiNetInr: fiiNet, diiNetInr: diiNet, fetchedAt: new Date() };
     resetDivergenceCache();
-    logger.info({ fiiNet, diiNet }, "FII/DII data updated from NSE API");
     return cache;
   } catch (err) {
-    logger.warn({ err: (err as Error).message }, "FII/DII fetch failed from NSE. Returning fallback data.");
-    // Fallback data since NSE blocks scrapers
-    // Fallback data since NSE blocks scrapers
-    const fallbackFii = -1254.32;
-    const fallbackDii = 2154.10;
-    
-    const todayStr = new Date().toISOString().split("T")[0];
-    try {
-      await db.insert(institutionalFlowsTable)
-        .values({
-          date: todayStr,
-          fiiNet: fallbackFii,
-          diiNet: fallbackDii,
-          fiiIndexFuturesNet: 0,
-          fiiStockFuturesNet: 0,
-        })
-        .onConflictDoUpdate({
-          target: institutionalFlowsTable.date,
-          set: { fiiNet: fallbackFii, diiNet: fallbackDii }
-        });
-    } catch (dbErr) {
-      // Ignore
-    }
-
-    resetDivergenceCache();
-
-    return {
-      fiiNetInr: fallbackFii,
-      diiNetInr: fallbackDii,
-      fetchedAt: new Date()
-    };
+    logger.warn({ err: (err as Error).message }, "FII/DII fetch failed");
+    return null;
+  } finally {
+    isFetching = false;
   }
+}
+
+export async function fetchFIIDIIData(): Promise<FIIDIISnapshot | null> {
+  if (cache && Date.now() - cache.fetchedAt.getTime() < CACHE_TTL_MS) {
+    return cache;
+  }
+  
+  // Background fetch
+  doFetchFIIDIIData().catch(err => logger.error({ err }, "FII/DII background fetch failed"));
+  
+  // Return stale cache or null immediately so we don't block
+  return cache;
 }

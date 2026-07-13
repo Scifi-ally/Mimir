@@ -82,6 +82,7 @@ message MarketFullFeed {
   MarketLevel marketLevel = 2;
   OptionGreeks optionGreeks = 3;
   MarketOHLC marketOHLC = 4;
+  ExtendedFeedDetails eFeedDetails = 5;
 }
 
 message IndexFullFeed {
@@ -90,6 +91,7 @@ message IndexFullFeed {
   double lastClose = 3;
   double yh = 4;
   double yl = 5;
+  ExtendedFeedDetails eFeedDetails = 6;
 }
 
 message FullFeed {

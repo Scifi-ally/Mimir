@@ -794,6 +794,7 @@ async function generateIntraDaySuggestion(
         reasoning: [`Intraday signal: ${monitored.watchlistEntry.condition}`],
         generatedAt: Date.now(),
         expiresAt: Date.now() + 20 * 60_000,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } as any
     });
 

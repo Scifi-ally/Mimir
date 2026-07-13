@@ -27,10 +27,30 @@ export const SupportResistancePanel = React.memo(function SupportResistancePanel
   const liveData = useSymbolData(selectedSymbol);
   const currentPrice = liveData?.ltp || 0;
 
-  const levels = useMemo(() => {
-    if (!candlesQuery.data?.candles || currentPrice === 0) return null;
-    return calculateSRLevels(candlesQuery.data.candles, currentPrice);
-  }, [candlesQuery.data, currentPrice]);
+  const baseLevels = useMemo(() => {
+    if (!candlesQuery.data?.candles || candlesQuery.data.candles.length === 0) return null;
+    const lastClose = candlesQuery.data.candles[candlesQuery.data.candles.length - 1].close;
+    return calculateSRLevels(candlesQuery.data.candles, lastClose);
+  }, [candlesQuery.data?.candles]);
+
+  const { r1, r2, s1, s2, confluenceScore } = useMemo(() => {
+    if (!baseLevels || currentPrice === 0) return { r1: null, r2: null, s1: null, s2: null, confluenceScore: 0 };
+    const resistance = baseLevels.filter((l) => l.price > currentPrice).sort((a, b) => a.price - b.price);
+    const support = baseLevels.filter((l) => l.price <= currentPrice).sort((a, b) => b.price - a.price);
+
+    const r1 = resistance[0];
+    const s1 = support[0];
+    const maxSources = 4;
+    const conf = Math.min(100, Math.max(0, (((r1?.sources.length || 1) + (s1?.sources.length || 1)) / (maxSources * 2)) * 100 + 40));
+
+    return {
+      r1,
+      r2: resistance[1],
+      s1,
+      s2: support[1],
+      confluenceScore: conf
+    };
+  }, [baseLevels, currentPrice]);
 
   if (!selectedSymbol) {
     return (
@@ -40,7 +60,7 @@ export const SupportResistancePanel = React.memo(function SupportResistancePanel
     );
   }
 
-  if (candlesQuery.isPending || !levels) {
+  if (candlesQuery.isPending || !baseLevels) {
     return (
       <div className="h-full bg-transparent flex flex-col items-center justify-center text-neutral-600">
         <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent mb-3" />
@@ -48,22 +68,10 @@ export const SupportResistancePanel = React.memo(function SupportResistancePanel
     );
   }
 
-  const resistance = levels.filter((l) => l.type === "resistance").sort((a, b) => a.price - b.price); // Nearest first
-  const support = levels.filter((l) => l.type === "support").sort((a, b) => b.price - a.price); // Nearest first
-
-  const r1 = resistance[0];
-  const r2 = resistance[1];
-  const s1 = support[0];
-  const s2 = support[1];
-
   const r1Dist = r1 && currentPrice > 0 ? ((r1.price - currentPrice) / currentPrice) * 100 : 0;
   const s1Dist = s1 && currentPrice > 0 ? ((s1.price - currentPrice) / currentPrice) * 100 : 0;
   const r2Dist = r2 && currentPrice > 0 ? ((r2.price - currentPrice) / currentPrice) * 100 : 0;
-  const s2Dist = s2 && currentPrice > 0 ? ((s2.price - currentPrice) / currentPrice) * 100 : 0;
-
-  // Calculate confluence percentage based on how many sources merged into the nearest levels
-  const maxSources = 4;
-  const confluenceScore = Math.min(100, Math.max(0, (((r1?.sources.length || 1) + (s1?.sources.length || 1)) / (maxSources * 2)) * 100 + 40)); 
+  const s2Dist = s2 && currentPrice > 0 ? ((s2.price - currentPrice) / currentPrice) * 100 : 0; 
 
   return (
     <div className="bg-transparent flex flex-col text-card-foreground pt-1 pb-0 overflow-hidden border-0 shrink-0">

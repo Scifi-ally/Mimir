@@ -5,6 +5,7 @@ import {
   decimal,
   timestamp,
   jsonb,
+  index,
 } from "drizzle-orm/pg-core";
 import { suggestionsTable } from "./suggestions";
 
@@ -19,7 +20,11 @@ export const aiScoresTable = pgTable("ai_scores", {
   compositeScore: decimal("composite_score", { precision: 5, scale: 2 }).notNull(),
   features: jsonb("features").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => ({
+  symbolIdx: index("idx_ai_scores_symbol").on(t.symbol),
+  suggestionIdIdx: index("idx_ai_scores_suggestion_id").on(t.suggestionId),
+  createdAtIdx: index("idx_ai_scores_created_at").on(t.createdAt),
+}));
 
 export type AiScore = typeof aiScoresTable.$inferSelect;
 export type InsertAiScore = typeof aiScoresTable.$inferInsert;

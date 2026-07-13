@@ -26,6 +26,7 @@ export interface OptionChainSnapshot {
 
 let cache: OptionChainSnapshot | null = null;
 const CACHE_TTL_MS = 15 * 60 * 1000; // 15 mins
+let isFetching = false;
 
 async function getNSECookies(): Promise<string> {
   const resp = await axios.get(NSE_BASE, {
@@ -38,11 +39,9 @@ async function getNSECookies(): Promise<string> {
   return Array.isArray(raw) ? raw.map(c => c.split(";")[0]).join("; ") : (raw as string).split(";")[0] ?? "";
 }
 
-export async function fetchOptionChainData(): Promise<OptionChainSnapshot | null> {
-  if (cache && Date.now() - cache.fetchedAt.getTime() < CACHE_TTL_MS) {
-    return cache;
-  }
-
+async function doFetchOptionChain(): Promise<OptionChainSnapshot | null> {
+  if (isFetching) return cache;
+  isFetching = true;
   try {
     const cookies = await getNSECookies();
 
@@ -93,5 +92,19 @@ export async function fetchOptionChainData(): Promise<OptionChainSnapshot | null
   } catch (err) {
     logger.warn({ err }, "Option Chain fetch failed");
     return null;
+  } finally {
+    isFetching = false;
   }
+}
+
+export async function fetchOptionChainData(): Promise<OptionChainSnapshot | null> {
+  if (cache && Date.now() - cache.fetchedAt.getTime() < CACHE_TTL_MS) {
+    return cache;
+  }
+  
+  // Background fetch
+  doFetchOptionChain().catch(err => logger.error({ err }, "Option chain background fetch failed"));
+  
+  // Return stale cache or null immediately so we don't block
+  return cache;
 }

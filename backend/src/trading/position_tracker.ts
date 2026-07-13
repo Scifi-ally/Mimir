@@ -73,8 +73,11 @@ export async function initPositionTracker() {
               })
               .where(eq(suggestionsTable.id, pos.id));
 
-            pos.highestPrice = highestPrice.toFixed(2);
-            pos.lowestPrice = lowestPrice.toFixed(2);
+            const currentPos = activePositions.find(p => p.id === pos.id);
+            if (currentPos) {
+              currentPos.highestPrice = highestPrice.toFixed(2);
+              currentPos.lowestPrice = lowestPrice.toFixed(2);
+            }
           }
           continue;
         }
@@ -124,10 +127,13 @@ export async function initPositionTracker() {
             })
             .where(eq(suggestionsTable.id, pos.id));
 
-          // Update local memory representation
-          pos.stopLoss = newStop.toFixed(2);
-          pos.highestPrice = highestPrice.toFixed(2);
-          pos.lowestPrice = lowestPrice.toFixed(2);
+          // Update local memory representation safely
+          const currentPos = activePositions.find(p => p.id === pos.id);
+          if (currentPos) {
+            currentPos.stopLoss = newStop.toFixed(2);
+            currentPos.highestPrice = highestPrice.toFixed(2);
+            currentPos.lowestPrice = lowestPrice.toFixed(2);
+          }
 
           logger.info(
             {

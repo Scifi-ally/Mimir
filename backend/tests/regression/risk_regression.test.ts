@@ -1,10 +1,11 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import { assessRisk } from "../../src/analysis/risk_engine";
 
 describe("Risk Engine Regression", () => {
   it("should assess risk correctly for a simple mock setup", async () => {
     // We will provide stubs and mock setups to assessRisk
     // This ensures risk boundaries (capital limits, position limits, RR) remain structurally the same.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const mockSetup: any = {
       direction: "BUY",
       entryPrice: 100,
@@ -15,6 +16,7 @@ describe("Risk Engine Regression", () => {
       score: 85,
     };
     
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const mockSnapshot: any = {
       close: 100,
       ema20: 95,
@@ -25,6 +27,7 @@ describe("Risk Engine Regression", () => {
       avgDailyVolume: 1000000,
     };
     
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const mockStock = { symbol: "TEST" } as any;
 
     const result = await assessRisk(mockSetup, mockSnapshot, "TECH", mockStock);

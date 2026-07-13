@@ -45,20 +45,38 @@ export class ErrorBoundary extends Component<Props, State> {
           }}>
             {this.state.error?.message}
           </pre>
-          <button 
-            onClick={() => window.location.reload()}
-            style={{
-              marginTop: "16px",
-              padding: "8px 16px",
-              background: "#1FCB6E",
-              color: "#000",
-              border: "none",
-              cursor: "pointer",
-              fontWeight: "bold"
-            }}
-          >
-            Reload Application
-          </button>
+          <div style={{ display: "flex", gap: "12px", marginTop: "16px" }}>
+            <button 
+              onClick={() => window.location.reload()}
+              style={{
+                padding: "8px 16px",
+                background: "#1FCB6E",
+                color: "#000",
+                border: "none",
+                cursor: "pointer",
+                fontWeight: "bold",
+                borderRadius: "4px"
+              }}
+            >
+              Reload Application
+            </button>
+            <button 
+              onClick={() => {
+                window.location.href = "/";
+              }}
+              style={{
+                padding: "8px 16px",
+                background: "transparent",
+                color: "#F2F2F2",
+                border: "1px solid #F2F2F2",
+                cursor: "pointer",
+                fontWeight: "bold",
+                borderRadius: "4px"
+              }}
+            >
+              Go to Home
+            </button>
+          </div>
         </div>
       );
     }

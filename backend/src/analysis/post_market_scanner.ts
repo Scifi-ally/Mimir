@@ -221,6 +221,12 @@ export async function runPostMarketFullScan(
     scannerState.running = false;
     scannerState.finishedAt = new Date().toISOString();
     logger.error({ err }, "Post-market scan failed");
+    broadcast(
+      createServerEvent.scanCompleted({
+        suggestionsGenerated: 0,
+        duration: Date.now() - startTime,
+      }),
+    );
     return [];
   } finally {
     endWorkflow("POSTMARKET_SCAN", workflowSuccess, workflowFailureReason);

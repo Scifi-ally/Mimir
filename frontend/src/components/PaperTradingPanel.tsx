@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import type { Variants } from "framer-motion";
 import { cn, fmtNum } from "@/lib/format";
 import { useStore } from "@/store/useStore";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 const staggerContainer: Variants = {
   hidden: { opacity: 0 },
@@ -25,39 +26,34 @@ const staggerItem: Variants = {
 import type { PaperAccount, PaperPosition } from "@/types/api";
 
 export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClose?: () => void }) {
-  const [account, setAccount] = useState<PaperAccount | null>(null);
-  const [positions, setPositions] = useState<PaperPosition[]>([]);
-  const [history, setHistory] = useState<PaperPosition[]>([]);
   const [activeTab, setActiveTab] = useState<"positions" | "history">("positions");
   const showIsland = useStore((s) => s.showIsland);
+  const queryClient = useQueryClient();
 
-  const fetchData = async () => {
-    try {
-      const [acc, pos, hist] = await Promise.all([
-        api.paperTrading.account(),
-        api.paperTrading.positions(),
-        api.paperTrading.history(),
-      ]);
-      setAccount(acc);
-      setPositions(pos || []);
-      setHistory(hist || []);
-    } catch (e) {
-      console.error(e);
-      showIsland({
-        title: "Connection Error",
-        subtitle: "Failed to fetch paper trading data.",
-        isDestructive: true,
-      });
-    }
-  };
+  const { data: accountData } = useQuery({
+    queryKey: ["paperTrading", "account"],
+    queryFn: api.paperTrading.account,
+    enabled: isOpen,
+    refetchInterval: 5000,
+  });
 
-  useEffect(() => {
-    if (!isOpen) return;
-    fetchData();
-    const interval = setInterval(fetchData, 5000);
-    return () => clearInterval(interval);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen]);
+  const { data: positionsData } = useQuery({
+    queryKey: ["paperTrading", "positions"],
+    queryFn: api.paperTrading.positions,
+    enabled: isOpen,
+    refetchInterval: 5000,
+  });
+
+  const { data: historyData } = useQuery({
+    queryKey: ["paperTrading", "history"],
+    queryFn: api.paperTrading.history,
+    enabled: isOpen,
+    refetchInterval: 5000,
+  });
+
+  const account = accountData || null;
+  const positions = positionsData || [];
+  const history = historyData || [];
 
   const handleReset = () => {
     showIsland({
@@ -68,7 +64,11 @@ export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClo
       isDestructive: true,
       onConfirm: async () => {
         await api.paperTrading.reset();
-        await fetchData();
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ["paperTrading", "account"] }),
+          queryClient.invalidateQueries({ queryKey: ["paperTrading", "positions"] }),
+          queryClient.invalidateQueries({ queryKey: ["paperTrading", "history"] }),
+        ]);
       }
     });
   };

@@ -311,7 +311,7 @@ export class UpstoxConnectionManager {
           if (ff.marketFF) {
             const marketFF = ff.marketFF;
             lastPrice = Number(marketFF.ltpc?.ltp ?? 0);
-            volume = Number(marketFF.eFeedDetails?.tv ?? 0);
+            volume = parseInt(marketFF.eFeedDetails?.tv?.toString() || "0", 10);
             const bidAsk = marketFF.marketLevel?.bidAskQuote;
             if (bidAsk && bidAsk.length > 0) {
               bid = Number(bidAsk[0].bp ?? 0) || null;

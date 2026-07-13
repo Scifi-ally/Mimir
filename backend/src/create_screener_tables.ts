@@ -54,6 +54,7 @@ async function run() {
     );
   `);
   console.log("Successfully created/verified all screener tables.");
+  await pool.end();
   process.exit(0);
 }
 run();

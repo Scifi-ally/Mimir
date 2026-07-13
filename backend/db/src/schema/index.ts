@@ -6,6 +6,7 @@ export * from "./trading_config";
 export * from "./upstox_token";
 export * from "./ai_scores";
 export * from "./paper_trading";
+export * from "./reports";
 export * from "./market_regimes";
 export * from "./signal_outcomes";
 export * from "./learning_analytics";

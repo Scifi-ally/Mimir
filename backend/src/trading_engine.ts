@@ -13,9 +13,9 @@ import { fileURLToPath } from "url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Global process-level crash guards
-process.on("unhandledRejection", (reason, promise) => {
-  logger.fatal({ promise, reason }, "TRADING ENGINE CRITICAL: Unhandled Promise Rejection detected");
-  process.exit(1);
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+process.on("unhandledRejection", (reason: any, promise) => {
+  logger.error({ promise, reason: reason instanceof Error ? reason.stack : reason }, "TRADING ENGINE CRITICAL: Unhandled Promise Rejection detected");
 });
 
 process.on("uncaughtException", (err) => {

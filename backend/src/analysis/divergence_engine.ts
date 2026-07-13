@@ -37,7 +37,8 @@ export async function computeFiiDiiDivergence(): Promise<DivergenceResult> {
     const totalFlow5d = fiiNet5d + diiNet5d;
 
     const queryOptions = { period1: new Date(Date.now() - 15 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], interval: "1d" as const };
-    const result = await yahooFinance.historical("^NSEI", queryOptions);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = (await yahooFinance.historical("^NSEI", queryOptions)) as any[];
     
     if (result.length < 5) return defaultRes;
     

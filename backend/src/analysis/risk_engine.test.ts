@@ -171,7 +171,6 @@ describe("risk engine", async () => {
   });
 
   it("rejects when aggregate deployed capital exceeds limit", async () => {
-    // @ts-ignore
     config.maxDeployedCapitalPct = 50;
     config.maxSameDirectionOpenPositions = 5;
     config.maxSectorExposure = 5;

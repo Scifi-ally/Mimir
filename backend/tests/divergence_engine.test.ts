@@ -26,6 +26,7 @@ vi.mock("../db/src", () => {
 
 // Since the module is mocked, we can just grab the limitMock from db.select().from().orderBy().limit
 const getLimitMock = () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return (db.select().from({} as any).orderBy({} as any) as any).limit;
 };
 
@@ -46,6 +47,7 @@ describe("Divergence Engine", () => {
     ]); // Total = 500+500+500-250+200+200+800+0+50+0 = 2500 Cr
 
     // Nifty returns: falls by 2%
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (yahooFinance.historical as any).mockResolvedValue([
       { close: 20000 },
       { close: 19900 },
@@ -75,6 +77,7 @@ describe("Divergence Engine", () => {
     ]);
 
     // Nifty returns: rallies by 2%
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (yahooFinance.historical as any).mockResolvedValue([
       { close: 20000 },
       { close: 20100 },

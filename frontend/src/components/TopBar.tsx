@@ -1,4 +1,4 @@
-import { KeyRound, Moon, Sun, Play, BarChart2, Wallet, Plus, Loader2 } from "lucide-react";
+import { KeyRound, Moon, Sun, Play, BarChart2, Wallet, Plus, Loader2, FileText } from "lucide-react";
 import { useState, useEffect, useRef, memo } from "react";
 import { motion } from "framer-motion";
 import { flushSync } from "react-dom";
@@ -20,6 +20,7 @@ interface TopBarProps {
   scanProgress?: number;
   onOpenSuggestions: () => void;
   onOpenPaperTrading: () => void;
+  onOpenReports: () => void;
   onSelectSymbol?: (symbol: string) => void;
 }
 
@@ -37,6 +38,7 @@ export const TopBar = memo(function TopBar({
   scanProgress,
   onOpenSuggestions,
   onOpenPaperTrading,
+  onOpenReports,
   onSelectSymbol,
 }: TopBarProps) {
 
@@ -251,6 +253,18 @@ export const TopBar = memo(function TopBar({
               title="Add Custom Screener Condition"
             >
               <Plus className="h-4 w-4" />
+            </Button>
+            </motion.div>
+
+            <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={onOpenReports}
+              className="apple-hover h-6 w-6 p-0 flex items-center justify-center border-foreground/20 bg-transparent text-foreground/80 hover:bg-foreground hover:text-background transition-all duration-300 rounded-md"
+              title="Open Daily Reports"
+            >
+              <FileText className="h-4 w-4" />
             </Button>
             </motion.div>
 

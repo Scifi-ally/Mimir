@@ -677,6 +677,13 @@ export function startScheduler(): void {
     await runLearningPipeline();
   });
 
+  // ── POST-MARKET: 16:15 IST (10:45 UTC) Mon–Fri — generate daily report ──
+  scheduleJob("generate-daily-report", "15 16 * * 1-5", async () => {
+    const { generateDailyReport } = await import("../analysis/post_market_report");
+    logger.info("Post-market: generating daily report");
+    await generateDailyReport();
+  });
+
 
 
   // ── MIDNIGHT IST (18:30 UTC) Mon–Fri — cleanup + reset ───────────────────

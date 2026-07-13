@@ -176,6 +176,7 @@ class ScannerOrchestrator {
               // Also add it to the active suggestions map for real-time tracking
               this.suggestions.generate(opportunity);
 
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
               const signal: any = {
                 symbol: opportunity.symbol,
                 name: opportunity.symbol,

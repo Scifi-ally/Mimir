@@ -27,6 +27,7 @@ export function applyScoringWeights(
   hasStrongHigherTfContext: boolean,
   rs60: number,
   htfConf: "confirms" | "contradicts" | "neutral",
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   mtfSignal: any
 ): number {
   let adjustedScore = baseScore;

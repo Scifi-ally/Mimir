@@ -1,4 +1,6 @@
 import Redis from "ioredis";
+import axios from "axios";
+import { getConfig } from "../config";
 import { logger } from "../lib/logger";
 
 const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
@@ -104,6 +106,23 @@ export async function detectAlerts(
       await redis.ltrim(ALERTS_LIST_KEY, 0, 199);
       await redis.publish(ALERTS_PUBSUB_CHANNEL, alertStr);
       logger.info(`[Alert] ${symbol}: ${alert.message}`);
+
+      // Dispatch Webhooks
+      const config = getConfig();
+      if (config.discordWebhookUrl) {
+        axios.post(config.discordWebhookUrl, {
+          content: `**[Mimir Alert] ${symbol}**: ${alert.message}`
+        }).catch(err => logger.error({ err }, "Failed to send Discord webhook"));
+      }
+
+      if (config.telegramBotToken && config.telegramChatId) {
+        axios.post(`https://api.telegram.org/bot${config.telegramBotToken}/sendMessage`, {
+          chat_id: config.telegramChatId,
+          text: `<b>[Mimir Alert] ${symbol}</b>: ${alert.message}`,
+          parse_mode: "HTML"
+        }).catch(err => logger.error({ err }, "Failed to send Telegram webhook"));
+      }
+
     } catch (err) {
       logger.error({ err }, "Failed to publish alert");
     }

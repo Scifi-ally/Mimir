@@ -34,6 +34,9 @@ export interface TradingConfig {
   upstoxDataApiKey: string;
   upstoxDataApiSecret: string;
   upstoxRedirectUri: string;
+  discordWebhookUrl: string;
+  telegramBotToken: string;
+  telegramChatId: string;
   stopLossMode: string;
 }
 
@@ -43,16 +46,16 @@ export const defaultConfig: TradingConfig = {
   maxDailyLossPct: 3.0,
   maxOpenPositions: 5,
   maxSectorExposure: 2,
-  minRiskReward: 1.5,
+  minRiskReward: 1.8,
   minDailyVolume: 500000,
   vixPauseThreshold: 22,
-  minSuggestionScore: 5.5,  // Significantly lowered to generate suggestions on slow days
-  minMtfConfluencePct: 45,   // Significantly lowered for better balance on weak-pattern days
-  minAutoConfidencePct: 55,  // Lower adaptive confidence floor
+  minSuggestionScore: 7.5,  // Raised to enforce high quality setups only
+  minMtfConfluencePct: 75,   // Raised for strong multi-timeframe alignment
+  minAutoConfidencePct: 80,  // Raised for higher AI conviction
   brokeragePerOrderInr: 20,
   slippageBps: 5,
   confidenceThresholdByRegimeJson: '{"TRENDING_UP":70,"TRENDING_DOWN":70,"RANGING":74,"VOLATILE":78,"UNKNOWN":72}',
-  maxSameDirectionOpenPositions: 3,
+  maxSameDirectionOpenPositions: 2,
   avoidFirstMinutes: 10,
   avoidMiddayStartMinute: 150, // 11:45 IST (from 09:15)
   avoidMiddayEndMinute: 225,   // 13:00 IST
@@ -71,13 +74,16 @@ export const defaultConfig: TradingConfig = {
     if (devDomain) return `https://${devDomain}/api/system/auth-callback`;
     return "http://localhost:5000/api/system/auth-callback";
   })(),
+  discordWebhookUrl: "",
+  telegramBotToken: "",
+  telegramChatId: "",
   stopLossMode: "FIXED",
 };
 
 let _config: TradingConfig = { ...defaultConfig };
 
 export function getConfig(): TradingConfig {
-  return _config;
+  return { ..._config };
 }
 
 function applyConfig(partial: Partial<TradingConfig>): TradingConfig {
@@ -120,6 +126,9 @@ function rowToConfig(row: typeof tradingConfigTable.$inferSelect): TradingConfig
     upstoxDataApiKey: defaultConfig.upstoxDataApiKey,
     upstoxDataApiSecret: defaultConfig.upstoxDataApiSecret,
     upstoxRedirectUri: row.upstoxRedirectUri ?? defaultConfig.upstoxRedirectUri,
+    discordWebhookUrl: row.discordWebhookUrl ?? defaultConfig.discordWebhookUrl,
+    telegramBotToken: row.telegramBotToken ? revealSecret(row.telegramBotToken) : defaultConfig.telegramBotToken,
+    telegramChatId: row.telegramChatId ?? defaultConfig.telegramChatId,
     stopLossMode: row.stopLossMode ?? defaultConfig.stopLossMode,
   };
 }
@@ -152,6 +161,9 @@ function toDbValues(cfg: TradingConfig): typeof tradingConfigTable.$inferInsert 
     upstoxApiKey: cfg.upstoxApiKey,
     upstoxApiSecret: protectSecret(cfg.upstoxApiSecret),
     upstoxRedirectUri: cfg.upstoxRedirectUri,
+    discordWebhookUrl: cfg.discordWebhookUrl,
+    telegramBotToken: protectSecret(cfg.telegramBotToken),
+    telegramChatId: cfg.telegramChatId,
     stopLossMode: cfg.stopLossMode,
     updatedAt: new Date(),
   };
@@ -183,16 +195,28 @@ export async function initConfigFromDb(): Promise<TradingConfig> {
   }
 }
 
+let configUpdatePromise = Promise.resolve();
+
 export async function updateConfig(partial: Partial<TradingConfig>): Promise<TradingConfig> {
-  const next = applyConfig(partial);
+  let resolveLock: () => void;
+  const nextLock = new Promise<void>(res => { resolveLock = res; });
+  const currentLock = configUpdatePromise;
+  configUpdatePromise = nextLock;
+  
+  await currentLock;
+  try {
+    const next = applyConfig(partial);
 
-  await db
-    .insert(tradingConfigTable)
-    .values(toDbValues(next))
-    .onConflictDoUpdate({
-      target: tradingConfigTable.id,
-      set: toDbUpdateValues(next),
-    });
+    await db
+      .insert(tradingConfigTable)
+      .values(toDbValues(next))
+      .onConflictDoUpdate({
+        target: tradingConfigTable.id,
+        set: toDbUpdateValues(next),
+      });
 
-  return next;
+    return { ...next };
+  } finally {
+    resolveLock!();
+  }
 }

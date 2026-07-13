@@ -29,9 +29,11 @@ async function runMigrations() {
     // Since this file runs from dist/migrate.mjs, the migrations folder is in the root of backend/drizzle
     await migrate(db, { migrationsFolder: path.resolve(__dirname, "../drizzle") });
     console.log("Database migrations completed successfully.");
+    await pool.end();
     process.exit(0);
   } catch (err) {
     logger.error({ err }, "Migration failed");
+    await pool.end();
     process.exit(1);
   }
 }

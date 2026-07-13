@@ -59,7 +59,8 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
     queryKey: ['forecast', symbol],
     queryFn: () => api.forecast(symbol),
     enabled: Boolean(symbol),
-    refetchInterval: 10000,
+    retry: false,
+    refetchInterval: 300000,
   });
 
   const candles = useMemo(() => candleData?.candles ?? [], [candleData?.candles]);
@@ -295,15 +296,30 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
 
     // Sanitize candles to ensure strictly increasing time
     const sortedCandles = [...candles].sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
-    const uniqueLiveCandles = [];
-    let lastTime = 0;
-    for (const c of sortedCandles) {
-      const time = Math.floor(Date.parse(c.ts) / 1000);
-      if (time > lastTime && Number.isFinite(c.close) && c.close > 0 && Number.isFinite(c.open) && c.open > 0) {
-        uniqueLiveCandles.push({ ...c, parsedTime: time as Time });
-        lastTime = time;
-      }
-    }
+    const uniqueLiveCandles = sortedCandles
+      .filter((c, i, a) => {
+        if (i === 0) return true;
+        if (Date.parse(c.ts) === Date.parse(a[i - 1]!.ts)) return false;
+        
+        // Ensure data is valid
+        if (!Number.isFinite(c.close) || c.close <= 0 || !Number.isFinite(c.open) || c.open <= 0) {
+          return false;
+        }
+        
+        // Outlier rejection (spike filter for historical candles)
+        const prevClose = a[i - 1]!.close;
+        if (prevClose > 0 && Math.abs(c.close - prevClose) / prevClose > 0.25) {
+          // If a candle closes >25% away from previous close, it's almost certainly a bad tick.
+          return false;
+        }
+        return true;
+      })
+      .map(c => ({
+        ...c,
+        parsedTime: Math.floor(Date.parse(c.ts) / 1000) as Time,
+      }));
+    
+    let lastTime = uniqueLiveCandles.length > 0 ? (uniqueLiveCandles[uniqueLiveCandles.length - 1].parsedTime as number) : 0;
     
     // Only reset liveBar if the latest candle from API has caught up or surpassed it
     if (liveBarRef.current && (liveBarRef.current.time as number) <= lastTime) {

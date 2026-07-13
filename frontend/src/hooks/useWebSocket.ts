@@ -171,7 +171,7 @@ export function useWebSocket() {
       }
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const pendingTicks = new Map<string, any>();
-      let rafPending = false;
+      let rafId: number | null = null;
 
       worker.onmessage = ({ data }) => {
         if (!data.ok) return;
@@ -182,12 +182,11 @@ export function useWebSocket() {
             if (Array.isArray(event.data)) {
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               event.data.forEach((t: any) => pendingTicks.set(t.symbol, t));
-              if (!rafPending) {
-                rafPending = true;
-                requestAnimationFrame(() => {
+              if (rafId === null) {
+                rafId = requestAnimationFrame(() => {
                   const ticks = new Map(pendingTicks);
                   pendingTicks.clear();
-                  rafPending = false;
+                  rafId = null;
                   
                   ticks.forEach((tick, symbol) => {
                     marketDataStore.updateFromTick(symbol, tick);
@@ -317,6 +316,8 @@ export function useWebSocket() {
 
     return () => {
       cancelled = true;
+      Object.values(invalidationTimeouts).forEach(clearTimeout);
+      if (rafId !== null) cancelAnimationFrame(rafId);
       if (reconnectTimerInt != null) window.clearTimeout(reconnectTimerInt);
       if (reconnectTimerMd != null) window.clearTimeout(reconnectTimerMd);
       clearPing();

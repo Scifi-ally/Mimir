@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { X } from 'lucide-react';
+import { X, Copy, Check } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn, fmtNum, calcPnLPct } from '@/lib/format';
 import { useQuery } from '@tanstack/react-query';
@@ -18,6 +18,31 @@ function formatDateGroup(dateStr: string | Date): string {
   if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
   
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+function formatSuggestionText(s: import("@/types/api").Suggestion): string {
+  return `${s.direction} ${s.symbol} @ ₹${fmtNum(s.entryPrice)} | TG: ₹${fmtNum(s.target1)} | SL: ₹${fmtNum(s.stopLoss)}`;
+}
+
+function CopyButton({ text, tooltip, className }: { text: string; tooltip?: string, className?: string }) {
+  const [copied, setCopied] = useState(false);
+  
+  const handleCopy = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+  
+  return (
+    <button
+      onClick={handleCopy}
+      title={tooltip || "Copy"}
+      className={cn("p-1.5 rounded-full bg-secondary/50 hover:bg-secondary text-muted-foreground hover:text-foreground transition-all pointer-events-auto active:scale-95", className)}
+    >
+      {copied ? <Check className="w-3.5 h-3.5 text-bull" /> : <Copy className="w-3.5 h-3.5" />}
+    </button>
+  );
 }
 
 export function SuggestionsSlider({ isOpen, onClose, onSelectSymbol }: { isOpen: boolean; onClose: () => void; onSelectSymbol?: (symbol: string) => void }) {
@@ -206,10 +231,18 @@ export function SuggestionsSlider({ isOpen, onClose, onSelectSymbol }: { isOpen:
                   return (
                     <div key={dateLabel} className="flex flex-col gap-6 relative">
                       {/* Sticky Date Header */}
-                      <div className="sticky top-0 z-10 py-2 pointer-events-none flex items-start">
+                      <div className="sticky top-0 z-10 py-2 pointer-events-none flex items-center gap-2">
                         <div className="inline-flex items-center px-3 py-1 rounded-full bg-background/95 border border-border/20 text-[10px] font-mono font-bold tracking-widest text-muted-foreground uppercase shadow-sm backdrop-blur-md pointer-events-auto">
                           {dateLabel}
                         </div>
+                        <CopyButton 
+                          tooltip={`Copy all for ${dateLabel}`} 
+                          text={[
+                            ...(showActive ? group.active : []),
+                            ...(showCompleted ? group.completed : []),
+                            ...(showCompleted ? group.expired : [])
+                          ].map(formatSuggestionText).join('\n')}
+                        />
                       </div>
 
                       <div className="flex flex-col gap-6 pl-2">
@@ -383,6 +416,11 @@ function SuggestionCard({ s, onSelectSymbol, onClose }: {
           ) : (
             <span className="font-mono font-bold text-sm text-muted-foreground/50">—</span>
           )}
+        </div>
+
+        {/* Copy Button */}
+        <div className="flex items-center border-l border-border/10 pl-4 ml-2">
+          <CopyButton text={formatSuggestionText(s)} tooltip="Copy signal" />
         </div>
       </div>
     </div>

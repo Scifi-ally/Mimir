@@ -124,6 +124,12 @@ export interface ActiveSuggestion {
   generatedAt: number;
   expiresAt: number;
   isNew?: boolean;
+  marketRegime?: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  signalFactors?: Record<string, any>;
+  aiScore?: number;
+  patternScore?: number;
+  technicalScore?: number;
 }
 
 export interface BreadthSnapshot {

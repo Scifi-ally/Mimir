@@ -19,11 +19,16 @@ import time
 from contextlib import asynccontextmanager, suppress
 import sys
 import importlib
+import threading
 from typing import Any, Dict, List, Optional
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 from pydantic import BaseModel, Field, field_validator
 
 from models import technical_pattern_engine, chronos_service
@@ -43,7 +48,7 @@ _HEALTH_REFRESH_INTERVAL_SEC = 60.0
 _HEALTH_MONITOR_TASK: Optional[asyncio.Task[None]] = None
 _LAST_HEALTH_SNAPSHOT: Optional[Dict[str, Any]] = None
 _LAST_HEALTH_REFRESH_TS: float = 0.0
-
+_HEALTH_LOCK = threading.Lock()
 
 class RuntimeDiagnostics:
     """Collect live runtime diagnostics from torch, ONNX Runtime, and the OS."""
@@ -203,8 +208,9 @@ def _refresh_health_snapshot() -> Dict[str, Any]:
     global _LAST_HEALTH_SNAPSHOT, _LAST_HEALTH_REFRESH_TS
 
     snapshot = _build_health_snapshot()
-    _LAST_HEALTH_SNAPSHOT = snapshot
-    _LAST_HEALTH_REFRESH_TS = time.time()
+    with _HEALTH_LOCK:
+        _LAST_HEALTH_SNAPSHOT = snapshot
+        _LAST_HEALTH_REFRESH_TS = time.time()
     return snapshot
 
 
@@ -271,7 +277,6 @@ async def lifespan(app: FastAPI):
     # Start model loading in a background thread so Uvicorn binds to :8001
     # immediately.  The /health endpoint already handles degraded mode when
     # models aren't ready yet.
-    import threading
     loader = threading.Thread(target=_load_all_models, name="model-loader", daemon=True)
     loader.start()
     logger.info("=== Loading models in background thread ===")
@@ -404,8 +409,11 @@ _start_time: float = time.time()
 @app.get("/health", response_model=HealthResponse, tags=["Health"])
 async def health():
     """Return service health, model status, and rich GPU/CUDA diagnostics."""
-    snapshot = _LAST_HEALTH_SNAPSHOT
-    if snapshot is None or (time.time() - _LAST_HEALTH_REFRESH_TS) > _HEALTH_REFRESH_INTERVAL_SEC:
+    with _HEALTH_LOCK:
+        snapshot = _LAST_HEALTH_SNAPSHOT
+        ts = _LAST_HEALTH_REFRESH_TS
+    
+    if snapshot is None or (time.time() - ts) > _HEALTH_REFRESH_INTERVAL_SEC:
         snapshot = _refresh_health_snapshot()
 
     return HealthResponse(
@@ -538,16 +546,16 @@ async def infer_batch(req: BatchRequest):
                         if not db_url: return 0.0
                         try:
                             import psycopg2
-                            conn = psycopg2.connect(db_url)
-                            cur = conn.cursor()
-                            cur.execute("""
-                                SELECT value FROM fundamental_snapshots
-                                WHERE symbol = %s AND field_name = 'sentiment_composite' AND field_date <= %s
-                                ORDER BY field_date DESC LIMIT 1
-                            """, (cand.symbol, cand.as_of_date))
-                            row = cur.fetchone()
-                            conn.close()
-                            return float(row[0]) if row else 0.0
+                            from contextlib import closing
+                            with closing(psycopg2.connect(db_url)) as conn:
+                                with conn.cursor() as cur:
+                                    cur.execute("""
+                                        SELECT value FROM fundamental_snapshots
+                                        WHERE symbol = %s AND field_name = 'sentiment_composite' AND filed_date <= %s
+                                        ORDER BY filed_date DESC LIMIT 1
+                                    """, (cand.symbol, cand.as_of_date))
+                                    row = cur.fetchone()
+                                    return float(row[0]) if row else 0.0
                         except Exception as e:
                             logger.error(f"Failed to fetch historical sentiment: {e}")
                             return 0.0

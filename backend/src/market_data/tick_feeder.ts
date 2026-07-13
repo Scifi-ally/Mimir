@@ -104,9 +104,9 @@ export async function initTickFeeder(stocks: Array<{ symbol: string; key: string
     const bid = tickEvent.bid ?? lastPrice - 0.05;
     const ask = tickEvent.ask ?? lastPrice + 0.05;
 
-    // if (lastPrice === sub.lastPrice && volume === sub.volume) {
-    //   return; // Ignore unchanged ticks
-    // }
+    if (lastPrice === sub.lastPrice && volume === sub.volume) {
+      return; // Ignore unchanged ticks
+    }
 
     sub.lastPrice = lastPrice;
     sub.volume = volume;

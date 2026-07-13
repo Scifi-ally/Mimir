@@ -7,7 +7,7 @@ import { getISTDateStr, getLastCompletedTradingDayStr, shiftISTDateStr } from ".
 import { logApiError, sendFallback } from "../lib/api-errors";
 import axios, { AxiosError } from "axios";
 import { desc, eq } from "drizzle-orm";
-import { desc, eq } from "drizzle-orm";
+import { db, overnightWatchlistTable } from "../../db/src";
 import { upstoxClient, fetchIndexPrevClose } from "./market_utils";
 import { getFiiDiiDivergence, type DivergenceResult } from "../analysis/divergence_engine";
 import { computeOFI } from "../analysis/order_flow";
@@ -148,7 +148,8 @@ const OfiQuerySchema = z.object({
 router.get("/market/ofi", (req, res) => {
   const result = OfiQuerySchema.safeParse(req.query);
   if (!result.success) {
-    return res.status(400).json({ error: "Invalid symbol parameter", details: result.error.format() });
+    res.status(400).json({ error: "Invalid symbol parameter", details: result.error.format() });
+    return;
   }
   const symbol = result.data.symbol;
   

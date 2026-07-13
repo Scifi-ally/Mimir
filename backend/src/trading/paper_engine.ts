@@ -195,6 +195,16 @@ export async function initPaperEngine() {
           orderType: "ENTRY",
           quantity,
           price: entry.toFixed(2),
+          contextData: {
+            regime: suggestion.marketRegime,
+            confidence: suggestion.confidence,
+            factors: suggestion.signalFactors,
+            scores: {
+              ai: suggestion.aiScore,
+              pattern: suggestion.patternScore,
+              tech: suggestion.technicalScore
+            }
+          },
           status: "EXECUTED"
         });
 
@@ -293,7 +303,7 @@ export async function initPaperEngine() {
 
         if (exitReason) {
           // Circuit limit guard: If volume is 0 or bid/ask is missing when trying to exit, it means liquidity vanished (circuit hit).
-          if (tick.volume === 0 || (isBuy && tick.bid === 0) || (!isBuy && tick.ask === 0)) {
+          if ((tick.volume == null || tick.volume === 0) || (isBuy && (tick.bid == null || tick.bid === 0)) || (!isBuy && (tick.ask == null || tick.ask === 0))) {
             logger.warn({ symbol: pos.symbol, exitReason, bid: tick.bid, ask: tick.ask }, "PaperEngine: Deferred exit due to suspected circuit limit or zero liquidity");
             continue;
           }

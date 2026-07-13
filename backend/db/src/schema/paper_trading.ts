@@ -6,6 +6,7 @@ import {
   integer,
   timestamp,
   index,
+  jsonb,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 
@@ -40,6 +41,7 @@ export const paperOrdersTable = pgTable("paper_orders", {
   quantity: integer("quantity").notNull(),
   price: decimal("price", { precision: 10, scale: 2 }).notNull(),
   status: varchar("status", { length: 20 }).notNull().default("EXECUTED"),
+  contextData: jsonb("context_data"),
   executedAt: timestamp("executed_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => ({
   symbolIdx: index("paper_orders_symbol_idx").on(table.symbol),

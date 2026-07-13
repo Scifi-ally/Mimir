@@ -16,9 +16,9 @@ import { fileURLToPath } from "url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Global process-level crash guards to prevent automatic server shutdowns
-process.on("unhandledRejection", (reason, promise) => {
-  logger.fatal({ promise, reason }, "CRITICAL: Unhandled Promise Rejection detected in process");
-  process.exit(1);
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+process.on("unhandledRejection", (reason: any, promise) => {
+  logger.error({ promise, reason: reason instanceof Error ? reason.stack : reason }, "CRITICAL: Unhandled Promise Rejection detected in process");
 });
 
 process.on("uncaughtException", (err) => {

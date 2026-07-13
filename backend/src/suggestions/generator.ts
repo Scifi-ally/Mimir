@@ -362,8 +362,6 @@ export async function generateSuggestionsFromWatchlist(options?: {
 
     const slotsAvailable = cfg.maxOpenPositions - openSuggestions.length;
     const existingSymbols = new Set(openSuggestions.map((s) => normalizeSymbol(s.symbol)));
-    let openBuyCount = openSuggestions.filter((s) => s.direction === "BUY").length;
-    let openSellCount = openSuggestions.filter((s) => s.direction === "SELL").length;
 
     const marketMinute = getSessionMinuteIST();
     if (
@@ -619,11 +617,6 @@ export async function generateSuggestionsFromWatchlist(options?: {
         generated++;
         const sector = STOCK_SECTOR_MAP[signal.symbol] ?? "Other";
         sectorCounts[sector] = (sectorCounts[sector] ?? 0) + 1;
-        if (signal.signal === "BUY") {
-          openBuyCount += 1;
-        } else {
-          openSellCount += 1;
-        }
       }
     }
 
@@ -827,6 +820,7 @@ export async function ingestSignal(
         reasoning: [signal.reasoning],
         generatedAt: Date.now(),
         expiresAt: Date.now() + 20 * 60_000,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } as any
     });
 

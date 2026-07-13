@@ -2,6 +2,10 @@ import type { IntradayMonitoring } from "@/types/api";
 import { SessionStateSchema, MarketRegimeSchema, SuggestionSchema } from "./schemas";
 import { z } from "zod";
 
+export function hasAdminToken(): boolean {
+  return Boolean(localStorage.getItem("mimir_admin_token")?.trim());
+}
+
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const token = localStorage.getItem("mimir_admin_token");
   const headers = new Headers(init?.headers);
@@ -186,4 +190,5 @@ export const api = {
   }),
   get paper() { return this.paperTrading; },
   alertsHistory: () => apiFetch<import("@/types/api").AlertRecord[]>("/api/alerts/history"),
+  reports: () => apiFetch<Array<{ id: string; date: string; summary: string; content: string; createdAt: string }>>("/api/reports"),
 };

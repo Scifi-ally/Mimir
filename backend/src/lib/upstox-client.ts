@@ -6,6 +6,8 @@
  * - Request deduplication
  */
 import axios, { AxiosError } from "axios";
+import fs from "fs";
+import path from "path";
 import { logger } from "./logger";
 import { Cache, RequestDeduplicator } from "./cache";
 import {
@@ -41,12 +43,34 @@ function normalizeCandlesNewestFirst(candles: any[][]): any[][] {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     .filter((x): x is { row: any[]; ts: string; ms: number } => Boolean(x));
 
-  parsed.sort((a, b) => b.ms - a.ms);
+  // Sanity check: filter out dirty bars (negative prices) and fix inverted high/low
+  const sanitized = parsed.filter(item => {
+    const row = item.row;
+    if (row.length < 5) return false;
+    const o = Number(row[1]);
+    const h = Number(row[2]);
+    const l = Number(row[3]);
+    const c = Number(row[4]);
+
+    if (isNaN(o) || isNaN(h) || isNaN(l) || isNaN(c)) return false;
+    if (o <= 0 || h <= 0 || l <= 0 || c <= 0) return false;
+
+    // Fix inverted high/low — some feeds swap them during illiquid ticks
+    if (h < l) {
+      const maxVal = Math.max(h, l);
+      const minVal = Math.min(h, l);
+      row[2] = maxVal;
+      row[3] = minVal;
+    }
+    return true;
+  });
+
+  sanitized.sort((a, b) => b.ms - a.ms);
 
   const seen = new Set<string>();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const deduped: any[][] = [];
-  for (const item of parsed) {
+  for (const item of sanitized) {
     if (seen.has(item.ts)) continue;
     seen.add(item.ts);
     deduped.push(item.row);
@@ -494,11 +518,36 @@ export function createUpstoxClient(options?: {
   ): Promise<unknown[][]> {
     const cacheKey = `${instrumentKey}|${interval}|${toDate}|${fromDate}`;
 
-    // Check cache
+    // Check memory cache
     const cached = candleCache.get(cacheKey);
     if (cached) {
       recordHistoricalCacheHit(cached.length);
       return cached;
+    }
+
+    const cacheDir = path.resolve(process.cwd(), ".cache/market_data");
+    if (!fs.existsSync(cacheDir)) {
+      fs.mkdirSync(cacheDir, { recursive: true });
+    }
+    const safeCacheKey = cacheKey.replace(/[^a-zA-Z0-9]/g, "_");
+    const diskCachePath = path.join(cacheDir, `${safeCacheKey}.json`);
+
+    // Check disk cache (with TTL)
+    if (fs.existsSync(diskCachePath)) {
+      try {
+        const raw = fs.readFileSync(diskCachePath, "utf-8");
+        const envelope = JSON.parse(raw);
+        // Support both legacy arrays and new { data, ts } envelopes
+        const diskData = Array.isArray(envelope) ? envelope : envelope.data;
+        const cachedAt = Array.isArray(envelope) ? 0 : (envelope.ts as number) || 0;
+        if (Array.isArray(diskData) && diskData.length > 0 && (Date.now() - cachedAt) < cacheTimeMs) {
+          candleCache.set(cacheKey, diskData, cacheTimeMs);
+          recordHistoricalCacheHit(diskData.length);
+          return diskData;
+        }
+      } catch (err) {
+        logger.warn({ err }, "Failed to read historical data from disk cache");
+      }
     }
 
     return candleDeduplicator.execute(cacheKey, async () => {
@@ -538,6 +587,7 @@ export function createUpstoxClient(options?: {
           }
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           let candles: any[][] = [];
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           let lastError: any = null;
           try {
             candles = preferV3 ? await fetchV3() : await fetchV2();
@@ -612,6 +662,13 @@ export function createUpstoxClient(options?: {
       // Cache and return
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       candleCache.set(cacheKey, data as any[][], cacheTimeMs);
+      
+      try {
+        fs.writeFileSync(diskCachePath, JSON.stringify({ data, ts: Date.now() }));
+      } catch (err) {
+        logger.warn({ err }, "Failed to write historical data to disk cache");
+      }
+
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       return data as any[][];
     });

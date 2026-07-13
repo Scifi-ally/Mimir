@@ -7,6 +7,8 @@ import marketHistoryRouter from "./market_history";
 import marketAnalyticsRouter from "./market_analytics";
 import watchlistRouter from "./watchlist";
 import configRouter from "./config";
+import { reportsRouter } from "./reports";
+import { benchmarkRouter } from "./benchmark";
 import systemRouter from "./system";
 import paperTradingRouter from "./paper_trading";
 
@@ -22,5 +24,7 @@ router.use(watchlistRouter);
 router.use(configRouter);
 router.use(systemRouter);
 router.use(paperTradingRouter);
+router.use("/reports", reportsRouter);
+router.use("/benchmark", benchmarkRouter);
 
 export default router;

@@ -91,11 +91,16 @@ if "%PYTHON_CMD%"=="" (
 :: AI service launch is deferred below (after backend build) so model-loading
 :: overlaps with the PostgreSQL + build steps for faster total startup.
 
+:: Start Portable Redis
+if exist "%PROJECT_DIR%\.portable\redis\redis-server.exe" (
+ echo !C_GRAY! +-- !C_DIM!Starting portable Redis...!C_RESET!
+ powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%scripts\run-detached.ps1" -FilePath "%PROJECT_DIR%\.portable\redis\redis-server.exe" -ArgumentList "redis.windows.conf" -WorkingDirectory "%PROJECT_DIR%\.portable\redis" -PidFile "%SCRIPT_DIR%.codex-logs\trade.redis.pid" -LogOut "%SCRIPT_DIR%.codex-logs\trade.redis.out.log" -LogErr "%SCRIPT_DIR%.codex-logs\trade.redis.err.log"
+)
+
 :: Check for Portable PostgreSQL
 if exist "%PROJECT_DIR%\.portable\pgsql\bin\pg_ctl.exe" (
     echo !C_GRAY!    +-- !C_DIM!Starting portable PostgreSQL...!C_RESET!
-    "%PROJECT_DIR%\.portable\pgsql\bin\pg_ctl.exe" start -D "%PROJECT_DIR%\.portable\pgsql\data" -o "-p 5433" >nul 2>&1
-    
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%scripts\run-detached.ps1" -FilePath "%SCRIPT_DIR%scripts\start-postgres.bat" -WorkingDirectory "%PROJECT_DIR%\.portable\pgsql\bin" -PidFile "%SCRIPT_DIR%.codex-logs\trade.postgres.pid" -LogOut "%SCRIPT_DIR%.codex-logs\trade.postgres.out.log" -LogErr "%SCRIPT_DIR%.codex-logs\trade.postgres.err.log"
     :: Wait for Postgres to be ready
     call :wait_pg
     
@@ -111,7 +116,14 @@ if exist "%PROJECT_DIR%\.portable\pgsql\bin\pg_ctl.exe" (
 
 :: Start Backend processes (API Server + Trading Engine) in hidden PowerShell windows and capture PIDs
 echo !C_GRAY!    +-- !C_DIM!Compiling backend...!C_RESET!
-call !NODE_CMD! "%PROJECT_DIR%\backend\build.mjs" >nul 2>&1
+pushd "%PROJECT_DIR%\backend"
+call !NODE_CMD! "build.mjs"
+set "BUILD_ERR=!errorlevel!"
+popd
+if !BUILD_ERR! NEQ 0 (
+    echo !C_RED!  [X] Backend build failed!!C_RESET!
+    goto stop
+)
 echo !C_GRAY!    \-- !C_DIM!Starting backend ^& trading engine...!C_RESET!
 powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%scripts\run-detached.ps1" -FilePath "!NODE_CMD!" -ArgumentList "--enable-source-maps ./dist/index.mjs" -WorkingDirectory "%PROJECT_DIR%\backend" -PidFile "!BACKEND_PID_FILE!" -LogOut "!BACKEND_PID_FILE!.out.log" -LogErr "!BACKEND_PID_FILE!.err.log"
 
@@ -252,10 +264,18 @@ call :killPidFromFile "%BACKEND_PID_FILE%" "backend api server"
 call :killPidFromFile "%ENGINE_PID_FILE%" "trading engine"
 call :killPidFromFile "%FRONTEND_PID_FILE%" "frontend"
 
+:: Stop Portable Redis
+if exist "%PROJECT_DIR%\.portable\redis\redis-server.exe" (
+ echo !C_GRAY! +-- !C_DIM!Stopping Redis...!C_RESET!
+ taskkill /F /IM redis-server.exe >nul 2>&1
+ call :killPidFromFile "%SCRIPT_DIR%.codex-logs\trade.redis.pid" "Redis wrapper"
+)
+
 :: Stop Portable PostgreSQL if it exists
 if exist "%PROJECT_DIR%\.portable\pgsql\bin\pg_ctl.exe" (
     echo !C_GRAY!    +-- !C_DIM!Stopping PostgreSQL...!C_RESET!
-    "%PROJECT_DIR%\.portable\pgsql\bin\pg_ctl.exe" stop -D "%PROJECT_DIR%\.portable\pgsql\data" >nul 2>&1
+    "%PROJECT_DIR%\.portable\pgsql\bin\pg_ctl.exe" stop -m fast -w -D "%PROJECT_DIR%\.portable\pgsql\data" >nul 2>&1
+    call :killPidFromFile "%SCRIPT_DIR%.codex-logs\trade.postgres.pid" "Postgres wrapper"
 )
 
 :: Kill Cloudflare tunnel

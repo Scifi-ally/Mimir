@@ -66,22 +66,22 @@ router.get("/market/forecast", async (req, res) => {
     const lastClose = context.candles[context.candles.length - 1]?.close ?? null;
     const isFallback = Boolean(
       ai.isFallback ||
-      ai.chronos.source === "fallback" ||
-      ai.technicalRanking.source === "fallback" ||
-      ai.technicalRanking.source === "Advanced Stochastic Engine" ||
-      ai.chronos.source === "error" ||
-      ai.technicalRanking.source === "error"
+      ai.chronos?.source === "fallback" ||
+      ai.technicalRanking?.source === "fallback" ||
+      ai.technicalRanking?.source === "Advanced Stochastic Engine" ||
+      ai.chronos?.source === "error" ||
+      ai.technicalRanking?.source === "error"
     );
     
     res.json({
       symbol: stock.symbol,
       available: true,
-      source: ai.chronos.source,
+      source: ai.chronos?.source || "unknown",
       isFallback,
-      trend: ai.chronos.trend,
-      forecastReturnPct: ai.chronos.forecast_return_pct,
-      medianForecast: ai.chronos.median_forecast,
-      quantileForecasts: ai.chronos.quantile_forecasts,
+      trend: ai.chronos?.trend || "neutral",
+      forecastReturnPct: ai.chronos?.forecast_return_pct || 0,
+      medianForecast: ai.chronos?.median_forecast || [],
+      quantileForecasts: ai.chronos?.quantile_forecasts || {},
       worldSentiment: ai.world_sentiment_score || 0,
       compositeScore: ai.composite_score,
       components: ai.components || {},
@@ -240,11 +240,11 @@ router.get("/market/symbol-insights", async (req, res) => {
             worldSentiment: ai.world_sentiment_score || 0,
             compositeScore: ai.composite_score,
             components: ai.components || {},
-            trend: ai.chronos.trend,
-            forecastReturnPct: ai.chronos.forecast_return_pct,
-            technicalPatterns: ai.technicalRanking.detected_patterns,
-            source: ai.chronos.source,
-            isFallback: Boolean(ai.isFallback || ai.chronos.source === "fallback" || ai.technicalRanking.source === "fallback" || ai.technicalRanking.source === "Advanced Stochastic Engine" || ai.chronos.source === "error" || ai.technicalRanking.source === "error"),
+            trend: ai.chronos?.trend ?? "UNKNOWN",
+            forecastReturnPct: ai.chronos?.forecast_return_pct ?? 0,
+            technicalPatterns: ai.technicalRanking?.detected_patterns ?? [],
+            source: ai.chronos?.source ?? "unknown",
+            isFallback: Boolean(ai.isFallback || ai.chronos?.source === "fallback" || ai.technicalRanking?.source === "fallback" || ai.technicalRanking?.source === "Advanced Stochastic Engine" || ai.chronos?.source === "error" || ai.technicalRanking?.source === "error"),
             techEdge: metrics.techEdge,
             regimeAlign: metrics.regimeAlign,
           }

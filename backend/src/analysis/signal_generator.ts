@@ -597,7 +597,7 @@ export async function runIntelligencePipeline(
 
       reasoning: dynamicReasoning,
       confluence: result.setup.confluence,
-      aiPatterns: aiResult?.technicalRanking.detected_patterns ?? [],
+      aiPatterns: aiResult?.technicalRanking?.detected_patterns ?? [],
       aiMode,
       rankingProvider,
       scannerType: result.category,

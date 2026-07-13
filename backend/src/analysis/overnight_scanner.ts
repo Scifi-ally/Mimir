@@ -406,6 +406,7 @@ export async function runOvernightScanner(
         await markScanFinished("OFFHOURS_SCAN", tomorrowStr, "SKIPPED", "Scan manually stopped");
         workflowSuccess = false;
         workflowFailureReason = "Scan manually stopped";
+        emitScanCompleted(0);
         return;
       }
       lastScanStage = `scanning_${day}`;

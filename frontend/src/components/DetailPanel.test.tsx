@@ -17,11 +17,14 @@ vi.mock('@/components/SupportResistancePanel', () => ({
 }));
 
 vi.mock('@/components/mimir/tooltip', () => ({
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   Tooltip: ({ children, content }: any) => <div data-testid="tooltip" title={content}>{children}</div>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   TooltipProvider: ({ children }: any) => <>{children}</>
 }));
 
 vi.mock('@tanstack/react-query', async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const actual: any = await importOriginal();
   return {
     ...actual,

@@ -140,6 +140,11 @@ export async function batchInference(
       if (response.data && Array.isArray(response.data.results)) {
         aiCircuitBreaker.recordSuccess();
         for (const res of response.data.results) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          if ((res as any).kronos && !res.technicalRanking) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            res.technicalRanking = (res as any).kronos;
+          }
           const isFallback = res.technicalRanking?.source === "fallback" || res.chronos?.source === "fallback" || res.technicalRanking?.source === "error" || res.chronos?.source === "error";
           aiResults.set(res.symbol, { ...res, isFallback });
         }

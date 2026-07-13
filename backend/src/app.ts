@@ -35,11 +35,11 @@ app.use(
   cors({
     credentials: true,
     origin(origin, callback) {
-      if (isAllowedOrigin(origin)) {
+      if (!origin || isAllowedOrigin(origin)) {
         callback(null, true);
         return;
       }
-      callback(new Error("Origin not allowed by CORS"));
+      callback(new Error("Origin not allowed by CORS: " + String(origin)));
     },
   }),
 );

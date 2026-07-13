@@ -62,6 +62,8 @@ services:
     restart: unless-stopped
     environment:
       AI_CORS_ORIGINS: http://localhost:5000
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/upstox_bot
+      AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN:-}
     expose:
       - "8001"
     healthcheck:

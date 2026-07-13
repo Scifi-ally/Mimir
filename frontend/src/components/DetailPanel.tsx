@@ -44,7 +44,7 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
     enabled: Boolean(selectedSymbol && typeof selectedSymbol === 'string' && selectedSymbol.trim()),
     placeholderData: keepPreviousData,
     retry: false,
-    refetchInterval: 10000,
+    refetchInterval: 300000,
   });
 
   const insights = insightsQuery.data;
@@ -56,17 +56,10 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
   const techEdgeVal = forecast?.techEdge ?? data.tech_edge ?? selectedSignal?.signalFactors?.techEdge ?? selectedSignal?.signalFactors?.technical?.score;
   const regimeAlignVal = forecast?.regimeAlign ?? data.regime_align ?? selectedSignal?.signalFactors?.regime?.align;
 
-  const { data: quote } = useQuery({
-    queryKey: ["quote", selectedSymbol],
-    queryFn: () => api.quote(selectedSymbol),
-    refetchInterval: session?.isMarketOpen ? 2000 : false,
-    enabled: !!selectedSymbol && session?.isMarketOpen,
-  });
-
   const { data: ofi } = useQuery({
     queryKey: ["ofi", selectedSymbol],
     queryFn: () => api.fetchOFI(selectedSymbol),
-    refetchInterval: session?.isMarketOpen ? 2000 : false,
+    refetchInterval: session?.isMarketOpen ? 15000 : false,
     enabled: !!selectedSymbol && session?.isMarketOpen,
   });
 
@@ -207,8 +200,9 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
                    );
                 })}
               </div>
-            )}
-        </div>
+             )}
+         </div>
+       </div>
       </motion.div>
 
       <motion.div 
