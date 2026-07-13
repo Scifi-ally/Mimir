@@ -124,10 +124,11 @@ export default function Dashboard() {
   }, [watchlistItems, selectedSymbol, setSelectedSymbol]);
 
   useEffect(() => {
-    if (wsConnected && watchlistSymbols.length > 0) {
-      subscribeWsSymbols(watchlistSymbols);
+    if (wsConnected && (watchlistSymbols.length > 0 || activeSymbols.size > 0)) {
+      const combined = Array.from(new Set([...watchlistSymbols, ...Array.from(activeSymbols)]));
+      subscribeWsSymbols(combined);
     }
-  }, [watchlistSymbols, wsConnected]);
+  }, [watchlistSymbols, activeSymbols, wsConnected]);
 
   // Removed the stale selection clear block so users can keep custom command-palette selections even when the watchlist is empty.
 
