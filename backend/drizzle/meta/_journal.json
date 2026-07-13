@@ -1,0 +1,41 @@
+{
+    "version":  "7",
+    "dialect":  "postgresql",
+    "entries":  [
+                    {
+                        "idx":  0,
+                        "version":  "7",
+                        "when":  1783494202372,
+                        "tag":  "0000_ambitious_lucky_pierre",
+                        "breakpoints":  true
+                    },
+                    {
+                        "idx":  1,
+                        "version":  "7",
+                        "when":  1783754148217,
+                        "tag":  "0001_hot_payback",
+                        "breakpoints":  true
+                    },
+                    {
+                        "idx":  2,
+                        "version":  "7",
+                        "when":  1783754363085,
+                        "tag":  "0002_special_marvel_zombies",
+                        "breakpoints":  true
+                    },
+                    {
+                        "idx":  3,
+                        "version":  "7",
+                        "when":  1783950000000,
+                        "tag":  "0003_fundamental_snapshots",
+                        "breakpoints":  true
+                    },
+                    {
+                        "idx":  4,
+                        "version":  "7",
+                        "when":  1783953600000,
+                        "tag":  "0004_suggestion_timing",
+                        "breakpoints":  true
+                    }
+                ]
+}

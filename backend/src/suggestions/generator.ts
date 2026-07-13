@@ -21,7 +21,7 @@ import {
   ScanResult,
 } from "../analysis/stock_scanner";
 import { runIntelligencePipeline, type IntelligenceSignal } from "../analysis/signal_generator";
-import { checkSuggestionOutcomes } from "./accuracy_tracker";
+import { checkSuggestionOutcomes, expireOldSuggestions } from "./accuracy_tracker";
 import { fetchCorporateActionBlacklist } from "../market_data/corporate_actions";
 import { broadcast } from "../ws/websocket_server";
 import { createServerEvent } from "../ws/events";
@@ -30,6 +30,7 @@ import { intelligenceBus } from "../intelligence/event_bus";
 import { createUpstoxClient } from "../lib/upstox-client";
 import { getISTDateStr, getNextTradingDayStr, todayStartUTC } from "../lib/ist-time";
 import { beginWorkflow, endWorkflow } from "../workflow/coordinator";
+import { calculateSuggestionTiming } from "./timing";
 
 // ── Create optimized API client (reused across calls) ────────────────────────
 
@@ -241,6 +242,9 @@ export async function fetchLTPForSymbols(
 
 export async function runOutcomeCheck(): Promise<void> {
   try {
+    // Enforce time stops on the same cadence as price outcome checks.
+    await expireOldSuggestions();
+
     const active = await db
       .select({ symbol: suggestionsTable.symbol })
       .from(suggestionsTable)
@@ -741,9 +745,12 @@ export async function ingestSignal(
   const isIntraday = options?.isIntraday ?? false;
   const tradeType = isIntraday ? "INTRADAY" : "SWING";
   
-  const tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  const validityTill = isIntraday ? tomorrow.toISOString().slice(0, 10) : "3d";
+  const timing = calculateSuggestionTiming({
+    tradeType,
+    entryPrice: signal.entryPrice,
+    target1: signal.target1,
+    atr: signal.featureVector?.atr14,
+  });
 
   const [inserted] = await db
     .insert(suggestionsTable)
@@ -771,7 +778,9 @@ export async function ingestSignal(
       sentimentScore: signal.sentimentScore,
       rankingMode: signal.rankingProvider,
       reasoning: `[SENTIMENT: ${signal.sentimentScore > 60 ? "BULLISH" : signal.sentimentScore < 40 ? "BEARISH" : "NEUTRAL"}] ${signal.reasoning} Confluence: ${signal.confluence.slice(0, 2).join(", ")}.`,
-      validityTill,
+      validityTill: timing.validityTill,
+      expectedHoldMinutes: timing.expectedHoldMinutes,
+      expiresAt: timing.expiresAt,
       status: "ACTIVE",
       atr: signal.featureVector?.atr14?.toString() || "0",
       highestPrice: signal.entryPrice.toString(),
@@ -819,7 +828,7 @@ export async function ingestSignal(
         riskReward: signal.riskReward,
         reasoning: [signal.reasoning],
         generatedAt: Date.now(),
-        expiresAt: Date.now() + 20 * 60_000,
+        expiresAt: timing.expiresAt.getTime(),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } as any
     });

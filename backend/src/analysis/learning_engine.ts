@@ -89,6 +89,15 @@ export async function runLearningPipeline(): Promise<void> {
 
     // 8. Analyze symbol-specific learning metrics (Tech Edge, Regime Align)
     await analyzeSymbolMetrics(closed);
+    
+    // 9. Trigger background RL Model fine-tuning
+    const { triggerRLTraining } = await import("./ai_client");
+    const rlStarted = await triggerRLTraining();
+    if (rlStarted) {
+        logger.info("Triggered background RL model fine-tuning.");
+    } else {
+        logger.warn("Failed to trigger RL model fine-tuning or already running.");
+    }
 
     logger.info("Continuous learning pipeline completed successfully");
   } catch (err) {

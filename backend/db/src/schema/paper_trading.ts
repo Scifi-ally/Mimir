@@ -19,8 +19,8 @@ import { suggestionsTable } from "./suggestions";
 export const paperAccountsTable = pgTable("paper_accounts", {
   id: uuid("id").primaryKey().defaultRandom(),
   userId: varchar("user_id", { length: 50 }).notNull().default("system"),
-  balance: decimal("balance", { precision: 12, scale: 2 }).notNull().default("10000.00"),
-  startingBalance: decimal("starting_balance", { precision: 12, scale: 2 }).notNull().default("10000.00"),
+  balance: decimal("balance", { precision: 12, scale: 2 }).notNull().default("500000.00"),
+  startingBalance: decimal("starting_balance", { precision: 12, scale: 2 }).notNull().default("500000.00"),
   allocatedMargin: decimal("allocated_margin", { precision: 12, scale: 2 }).notNull().default("0.00"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

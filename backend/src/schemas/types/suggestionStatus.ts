@@ -10,9 +10,12 @@ export type SuggestionStatus =
   (typeof SuggestionStatus)[keyof typeof SuggestionStatus];
 
 export const SuggestionStatus = {
+  PENDING: "PENDING",
   ACTIVE: "ACTIVE",
   TARGET_1_HIT: "TARGET_1_HIT",
   TARGET_2_HIT: "TARGET_2_HIT",
   STOP_HIT: "STOP_HIT",
   EXPIRED: "EXPIRED",
+  CLOSED: "CLOSED",
+  REJECTED: "REJECTED",
 } as const;

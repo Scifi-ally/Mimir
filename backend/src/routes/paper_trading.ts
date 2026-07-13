@@ -7,8 +7,13 @@ import {
 } from "../../db/src/schema/paper_trading";
 import { eq, desc } from "drizzle-orm";
 import { logger } from "../lib/logger";
+import { getConfig } from "../config";
 
 const router = Router();
+
+function getStartingBalance(): string {
+  return getConfig().tradingCapital.toFixed(2);
+}
 
 router.get("/paper/account", async (_req, res) => {
   try {
@@ -16,8 +21,8 @@ router.get("/paper/account", async (_req, res) => {
     if (!account) {
       [account] = await db.insert(paperAccountsTable).values({
         userId: "system",
-        balance: "10000.00",
-        startingBalance: "10000.00",
+        balance: getStartingBalance(),
+        startingBalance: getStartingBalance(),
         allocatedMargin: "0.00"
       }).returning();
     }
@@ -79,8 +84,8 @@ router.post("/paper/reset", async (_req, res) => {
     
     const [account] = await db.insert(paperAccountsTable).values({
       userId: "system",
-      balance: "10000.00",
-      startingBalance: "10000.00",
+      balance: getStartingBalance(),
+      startingBalance: getStartingBalance(),
       allocatedMargin: "0.00"
     }).returning();
     

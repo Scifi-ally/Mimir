@@ -10,6 +10,7 @@ import { broadcast } from "../ws/websocket_server";
 import { logger } from "../lib/logger";
 import { getISTDateStr, getISTDayBounds } from "../lib/ist-time";
 import { getConfig } from "../config";
+import { archiveDailyTicks } from "../market_data/tick_archiver";
 
 export async function savePostMarketData(): Promise<void> {
   const todayIST = getISTDateStr();
@@ -149,6 +150,9 @@ export async function savePostMarketData(): Promise<void> {
           },
         });
     }
+
+    // Archive ticks for backtesting
+    await archiveDailyTicks();
 
     // Broadcast day summary
     const pnlSign = totalPnl >= 0 ? "+" : "";

@@ -49,13 +49,14 @@ function fitConditionForStorage(condition: string): string {
 let scanRunning = false;
 let lastScanStartedAt: string | null = null;
 let lastScanFinishedAt: string | null = null;
-let lastScanStatus: "idle" | "running" | "success" | "skipped" | "failed" =
+let lastScanStatus: "idle" | "running" | "success" | "skipped" | "failed" | "stopped" =
   "idle";
 let lastScanMessage: string | null = null;
 let lastScanObservability: Record<string, unknown> | null = null;
 let lastScanStage: string = "idle";
 let activeScanSessionId: string | null = null;
 let abortRequested = false;
+let terminalScanEventEmitted = false;
 
 export let activeScanCandidates: Array<{ symbol: string; reason?: string }> = [];
 
@@ -289,6 +290,7 @@ export async function runOvernightScanner(
 
   scanRunning = true;
   abortRequested = false;
+  terminalScanEventEmitted = false;
   activeScanSessionId = scanSessionId || null;
   activeScanCandidates = [];
   const currentSessionId = activeScanSessionId;
@@ -304,12 +306,20 @@ export async function runOvernightScanner(
     new Date(`${lastCompletedTradingDay}T00:00:00.000+05:30`),
   );
 
-  const emitScanCompleted = (suggestionsGenerated: number) => {
+  const emitScanCompleted = (
+    suggestionsGenerated: number,
+    outcome: "COMPLETED" | "FAILED" | "STOPPED" = "COMPLETED",
+    message?: string,
+  ) => {
+    if (terminalScanEventEmitted) return;
+    terminalScanEventEmitted = true;
     broadcast(
       createServerEvent.scanCompleted({
         suggestionsGenerated,
         duration: Date.now() - scanStartedAtMs,
         scanSessionId: activeScanSessionId || undefined,
+        outcome,
+        message,
       }),
     );
   };
@@ -406,7 +416,9 @@ export async function runOvernightScanner(
         await markScanFinished("OFFHOURS_SCAN", tomorrowStr, "SKIPPED", "Scan manually stopped");
         workflowSuccess = false;
         workflowFailureReason = "Scan manually stopped";
-        emitScanCompleted(0);
+        lastScanStatus = "stopped";
+        lastScanMessage = workflowFailureReason;
+        emitScanCompleted(0, "STOPPED", workflowFailureReason);
         return;
       }
       lastScanStage = `scanning_${day}`;
@@ -569,7 +581,7 @@ export async function runOvernightScanner(
       error: err instanceof Error ? err.message : "unknown",
       finishedAt: new Date().toISOString(),
     };
-    emitScanCompleted(0);
+    emitScanCompleted(0, "FAILED", lastScanMessage);
     await markScanFinished(
       "OFFHOURS_SCAN",
       tomorrowStr,
@@ -588,12 +600,14 @@ export async function runOvernightScanner(
 
 export function abortOvernightScanner(): boolean {
   const wasRunning = scanRunning;
+  if (!wasRunning) return false;
   logger.warn("Manual abort requested for overnight scanner");
   abortRequested = true;
   scanRunning = false;
   activeScanCandidates = [];
-  lastScanStatus = "failed";
+  lastScanStatus = "stopped";
   lastScanMessage = "Scan manually stopped";
+  lastScanFinishedAt = new Date().toISOString();
   activeScanSessionId = null;
   broadcast(
     createServerEvent.systemAlert({
@@ -608,11 +622,16 @@ export function abortOvernightScanner(): boolean {
       status: "STOPPED"
     })
   );
-  broadcast(
-    createServerEvent.scanCompleted({
-      suggestionsGenerated: 0,
-      duration: 0,
-    })
-  );
+  if (!terminalScanEventEmitted) {
+    terminalScanEventEmitted = true;
+    broadcast(
+      createServerEvent.scanCompleted({
+        suggestionsGenerated: 0,
+        duration: 0,
+        outcome: "STOPPED",
+        message: lastScanMessage,
+      })
+    );
+  }
   return wasRunning;
 }

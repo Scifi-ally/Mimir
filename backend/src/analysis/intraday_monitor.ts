@@ -18,6 +18,12 @@ import { db } from "../../db/src";
 import { suggestionsTable, overnightWatchlistTable } from "../../db/src";
 import { desc, eq } from "drizzle-orm";
 import { getLatestPrice, getTickData } from "../market_data/tick_feeder";
+import {
+  type ActiveWatchlistStock,
+  getBestMonitoringSeeds,
+  getEffectiveUniverse,
+} from "./stock_scanner";
+import { calculateTopSectors } from "./sector_rotation";
 import { broadcast } from "../ws/websocket_server";
 import { createServerEvent } from "../ws/events";
 import { intelligenceBus } from "../intelligence/event_bus";
@@ -297,6 +303,10 @@ export async function runMonitoringCycle(): Promise<void> {
   const now = Date.now();
   if (now - lastBroadcastAt >= BROADCAST_THROTTLE_MS) {
     lastBroadcastAt = now;
+    
+    // Update sector rotation stats
+    calculateTopSectors();
+    
     broadcast(createServerEvent.monitoringUpdate(getMonitoringStatus()), "monitoring");
   }
 }

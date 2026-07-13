@@ -1,5 +1,7 @@
 import { parentPort } from "node:worker_threads";
 import axios from "axios";
+import { getGlobalMacroState } from "../analysis/global_macro";
+import { getRLPrediction } from "../analysis/ai_client";
 import { buildSnapshot, type OHLCV } from "../../analysis/technical";
 import type { CandidateSignal, MarketState, TechnicalOpportunity, RankedOpportunity } from "../types";
 
@@ -9,6 +11,11 @@ if (!parentPort) {
 
 function getAiServiceUrl(): string {
   return process.env.AI_SERVICE_URL || "http://localhost:8001";
+}
+
+function getAiServiceHeaders(): Record<string, string> | undefined {
+  const token = process.env.AI_SERVICE_TOKEN?.trim();
+  return token ? { "X-AI-Service-Token": token } : undefined;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -165,15 +172,27 @@ async function rankAiOpportunities(
       ohlcv: p.candles.map(c => [c.open, c.high, c.low, c.close, c.volume])
     }));
 
-    const response = await axios.post<{ results: AiRankResult[] }>(
+    const responsePromise = axios.post<{ results: AiRankResult[] }>(
       `${getAiServiceUrl()}/inference/batch`,
       { candidates },
-      { timeout: 14000 },
+      { timeout: 14000, headers: getAiServiceHeaders() },
     );
+
+    const rlPredictionsPromise = Promise.all(
+      limited.map(p => getRLPrediction(p.opportunity.symbol, p.candles))
+    );
+
+    const [response, rlPredictions] = await Promise.all([responsePromise, rlPredictionsPromise]);
+    
     const results = Array.isArray(response.data.results) ? response.data.results : [];
     const scoreMap = new Map<string, AiRankResult>();
     for (const res of results) {
        scoreMap.set(res.symbol, res);
+    }
+    
+    const rlMap = new Map<string, any>();
+    for (let i = 0; i < limited.length; i++) {
+       rlMap.set(limited[i].opportunity.symbol, rlPredictions[i]);
     }
 
     return limited.map(p => {
@@ -193,7 +212,27 @@ async function rankAiOpportunities(
           }
         }
         
-        aiScore = Math.max(0, aiScore);
+        // Integrate RL Prediction if available
+        const rlPred = rlMap.get(opp.symbol);
+        if (rlPred) {
+          aiScore += rlPred.score_adjustment * 10; // Boost or penalize based on RL
+          
+          if (rlPred.action === "STRONG_BUY" && opp.direction === "BUY") {
+            aiScore = Math.min(10, aiScore + 1.5);
+            opp.reasoning.push("RL Agent: Strong Buy (High Confidence)");
+          } else if (rlPred.action === "STRONG_SELL" && opp.direction === "SELL") {
+            aiScore = Math.min(10, aiScore + 1.5);
+            opp.reasoning.push("RL Agent: Strong Sell (High Confidence)");
+          } else if (
+            (rlPred.action === "STRONG_SELL" || rlPred.action === "SELL") && opp.direction === "BUY" ||
+            (rlPred.action === "STRONG_BUY" || rlPred.action === "BUY") && opp.direction === "SELL"
+          ) {
+            aiScore -= 3;
+            opp.reasoning.push(`RL Agent Disagrees (Recommends ${rlPred.action})`);
+          }
+        }
+
+        aiScore = Math.max(0, Math.min(10, aiScore));
 
         return {
           ...opp,

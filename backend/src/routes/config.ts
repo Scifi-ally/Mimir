@@ -30,6 +30,8 @@ function serializeConfig(cfg: ReturnType<typeof getConfig>) {
     paperTradingEnabled: cfg.paperTradingEnabled,
     upstoxApiKey: cfg.upstoxApiKey,
     upstoxApiSecret: cfg.upstoxApiSecret ? SECRET_MASK : "",
+    upstoxDataApiKey: cfg.upstoxDataApiKey,
+    upstoxDataApiSecret: cfg.upstoxDataApiSecret ? SECRET_MASK : "",
     upstoxRedirectUri: cfg.upstoxRedirectUri,
     stopLossMode: cfg.stopLossMode,
   };
@@ -76,6 +78,10 @@ router.patch("/config", async (req, res) => {
       ...(parsed.data.upstoxApiSecret != null &&
         parsed.data.upstoxApiSecret !== "" &&
         parsed.data.upstoxApiSecret !== SECRET_MASK && { upstoxApiSecret: parsed.data.upstoxApiSecret }),
+      ...(parsed.data.upstoxDataApiKey != null && { upstoxDataApiKey: parsed.data.upstoxDataApiKey }),
+      ...(parsed.data.upstoxDataApiSecret != null &&
+        parsed.data.upstoxDataApiSecret !== "" &&
+        parsed.data.upstoxDataApiSecret !== SECRET_MASK && { upstoxDataApiSecret: parsed.data.upstoxDataApiSecret }),
       ...(parsed.data.upstoxRedirectUri != null && { upstoxRedirectUri: parsed.data.upstoxRedirectUri }),
       ...(parsed.data.stopLossMode != null && { stopLossMode: parsed.data.stopLossMode }),
     });

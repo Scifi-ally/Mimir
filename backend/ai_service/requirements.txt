@@ -9,11 +9,14 @@ httpx==0.27.0
 transformers>=4.49.0
 chronos-forecasting==2.0
 onnxruntime==1.18.0
+stable-baselines3==2.3.0
+gymnasium==0.29.1
 
 # Numerical
 numpy==1.26.4
 pandas>=2.0.0
 ta
+yfinance
 
 # CORS & HTTP
 python-multipart==0.0.9

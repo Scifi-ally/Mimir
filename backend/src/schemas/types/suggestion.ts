@@ -29,6 +29,10 @@ export interface Suggestion {
   marketRegime: string;
   reasoning: string;
   validityTill: string;
+  /** @nullable */
+  expectedHoldMinutes?: number | null;
+  /** @nullable */
+  expiresAt?: Date | null;
   status: SuggestionStatus;
   /** @nullable */
   outcomePrice?: number | null;

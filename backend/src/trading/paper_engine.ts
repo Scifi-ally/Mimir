@@ -15,13 +15,17 @@ import Decimal from "decimal.js";
 
 let engineActive = false;
 
+function getStartingBalance(): string {
+  return getConfig().tradingCapital.toFixed(2);
+}
+
 async function getAccount() {
   let [account] = await db.select().from(paperAccountsTable).limit(1);
   if (!account) {
     [account] = await db.insert(paperAccountsTable).values({
       userId: "system",
-      balance: "10000.00",
-      startingBalance: "10000.00",
+      balance: getStartingBalance(),
+      startingBalance: getStartingBalance(),
       allocatedMargin: "0.00"
     }).returning();
   }

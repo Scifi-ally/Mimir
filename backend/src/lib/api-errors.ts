@@ -9,11 +9,8 @@ export function logApiError(req: Request, err: any): void {
   reqLogger.error({ err: error, url: req.originalUrl || req.path }, "API request failed");
 }
 
-export function sendFallback<T>(res: Response, data: T, reason: string, status = 503): void {
+export function sendFallback<T>(res: Response, data: T, reason: string): void {
   res.setHeader("X-Mimir-Fallback", reason);
-  res.status(status).json({
-    error: "Service temporarily unavailable",
-    reason,
-    fallback: data,
-  });
+  // Return 200 to prevent browser console network errors for graceful fallbacks
+  res.status(200).json(data);
 }

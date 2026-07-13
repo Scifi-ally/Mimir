@@ -48,6 +48,8 @@ export const suggestionsTable = pgTable("suggestions", {
   atr: decimal("atr", { precision: 10, scale: 2 }),
   reasoning: text("reasoning"),
   validityTill: varchar("validity_till", { length: 10 }),
+  expectedHoldMinutes: integer("expected_hold_minutes"),
+  expiresAt: timestamp("expires_at", { withTimezone: true }),
   status: varchar("status", { length: 20 }).notNull().default("ACTIVE"),
   outcomePrice: decimal("outcome_price", { precision: 10, scale: 2 }),
   pnlInr: decimal("pnl_inr", { precision: 10, scale: 2 }),

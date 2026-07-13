@@ -113,6 +113,8 @@ export const ScanCompletedEventSchema = z.object({
     suggestionsGenerated: z.number(),
     duration: z.number(),
     scanSessionId: z.string().optional(),
+    outcome: z.enum(["COMPLETED", "FAILED", "STOPPED"]).optional(),
+    message: z.string().optional(),
   }),
 });
 export type ScanCompletedEvent = z.infer<typeof ScanCompletedEventSchema>;
@@ -269,9 +271,9 @@ export const ServerEventSchema = z.discriminatedUnion("event", [
 export type ServerEvent = z.infer<typeof ServerEventSchema>;
 
 /**
- * ─────────────────────────────────────────────────────────────────────────────
- * CLIENT → SERVER EVENTS
- * ─────────────────────────────────────────────────────────────────────────────
+ * â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+ * CLIENT â†’ SERVER EVENTS
+ * â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
  */
 
 export const PingEventSchema = z.object({
@@ -303,6 +305,13 @@ export const SubscribeSymbolEventSchema = z.object({
   }),
 });
 export type SubscribeSymbolEvent = z.infer<typeof SubscribeSymbolEventSchema>;
+export const UnsubscribeSymbolEventSchema = z.object({
+  event: z.literal("unsubscribe_symbol"),
+  data: z.object({
+    symbol: z.string(),
+  }),
+});
+export type UnsubscribeSymbolEvent = z.infer<typeof UnsubscribeSymbolEventSchema>;
 
 export const SubscribeSymbolsEventSchema = z.object({
   event: z.literal("subscribe_symbols"),
@@ -333,6 +342,7 @@ export const ClientEventSchema = z.discriminatedUnion("event", [
   SubscribeEventSchema,
   UnsubscribeEventSchema,
   SubscribeSymbolEventSchema,
+  UnsubscribeSymbolEventSchema,
   SubscribeSymbolsEventSchema,
   SubscribeWatchlistEventSchema,
   AuthEventSchema,

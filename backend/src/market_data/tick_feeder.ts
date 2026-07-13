@@ -175,11 +175,65 @@ export async function initTickFeeder(stocks: Array<{ symbol: string; key: string
   reconnectUnsubscribe = intelligenceBus.subscribe("websocketReconnect" as any, async (event: any) => {
       const durationMs = event.durationMs;
       if (durationMs > 60000) {
-          logger.info({ gap: Math.round(durationMs/1000) + "s" }, "WebSocket was offline for >1m. Triggering historical backfill for Nifty and top stocks...");
-          // We would trigger a call to upstox API to fetch missing 1m candles here
-          // For now we just log it as the gap will be filled in the nightly archive, but 
-          // real-time technicals may be slightly skewed until next restart.
-          // TODO: Implement actual historical candle fetch and inject into tickDistribution
+          logger.info({ gap: Math.round(durationMs/1000) + "s" }, "WebSocket was offline for >1m. Triggering historical backfill...");
+          
+          try {
+            const token = getAccessToken();
+            if (!token) {
+              logger.warn("No token available for historical backfill");
+              return;
+            }
+
+            const client = createUpstoxClient();
+            
+            // Format dates for today (Upstox requires yyyy-mm-dd)
+            const today = new Date();
+            const dateStr = today.toISOString().split("T")[0];
+            
+            // Get all current subscriptions
+            const activeSubs = Array.from(subscriptions.values());
+            const gapStart = Date.now() - durationMs - 60000; // 1 minute buffer
+            
+            // Fetch backfill sequentially to avoid hammering the rate limiter
+            for (const sub of activeSubs) {
+               try {
+                   // Pass priority = false to not block real-time ticks
+                   const candles = await client.fetchHistoricalCandles(sub.instrumentKey, "1minute", dateStr as string, dateStr as string, token, false);
+                   if (!candles || candles.length === 0) continue;
+                   
+                   let ingestedCount = 0;
+                   for (const candle of candles) {
+                       // Format: [timestamp, open, high, low, close, volume, oi]
+                       const tsStr = candle[0] as string;
+                       const ms = new Date(tsStr).getTime();
+                       
+                       // Only ingest candles from within the disconnect gap
+                       if (ms > gapStart) {
+                           const c = Number(candle[4]);
+                           const v = Number(candle[5]) || 0;
+                           
+                           tickDistribution.ingestTick({
+                              symbol: sub.symbol,
+                              price: c,
+                              ltp: c,
+                              volume: v,
+                              bid: c,
+                              ask: c,
+                              timestamp: ms,
+                           });
+                           ingestedCount++;
+                       }
+                   }
+                   if (ingestedCount > 0) {
+                     logger.debug({ symbol: sub.symbol, count: ingestedCount }, "Backfilled missing candles");
+                   }
+               } catch (err) {
+                   logger.warn({ symbol: sub.symbol, err: (err as Error).message }, "Failed to backfill missing candles for symbol");
+               }
+            }
+          } catch (err) {
+            logger.error({ err }, "Error in WebSocket backfill process");
+          }
       }
   });
 

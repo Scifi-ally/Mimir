@@ -27,7 +27,7 @@ import {
   getActiveScanSessionId,
   abortOvernightScanner,
 } from "../analysis/overnight_scanner";
-import { runPostMarketFullScan } from "../analysis/post_market_scanner";
+import { runPostMarketFullScan, abortPostMarketFullScan } from "../analysis/post_market_scanner";
 import {
   generateSuggestionsFromWatchlist,
   getSuggestionGenerationDiagnostics,
@@ -73,18 +73,23 @@ function getUnifiedScanStatus() {
   const lastScanMessage = generation.running
     ? generation.note ?? "Generating high-quality suggestions..."
     : postMarket.running
-      ? "Post-market full NSE scan running..."
+      ? postMarket.lastMessage ?? "Post-market full NSE scan running..."
     : offhours.running
       ? offhours.lastScanMessage ?? "Off-hours scan running..."
-      : offhours.lastScanMessage ?? generation.note ?? "Idle";
+      : offhours.lastScanMessage ?? postMarket.lastMessage ?? generation.note ?? "Idle";
 
   return {
     running,
     mode,
     scanSessionId: getActiveScanSessionId(),
-    lastScanStatus: offhours.lastScanStatus,
+    lastScanStatus: postMarket.running
+      ? postMarket.lastStatus
+      : offhours.lastScanStatus !== "idle"
+        ? offhours.lastScanStatus
+        : postMarket.lastStatus,
     lastScanMessage,
     offhours,
+    postMarket,
     generation,
     workflow: getWorkflowStatus(),
   };
@@ -414,12 +419,12 @@ async function runManualScannerPipeline(options: {
     );
 
     const offhoursStatus = getOffHoursScanStatus();
-    if (offhoursStatus.lastScanStatus === "failed") {
+    if (offhoursStatus.lastScanStatus !== "success") {
       broadcast({
         event: "system_alert",
         data: {
-          message: "Scanner stopped before suggestion generation because the market scan failed.",
-          severity: "error",
+          message: `Suggestion generation skipped because the market scan ended with ${offhoursStatus.lastScanStatus ?? "an unknown"} status.`,
+          severity: offhoursStatus.lastScanStatus === "stopped" ? "warning" : "error",
         },
       });
       return;
@@ -440,22 +445,7 @@ async function runManualScannerPipeline(options: {
       },
     });
   } finally {
-    const duration = Date.now() - startedAt;
-    broadcast({
-      event: "scan_completed",
-      data: {
-        suggestionsGenerated: 0,
-        duration: duration,
-        scanSessionId: options.scanSessionId,
-      },
-    });
-    broadcast({
-      event: "system_alert",
-      data: {
-        message: `Manual scanner flow finished in ${Math.round(duration / 1000)}s.`,
-        severity: "info",
-      },
-    });
+    logger.info({ duration: Date.now() - startedAt, scanSessionId: options.scanSessionId }, "Manual scanner flow finished");
   }
 }
 
@@ -516,7 +506,7 @@ router.post("/system/post-market-scanner", (_req, res) => {
 
 // POST /api/system/offhours-scan/stop
 router.post("/system/offhours-scan/stop", (_req, res) => {
-  const aborted = abortOvernightScanner();
+  const aborted = abortOvernightScanner() || abortPostMarketFullScan();
   if (aborted) {
     res.json({ message: "Scan stopping...", status: getUnifiedScanStatus() });
   } else {

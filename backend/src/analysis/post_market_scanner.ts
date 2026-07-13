@@ -40,6 +40,8 @@ interface PostMarketScanResult {
 
 interface ScannerState {
   running: boolean;
+  lastStatus: "idle" | "running" | "success" | "failed" | "stopped";
+  lastMessage: string | null;
   startedAt: string | null;
   finishedAt: string | null;
   totalStocks: number;
@@ -59,6 +61,8 @@ interface ScannerState {
 
 let scannerState: ScannerState = {
   running: false,
+  lastStatus: "idle",
+  lastMessage: null,
   startedAt: null,
   finishedAt: null,
   totalStocks: 0,
@@ -75,6 +79,7 @@ let scannerState: ScannerState = {
   },
   topCandidates: [],
 };
+let abortRequested = false;
 
 /**
  * Run comprehensive post-market scan on full NSE universe
@@ -101,6 +106,8 @@ export async function runPostMarketFullScan(
   let workflowFailureReason: string | undefined;
   scannerState = {
     running: true,
+    lastStatus: "running",
+    lastMessage: "Preparing post-market scan",
     startedAt: new Date().toISOString(),
     finishedAt: null,
     totalStocks: 0,
@@ -117,22 +124,22 @@ export async function runPostMarketFullScan(
     },
     topCandidates: [],
   };
+  abortRequested = false;
 
   try {
     const universe = await getEffectiveUniverse();
     scannerState.totalStocks = universe.length;
+    scannerState.lastMessage = `Analyzing ${universe.length} NSE stocks`;
 
     logger.info(
       { stockCount: universe.length },
       "Starting post-market full NSE scan",
     );
 
-    broadcast(
-      createServerEvent.systemAlert({
-        message: `Post-market scan started: Analyzing ${universe.length} NSE stocks`,
-        severity: "info",
-      }),
-    );
+    broadcast(createServerEvent.scanStarted({
+      stocksToAnalyze: universe.length,
+      timestamp: new Date().toISOString(),
+    }));
 
     const candidates: PostMarketScanResult[] = [];
     const batchSize = 5; // Analyze in small batches to avoid overwhelming API
@@ -140,7 +147,22 @@ export async function runPostMarketFullScan(
 
   // Process stocks in batches
     for (let i = 0; i < universe.length; i += batchSize) {
-    const batch = universe.slice(i, i + batchSize);
+      if (abortRequested) {
+        workflowSuccess = false;
+        workflowFailureReason = "Post-market scan stopped by user";
+        scannerState.running = false;
+        scannerState.lastStatus = "stopped";
+        scannerState.lastMessage = "Post-market scan stopped by user";
+        scannerState.finishedAt = new Date().toISOString();
+        broadcast(createServerEvent.scanCompleted({
+          suggestionsGenerated: 0,
+          duration: Date.now() - startTime,
+          outcome: "STOPPED",
+          message: scannerState.lastMessage,
+        }));
+        return [];
+      }
+      const batch = universe.slice(i, i + batchSize);
     const batchResults = await Promise.all(
       batch.map((stock) => analyzeStockForPostMarketScan(stock)),
     );
@@ -180,6 +202,22 @@ export async function runPostMarketFullScan(
       }
     }
 
+    if (abortRequested) {
+      workflowSuccess = false;
+      workflowFailureReason = "Post-market scan stopped by user";
+      scannerState.running = false;
+      scannerState.lastStatus = "stopped";
+      scannerState.lastMessage = workflowFailureReason;
+      scannerState.finishedAt = new Date().toISOString();
+      broadcast(createServerEvent.scanCompleted({
+        suggestionsGenerated: 0,
+        duration: Date.now() - startTime,
+        outcome: "STOPPED",
+        message: scannerState.lastMessage,
+      }));
+      return [];
+    }
+
   // Rank candidates by probability
     const ranked = candidates
       .sort((a, b) => b.probability - a.probability)
@@ -188,6 +226,8 @@ export async function runPostMarketFullScan(
     scannerState.topCandidates = ranked.slice(0, 10);
     scannerState.finishedAt = new Date().toISOString();
     scannerState.running = false;
+    scannerState.lastStatus = "success";
+    scannerState.lastMessage = `Found ${ranked.length} candidates`;
 
     const durationMs = Date.now() - startTime;
 
@@ -202,16 +242,19 @@ export async function runPostMarketFullScan(
       "Post-market scan completed",
     );
 
+    // Persist before announcing completion. The client refetches the watchlist
+    // on this event, so emitting earlier creates a stale-data race.
+    const nextTradingDay = getNextTradingDayStr();
+    await saveWatchlistCandidates(ranked, nextTradingDay);
+
     broadcast(
       createServerEvent.scanCompleted({
         suggestionsGenerated: ranked.length,
         duration: durationMs,
+        outcome: "COMPLETED",
+        message: scannerState.lastMessage,
       }),
     );
-
-  // Save candidates to overnight watchlist for tomorrow
-    const nextTradingDay = getNextTradingDayStr();
-    await saveWatchlistCandidates(ranked, nextTradingDay);
 
     return ranked;
   } catch (err) {
@@ -220,17 +263,28 @@ export async function runPostMarketFullScan(
       err instanceof Error ? err.message : "post-market scan failed";
     scannerState.running = false;
     scannerState.finishedAt = new Date().toISOString();
+    scannerState.lastStatus = "failed";
+    scannerState.lastMessage = workflowFailureReason;
     logger.error({ err }, "Post-market scan failed");
     broadcast(
       createServerEvent.scanCompleted({
         suggestionsGenerated: 0,
         duration: Date.now() - startTime,
+        outcome: "FAILED",
+        message: scannerState.lastMessage,
       }),
     );
     return [];
   } finally {
     endWorkflow("POSTMARKET_SCAN", workflowSuccess, workflowFailureReason);
   }
+}
+
+export function abortPostMarketFullScan(): boolean {
+  if (!scannerState.running) return false;
+  abortRequested = true;
+  scannerState.lastMessage = "Stopping post-market scan...";
+  return true;
 }
 
 /**
@@ -343,6 +397,7 @@ async function saveWatchlistCandidates(
     );
   } catch (err) {
     logger.error({ err }, "Failed to save watchlist candidates");
+    throw err;
   }
 }
 

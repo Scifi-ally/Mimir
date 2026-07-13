@@ -32,6 +32,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pydantic import BaseModel, Field, field_validator
 
 from models import technical_pattern_engine, chronos_service
+from models.rl_agent import rl_agent_service
+from rl_lifecycle import rl_lifecycle_manager
 from sentiment import analyze_sentiment
 
 # ---------------------------------------------------------------------------
@@ -198,6 +200,7 @@ def _build_health_snapshot() -> Dict[str, Any]:
         "models": {
             "technical_engine": technical_engine_status,
             "chronos": chronos_status,
+            "rl_model": rl_lifecycle_manager.get_status()
         },
         "hardware": runtime,
         "diagnostics": diagnostics,
@@ -622,6 +625,47 @@ async def infer_batch(req: BatchRequest):
 
     return BatchResponse(results=results, processing_time_ms=round(elapsed_ms, 2))
 
+
+class RLPredictRequest(BaseModel):
+    symbol: str
+    ohlcv: List[List[float]] = Field(..., description="[timestamp, open, high, low, close, volume]")
+    vix: float = 15.0
+    pcr: float = 1.0
+    fii_dii_net: float = 0.0
+
+@app.post("/api/v1/predict_rl", tags=["Inference"])
+async def predict_rl(req: RLPredictRequest):
+    """Predict using Reinforcement Learning model."""
+    try:
+        import pandas as pd
+        if not req.ohlcv:
+            return {"action": "HOLD", "confidence": 0.0, "score_adjustment": 0.0}
+            
+        df = pd.DataFrame(req.ohlcv, columns=["timestamp", "open", "high", "low", "close", "volume"])
+        macro_data = {
+            "vix": req.vix,
+            "pcr": req.pcr,
+            "fiiNet": req.fii_dii_net
+        }
+        result = rl_agent_service.predict(df, macro_data)
+        return result
+    except Exception as e:
+        logger.error(f"RL prediction failed for {req.symbol}: {e}")
+        return {"action": "HOLD", "confidence": 0.0, "score_adjustment": 0.0}
+
+@app.post("/api/v1/rl_train", tags=["Training"])
+async def trigger_rl_train():
+    """Trigger the RL training pipeline in the background."""
+    started = rl_lifecycle_manager.trigger_training()
+    if started:
+        return {"message": "RL training started"}
+    else:
+        return {"message": "RL training already in progress", "status": "TRAINING"}
+
+@app.get("/api/v1/rl_status", tags=["Training"])
+async def get_rl_status():
+    """Get the current status of the RL training pipeline."""
+    return rl_lifecycle_manager.get_status()
 
 # ---------------------------------------------------------------------------
 # Auth & Timing middleware

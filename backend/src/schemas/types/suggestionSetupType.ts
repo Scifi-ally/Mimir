@@ -6,15 +6,4 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export type SuggestionSetupType =
-  (typeof SuggestionSetupType)[keyof typeof SuggestionSetupType];
-
-export const SuggestionSetupType = {
-  BREAKOUT: "BREAKOUT",
-  PULLBACK: "PULLBACK",
-  MOMENTUM_CONTINUATION: "MOMENTUM_CONTINUATION",
-  EMA9_RECLAIM: "EMA9_RECLAIM",
-  BREAKDOWN: "BREAKDOWN",
-  BEAR_MOMENTUM: "BEAR_MOMENTUM",
-  EMA9_REJECTION: "EMA9_REJECTION",
-} as const;
+export type SuggestionSetupType = string;

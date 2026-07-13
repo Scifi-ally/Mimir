@@ -150,7 +150,9 @@ export function logSecurityMode(): void {
   const tokenLooksPlaceholder =
     token === "change_me_before_remote_use" ||
     token === "changeme" ||
-    token === "change_me";
+    token === "change_me" ||
+    token === "mimir_admin_token_placeholder" ||
+    token?.toLowerCase().includes("placeholder");
 
   if (token) {
     if (tokenLooksPlaceholder) {

@@ -10,9 +10,12 @@ export type GetSuggestionHistoryStatus =
   (typeof GetSuggestionHistoryStatus)[keyof typeof GetSuggestionHistoryStatus];
 
 export const GetSuggestionHistoryStatus = {
+  PENDING: "PENDING",
   ACTIVE: "ACTIVE",
   TARGET_1_HIT: "TARGET_1_HIT",
   TARGET_2_HIT: "TARGET_2_HIT",
   STOP_HIT: "STOP_HIT",
   EXPIRED: "EXPIRED",
+  CLOSED: "CLOSED",
+  REJECTED: "REJECTED",
 } as const;

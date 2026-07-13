@@ -232,6 +232,8 @@ function serializeSuggestion(
     marketRegime: s.marketRegime ?? "UNKNOWN",
     reasoning: s.reasoning ?? "",
     validityTill: s.validityTill ?? "15:00",
+    expectedHoldMinutes: s.expectedHoldMinutes,
+    expiresAt: s.expiresAt,
     status: s.status,
     outcomePrice: s.outcomePrice != null ? parseFloat(s.outcomePrice) : null,
     pnlInr: s.pnlInr != null ? parseFloat(s.pnlInr) : null,

@@ -1,6 +1,6 @@
 import { db } from "../../db/src";
 import { suggestionsTable } from "../../db/src";
-import { eq, and, lt, or } from "drizzle-orm";
+import { eq, and, lt, lte, or } from "drizzle-orm";
 import { broadcast } from "../ws/websocket_server";
 import { createServerEvent } from "../ws/events";
 import { logger } from "../lib/logger";
@@ -143,6 +143,8 @@ export async function expireOldSuggestions(): Promise<void> {
         and(
           eq(suggestionsTable.status, "ACTIVE"),
           or(
+            // New suggestions carry an explicit, strategy-aware time stop.
+            lte(suggestionsTable.expiresAt, new Date()),
             // Expire intraday trades from previous days
             and(
               eq(suggestionsTable.tradeType, "INTRADAY"),

@@ -3,7 +3,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import type { Server } from "http";
 import { logger } from "../lib/logger";
 import { parseClientEvent, ServerEvent, createServerEvent, packr } from "./events";
-import { isAllowedOrigin, isLocalRequest } from "../lib/security";
+import { isAllowedOrigin } from "../lib/security";
 import { createRedisClient } from "../lib/redis";
 
 const redisSubscriber = createRedisClient("ws-subscriber");
@@ -40,16 +40,6 @@ export function initWebSocketServer(server: Server): void {
       socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
       socket.destroy();
       return;
-    }
-
-    if (!isLocalRequest(request as any)) {
-      const token = process.env.UPSTOXBOT_ADMIN_TOKEN;
-      const url = new URL(request.url || "", `http://${request.headers.host || "localhost"}`);
-      const hasValidQuery = token && url.searchParams.get("token") === token;
-
-      // We no longer require the token during the Upgrade request to prevent leaking it in headers/URLs.
-      // Instead, we allow the connection and rely on the 5-second auth timeout payload.
-      // However, if they *do* send a valid query token, we'll accept it (optional backward compatibility).
     }
 
     const pathname = request.url ? request.url.split("?")[0] : "";
@@ -171,6 +161,25 @@ export function initWebSocketServer(server: Server): void {
             const topic = clientEvent.data.topic;
             tc.topics.delete(topic);
             logger.debug({ topic, channel: tc.channelName }, "Client unsubscribed from topic");
+          } else if (clientEvent.event === "unsubscribe_symbol") {
+            const symbol = typeof clientEvent.data.symbol === "string" ? clientEvent.data.symbol.trim() : "";
+            if (symbol) {
+              if (tc.activeSymbol === symbol) tc.activeSymbol = null;
+              tc.subscribedSymbols.delete(symbol);
+
+              const allClients = wssInstances.reduce((acc, w) => acc.concat(Array.from(w.clients)), [] as any[]);
+              const otherSubscribed = allClients.some((client) => {
+                const tcClient = client as WebSocket & { activeSymbol?: string | null; subscribedSymbols?: Set<string> };
+                return tcClient !== ws && (tcClient.activeSymbol === symbol || tcClient.subscribedSymbols?.has(symbol));
+              });
+
+              if (!otherSubscribed) {
+                import("../market_data/monitored_symbols").then(({ removeManualMonitoredSymbol }) => {
+                  void removeManualMonitoredSymbol(symbol).catch(() => {});
+                }).catch(() => {});
+              }
+            }
+            logger.debug({ symbol, channel: tc.channelName }, "Client unsubscribed from symbol");
           } else if (clientEvent.event === "subscribe_symbol") {
             const symbol = clientEvent.data.symbol;
             const oldSymbol = tc.activeSymbol;
@@ -296,10 +305,19 @@ let broadcastFn = (event: ServerEvent, topic: string = "suggestions"): void => {
           if (!isTickEvent && tc.channelName === "market-data" && topic !== "monitoring") return;
 
           if (topic === "all" || !tc.topics || tc.topics.has(topic)) {
-            // Extra filtering: if this is a tick update, filter by activeSymbol + subscribedSymbols + indices
+            // Tick batches are high frequency. Only send symbols this client has
+            // explicitly requested; analysis events remain topic based.
             if (isTickEvent && Array.isArray(event.data)) {
-              if (event.data.length === 0) return;
-              client.send(packr.pack(event));
+              const requested = new Set<string>(tc.subscribedSymbols ?? []);
+              if (tc.activeSymbol) requested.add(tc.activeSymbol);
+              if (requested.size === 0) return;
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const ticks = (event.data as any[]).filter((tick) => {
+                const symbol = Array.isArray(tick) ? tick[0] : tick.symbol;
+                return typeof symbol === "string" && requested.has(symbol);
+              });
+              if (ticks.length === 0) return;
+              client.send(packr.pack({ ...event, data: ticks }));
               successCount++;
               return;
             }

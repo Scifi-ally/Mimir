@@ -47,6 +47,7 @@ class TickDistributionServer {
   private tickCache = new Map<string, NormalizedTick>();
   private historyCache = new Map<string, NormalizedTick[]>();
   private readonly MAX_HISTORY_MS = 5 * 60 * 1000; // 5 mins
+  private readonly MAX_HISTORY_PER_SYMBOL = 1000;
   
   // Pre-allocated array for UI streaming (MAX 5000 pending ticks per flush)
   private batchPool: unknown[] = new Array(5000);
@@ -163,19 +164,6 @@ class TickDistributionServer {
       };
       this.tickCache.set(rawTick.symbol, normalized);
       
-      let hist = this.historyCache.get(rawTick.symbol);
-      if (!hist) {
-        hist = [];
-        this.historyCache.set(rawTick.symbol, hist);
-      }
-      hist.push({ ...normalized });
-      
-      const cutoff = tickTime - this.MAX_HISTORY_MS;
-      let shiftCount = 0;
-      while (shiftCount < hist.length && hist[shiftCount].timestamp < cutoff) {
-        shiftCount++;
-      }
-      if (shiftCount > 0) hist.splice(0, shiftCount);
     }
 
     normalized.ltp = Math.round(ltp * 100) / 100;
@@ -197,6 +185,16 @@ class TickDistributionServer {
     }
 
     this.pendingUISymbols.add(rawTick.symbol);
+
+    const history = this.historyCache.get(rawTick.symbol) ?? [];
+    if (!this.historyCache.has(rawTick.symbol)) {
+      this.historyCache.set(rawTick.symbol, history);
+    }
+    history.push({ ...normalized });
+    const cutoff = tickTime - this.MAX_HISTORY_MS;
+    while (history.length > this.MAX_HISTORY_PER_SYMBOL || history[0]?.timestamp < cutoff) {
+      history.shift();
+    }
 
     // NON-BLOCKING ASYNC DISPATCH TO ANALYSIS ENGINE
     // Uses 'processedTick' (not 'marketTick') to avoid circular re-ingestion by tick_feeder
@@ -237,7 +235,7 @@ class TickDistributionServer {
           cached.bid,
           cached.ask,
           cached.timestamp,
-          cached.changePercent || null
+          cached.changePercent ?? null
         ];
       }
     }

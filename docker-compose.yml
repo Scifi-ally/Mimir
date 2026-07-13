@@ -42,6 +42,7 @@ services:
       UPSTOX_API_KEY: ${UPSTOX_API_KEY:-}
       UPSTOX_API_SECRET: ${UPSTOX_API_SECRET:-}
       UPSTOX_REDIRECT_URI: ${UPSTOX_REDIRECT_URI:-http://localhost:5000/api/system/auth-callback}
+      AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN:?set AI_SERVICE_TOKEN}
     ports:
       - "127.0.0.1:5000:5000"
     healthcheck:
@@ -63,7 +64,7 @@ services:
     environment:
       AI_CORS_ORIGINS: http://localhost:5000
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/upstox_bot
-      AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN:-}
+      AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN:?set AI_SERVICE_TOKEN}
     expose:
       - "8001"
     healthcheck:

@@ -1,5 +1,7 @@
 import axios from "axios";
 import { logger } from "../lib/logger";
+import { getMarketState } from "../market_data/market_state";
+import { fetchOptionChainData } from "../market_data/option_chain";
 import { getGlobalMacroState } from "./global_macro";
 import { getFiiDiiDivergence } from "./divergence_engine";
 import { computeOFI } from "./order_flow";
@@ -394,4 +396,67 @@ export async function inferSymbolForecast(
 
   inFlightInference.set(symbol, pending);
   return pending;
+}
+
+export interface RLPrediction {
+  action: string;
+  confidence: number;
+  score_adjustment: number;
+}
+
+export async function getRLPrediction(symbol: string, candles: OHLCV[]): Promise<RLPrediction | null> {
+  if (!process.env.AI_SERVICE_URL) {
+    return null;
+  }
+  try {
+    const ohlcv = candles.map((c) => [0, c.open, c.high, c.low, c.close, c.volume]);
+    
+    // Fetch Macro Data
+    const marketState = getMarketState();
+    const vix = marketState.indiaVix ?? 15.0;
+    const fiiNet = marketState.fiiNetInr ?? 0.0;
+    
+    // Option chain is heavily cached internally
+    const optionChain = await fetchOptionChainData();
+    const pcr = optionChain?.pcr ?? 1.0;
+
+    const response = await axios.post(
+      `${getAiServiceUrl()}/api/v1/predict_rl`,
+      { symbol, ohlcv, vix, pcr, fii_dii_net: fiiNet },
+      { headers: { "Content-Type": "application/json" }, timeout: 5000 }
+    );
+    return response.data as RLPrediction;
+  } catch (err) {
+    logger.warn(`Failed to get RL prediction for ${symbol}: ${(err as Error).message}`);
+    return null;
+  }
+}
+
+export async function triggerRLTraining(): Promise<boolean> {
+  if (!process.env.AI_SERVICE_URL) return false;
+  try {
+    const response = await axios.post(
+      `${getAiServiceUrl()}/api/v1/rl_train`,
+      {},
+      { timeout: 5000 }
+    );
+    return response.status === 200;
+  } catch (err) {
+    logger.error("Failed to trigger RL training:", err);
+    return false;
+  }
+}
+
+export async function getRLStatus(): Promise<any> {
+  if (!process.env.AI_SERVICE_URL) return null;
+  try {
+    const response = await axios.get(
+      `${getAiServiceUrl()}/api/v1/rl_status`,
+      { timeout: 5000 }
+    );
+    return response.data;
+  } catch (err) {
+    logger.error("Failed to get RL status:", err);
+    return null;
+  }
 }
