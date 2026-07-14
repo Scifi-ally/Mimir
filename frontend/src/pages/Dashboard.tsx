@@ -92,18 +92,17 @@ export default function Dashboard() {
 
   useEffect(() => {
     const now = Date.now();
-    // Reduced throttle time from 2000ms to 800ms for faster initial load
-    if (now - lastUpdateRef.current > 800) {
+    // Fast throttle for snappy initial load
+    if (now - lastUpdateRef.current > 300) {
       setDebouncedSymbols(watchlistSymbols);
       lastUpdateRef.current = now;
       if (handlerRef.current) clearTimeout(handlerRef.current);
     } else {
       if (handlerRef.current) clearTimeout(handlerRef.current);
-      // Reduced debounce from 1500ms to 600ms
       handlerRef.current = setTimeout(() => {
         setDebouncedSymbols(watchlistSymbols);
         lastUpdateRef.current = Date.now();
-      }, 600);
+      }, 300);
     }
     return () => {
       if (handlerRef.current) clearTimeout(handlerRef.current);
@@ -276,9 +275,9 @@ export default function Dashboard() {
       
       <div className="z-10 flex h-full flex-col overflow-hidden">
         <motion.div
-          initial={{ opacity: 0, y: -20, filter: "blur(8px)" }}
-          animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-          transition={{ type: "spring", stiffness: 350, damping: 35, mass: 0.8, delay: 0.05 }}
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.25, ease: "easeOut" }}
         >
           <TopBar
             indices={indicesQuery.data ?? null}
@@ -322,9 +321,9 @@ export default function Dashboard() {
             <div className="flex flex-col w-[65%] xl:w-[72%] min-w-0 h-full pr-2">
                   <motion.div 
                     className="flex-[65] w-full min-h-0 min-w-0 rounded-2xl mb-3 relative z-10"
-                    initial={{ opacity: 0, y: 30, scale: 0.97, filter: "blur(10px)" }}
-                    animate={{ opacity: 1, y: 0, scale: 1, filter: "blur(0px)" }}
-                    transition={{ type: "spring", stiffness: 300, damping: 30, mass: 0.9, delay: 0.1 }}
+                    initial={{ opacity: 0, y: 15 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.3, ease: "easeOut", delay: 0.05 }}
                   >
                     <AnimatePresence mode="wait">
                       {isScanActive ? (
@@ -369,9 +368,9 @@ export default function Dashboard() {
                 
                   <motion.div 
                     className="flex-[35] w-full min-h-0 min-w-0 pt-2 flex flex-col"
-                    initial={{ opacity: 0, y: 30, scale: 0.97, filter: "blur(10px)" }}
-                    animate={{ opacity: 1, y: 0, scale: 1, filter: "blur(0px)" }}
-                    transition={{ type: "spring", stiffness: 300, damping: 30, mass: 0.9, delay: 0.18 }}
+                    initial={{ opacity: 0, y: 15 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.3, ease: "easeOut", delay: 0.1 }}
                   >
                     <div className="flex-1 min-h-0 relative">
                       {sidebarTab === "watchlist" ? (
@@ -437,9 +436,9 @@ export default function Dashboard() {
             <div className="flex flex-col w-[35%] xl:w-[28%] min-w-0 h-full pl-2">
               <motion.div 
                 className="h-full w-full min-h-0 min-w-0 rounded-2xl relative z-10 overflow-hidden"
-                initial={{ opacity: 0, x: 20, filter: "blur(10px)" }}
-                animate={{ opacity: 1, x: 0, filter: "blur(0px)" }}
-                transition={{ type: "spring", stiffness: 300, damping: 30, mass: 0.9, delay: 0.25 }}
+                initial={{ opacity: 0, x: 10 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ duration: 0.3, ease: "easeOut", delay: 0.12 }}
               >
                 <DetailPanel
                   suggestions={suggestions}

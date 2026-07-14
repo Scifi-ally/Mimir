@@ -1,6 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, memo } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { cn } from "@/lib/format";
 
 interface ScanClockPanelProps {
   scanning?: boolean;
@@ -10,32 +9,30 @@ interface ScanClockPanelProps {
   isMarketOpen?: boolean;
 }
 
-function SingleDigit({ char }: { char: string }) {
+const SingleDigit = memo(function SingleDigit({ char }: { char: string }) {
   return (
-    <div className="relative overflow-hidden h-24 sm:h-32 md:h-40 flex items-center justify-center w-[1ch]">
-      <AnimatePresence mode="popLayout">
+    <div className="relative inline-block w-[72px] h-[96px] sm:w-[96px] sm:h-[128px] md:w-[120px] md:h-[160px] overflow-hidden">
+      <AnimatePresence mode="popLayout" initial={false}>
         <motion.span
           key={char}
-          initial={{ y: "100%", opacity: 0 }}
-          animate={{ y: "0%", opacity: 1 }}
-          exit={{ y: "-100%", opacity: 0 }}
-          transition={{ type: "spring", stiffness: 300, damping: 30 }}
-          className="text-[6rem] sm:text-[8rem] md:text-[12rem] font-mono font-black tracking-tighter text-foreground drop-shadow-lg tabular-nums leading-none"
+          initial={{ y: "100%" }}
+          animate={{ y: "0%" }}
+          exit={{ y: "-100%" }}
+          transition={{ type: "spring", stiffness: 200, damping: 25 }}
+          className="absolute inset-0 flex items-center justify-center text-7xl sm:text-8xl md:text-9xl font-mono font-black text-foreground tabular-nums select-none"
         >
           {char}
         </motion.span>
       </AnimatePresence>
     </div>
   );
-}
+});
 
-function DigitGroup({ value, className = "" }: { value: string; className?: string }) {
-  const chars = value.split("");
+function Colon() {
   return (
-    <div className={cn("flex items-center", className)}>
-      {chars.map((char, index) => (
-        <SingleDigit key={index} char={char} />
-      ))}
+    <div className="flex flex-col items-center justify-center gap-3 sm:gap-4 md:gap-5 mx-1 sm:mx-2 md:mx-3 h-[96px] sm:h-[128px] md:h-[160px]">
+      <div className="w-3 h-3 sm:w-4 sm:h-4 md:w-5 md:h-5 rounded-full bg-foreground/40" />
+      <div className="w-3 h-3 sm:w-4 sm:h-4 md:w-5 md:h-5 rounded-full bg-foreground/40" />
     </div>
   );
 }
@@ -44,39 +41,33 @@ export function ScanClockPanel(_props: ScanClockPanelProps) {
   const [time, setTime] = useState(new Date());
 
   useEffect(() => {
-    const timer = setInterval(() => {
-      setTime(new Date());
-    }, 1000);
+    const timer = setInterval(() => setTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
 
-  // Convert current time to IST values
   const istString = time.toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
   const istDate = new Date(istString);
-  
+
   const h = istDate.getHours();
   const m = istDate.getMinutes();
   const s = istDate.getSeconds();
-  
-  const hours = h % 12 || 12;
-  const mins = m;
-  const secs = s;
 
+  const hours = h % 12 || 12;
   const hh = hours.toString().padStart(2, "0");
-  const mm = mins.toString().padStart(2, "0");
-  const ss = secs.toString().padStart(2, "0");
+  const mm = m.toString().padStart(2, "0");
+  const ss = s.toString().padStart(2, "0");
 
   return (
-    <div className="w-full h-full flex items-center justify-center relative overflow-hidden select-none bg-background">
-      <div className="relative z-10 flex items-center justify-center w-full">
-        {/* Digital Clock with individual character sliding effect */}
-        <div className="flex items-center gap-2 sm:gap-4 md:gap-6">
-          <DigitGroup value={hh} />
-          <span className="text-6xl sm:text-7xl md:text-[10rem] font-mono text-foreground/20 animate-pulse leading-none -mt-4 sm:-mt-6 md:-mt-8">:</span>
-          <DigitGroup value={mm} />
-          <span className="text-6xl sm:text-7xl md:text-[10rem] font-mono text-foreground/20 animate-pulse leading-none -mt-4 sm:-mt-6 md:-mt-8">:</span>
-          <DigitGroup value={ss} />
-        </div>
+    <div className="w-full h-full flex items-center justify-center bg-background">
+      <div className="flex items-center">
+        <SingleDigit char={hh[0]} />
+        <SingleDigit char={hh[1]} />
+        <Colon />
+        <SingleDigit char={mm[0]} />
+        <SingleDigit char={mm[1]} />
+        <Colon />
+        <SingleDigit char={ss[0]} />
+        <SingleDigit char={ss[1]} />
       </div>
     </div>
   );
