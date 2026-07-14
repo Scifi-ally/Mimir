@@ -263,6 +263,12 @@ export function useWebSocket() {
                 subtitle: event.data.symbol,
                 isNotification: true,
               });
+              useStore.getState().addEvent({
+                type: "success",
+                title: `New ${event.data.direction} Signal`,
+                message: `AI generated a new trading signal.`,
+                symbol: event.data.symbol,
+              });
               break;
             case "suggestion_updated":
               debouncedInvalidate(["suggestions"]);
@@ -277,6 +283,12 @@ export function useWebSocket() {
                 subtitle: event.data.message,
                 isNotification: true,
               });
+              useStore.getState().addEvent({
+                type: "warning",
+                title: event.data.symbol ? "Alert Triggered" : "System Alert",
+                message: event.data.message,
+                symbol: event.data.symbol,
+              });
               break;
             case "system_alert":
               if (!event.data.message.toLowerCase().includes("connected to upstox")) {
@@ -286,6 +298,11 @@ export function useWebSocket() {
                   isNotification: true,
                 });
               }
+              useStore.getState().addEvent({
+                type: "info",
+                title: "System Notification",
+                message: event.data.message,
+              });
               break;
             case "session_state_changed":
               debouncedInvalidate(["session"]);

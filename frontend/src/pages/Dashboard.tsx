@@ -1,19 +1,18 @@
 import { useEffect, useMemo, useState, startTransition, lazy, Suspense, useRef } from "react";
 import { useHotkeys } from "react-hotkeys-hook";
 import { motion, AnimatePresence } from "framer-motion";
-import { useQuery } from "@tanstack/react-query";
-import { ResponsiveGridLayout, useContainerWidth } from "react-grid-layout";
-import "react-grid-layout/css/styles.css";
-import "react-resizable/css/styles.css";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { TopBar } from "@/components/TopBar";
 import { PriceChart } from "@/components/PriceChart";
 import { WatchlistStack } from "@/components/WatchlistStack";
+import { ScanClockPanel } from "@/components/ScanClockPanel";
 import { ScreenerTargetsStack } from "@/components/ScreenerTargetsStack";
 import { DetailPanel } from "@/components/DetailPanel";
 import { StatusBar } from "@/components/StatusBar";
 const SuggestionsSlider = lazy(() => import("@/components/SuggestionsSlider").then(m => ({ default: m.SuggestionsSlider })));
 const PaperTradingPanel = lazy(() => import("@/components/PaperTradingPanel").then(m => ({ default: m.PaperTradingPanel })));
 const ReportsLibrary = lazy(() => import("@/components/ReportsLibrary").then(m => ({ default: m.ReportsLibrary })));
+
 import { useWebSocket, subscribeWsSymbols } from "@/hooks/useWebSocket";
 import { useStore } from "@/store/useStore";
 import { api } from "@/lib/api";
@@ -23,6 +22,7 @@ import type { WatchlistItem, Suggestion } from "@/types/api";
 export default function Dashboard() {
 
   useWebSocket();
+  const queryClient = useQueryClient();
 
   const selectedSymbol = useStore((s) => s.selectedSymbol);
   const setSelectedSymbol = useStore((s) => s.setSelectedSymbol);
@@ -38,12 +38,16 @@ export default function Dashboard() {
   const [isReportsOpen, setIsReportsOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<"watchlist" | "screener">("watchlist");
 
-  // react-grid-layout v2: measure container width via hook (replaces WidthProvider)
-  const { width: gridWidth, mounted: gridMounted, containerRef: gridContainerRef } = useContainerWidth();
-
   const sessionQuery = useQuery({ queryKey: ["session"], queryFn: api.sessionState, refetchInterval: 60000 });
   const statusQuery = useQuery({ queryKey: ["status"], queryFn: api.systemStatus, refetchInterval: 10000 });
-  const watchlistQuery = useQuery({ queryKey: ["watchlist"], queryFn: api.watchlistToday, refetchInterval: 30000 });
+  const watchlistQuery = useQuery({ 
+    queryKey: ["watchlist"], 
+    queryFn: api.watchlistToday, 
+    refetchInterval: 60000, // Reduced frequency - ticks come via WebSocket anyway
+    staleTime: 55000, // Consider data fresh for 55s
+    gcTime: 120000, // Keep in cache for 2 minutes
+    placeholderData: (previousData) => previousData, // Keep showing old data while fetching
+  });
   const suggestionsQuery = useQuery<Suggestion[]>({ queryKey: ["suggestions"], queryFn: () => api.activeSuggestions(), refetchInterval: 10000 });
   const positionsQuery = useQuery({ queryKey: ["positions"], queryFn: () => api.paper.positions(), refetchInterval: 10000 });
   const indicesQuery = useQuery({ queryKey: ["indices"], queryFn: api.dashboardIndices, staleTime: Infinity });
@@ -51,6 +55,7 @@ export default function Dashboard() {
   const monitoringQuery = useQuery({ queryKey: ["monitoring"], queryFn: api.intradayMonitoring, refetchInterval: 30000 });
   const indianContextQuery = useQuery({ queryKey: ["indian-context"], queryFn: api.indianContext, refetchInterval: 300000 });
   const scanning = scanState.scanning || Boolean(sessionQuery.data?.scanRunning);
+  const isScanActive = scanning || (scanState.total > 0 && scanState.current < scanState.total);
   const scanLogs = useStore((s) => s.scanLogs);
   const activeSymbols = useMemo(() => {
     const symbols = new Set<string>();
@@ -77,9 +82,8 @@ export default function Dashboard() {
     });
   }, [watchlistQuery.data, scanning, scanLogs, activeSymbols]);
 
-  const watchlistSymbols = useMemo(() => {
-    return watchlistItems.map(r => r.symbol);
-  }, [watchlistItems]);
+  const watchlistSymbolsKey = useMemo(() => watchlistItems.map(r => r.symbol).join(","), [watchlistItems]);
+  const watchlistSymbols = useMemo(() => (watchlistSymbolsKey ? watchlistSymbolsKey.split(",") : []), [watchlistSymbolsKey]);
 
   const [debouncedSymbols, setDebouncedSymbols] = useState<string[]>(watchlistSymbols);
 
@@ -88,17 +92,18 @@ export default function Dashboard() {
 
   useEffect(() => {
     const now = Date.now();
-    // Use a throttle pattern so rapid updates don't completely stall the sparkline requests
-    if (now - lastUpdateRef.current > 2000) {
+    // Reduced throttle time from 2000ms to 800ms for faster initial load
+    if (now - lastUpdateRef.current > 800) {
       setDebouncedSymbols(watchlistSymbols);
       lastUpdateRef.current = now;
       if (handlerRef.current) clearTimeout(handlerRef.current);
     } else {
       if (handlerRef.current) clearTimeout(handlerRef.current);
+      // Reduced debounce from 1500ms to 600ms
       handlerRef.current = setTimeout(() => {
         setDebouncedSymbols(watchlistSymbols);
         lastUpdateRef.current = Date.now();
-      }, 1500);
+      }, 600);
     }
     return () => {
       if (handlerRef.current) clearTimeout(handlerRef.current);
@@ -108,8 +113,10 @@ export default function Dashboard() {
   const sparklinesQuery = useQuery({
     queryKey: ["sparklines", debouncedSymbols],
     queryFn: () => api.sparklines(debouncedSymbols),
-    staleTime: 5 * 60 * 1000,
-    enabled: debouncedSymbols.length > 0 && !scanning
+    staleTime: 3 * 60 * 1000, // Reduced from 5min to 3min for fresher data
+    gcTime: 5 * 60 * 1000,
+    enabled: debouncedSymbols.length > 0 && !scanning,
+    placeholderData: (previousData) => previousData, // Keep old sparklines while fetching
   });
 
   const session = sessionQuery.data;
@@ -121,9 +128,17 @@ export default function Dashboard() {
   const indianContext = indianContextQuery.data;
 
   const isIndex = ["NIFTY 50", "BANKNIFTY", "FINNIFTY", "INDIA VIX", "SENSEX"].includes(selectedSymbol);
-  const activeSymbol = watchlistItems.length === 0 && !isIndex
-    ? "NIFTY 50"
-    : (selectedSymbol || watchlistItems[0]?.symbol || "");
+  const activeSymbol = selectedSymbol || watchlistItems[0]?.symbol || (isIndex ? selectedSymbol : "NIFTY 50");
+
+  const watchlistMetadata = useMemo(() => {
+    if (!watchlistQuery.data) return undefined;
+    const data = watchlistQuery.data as { forDate: string; isFallback?: boolean; hasScan?: boolean };
+    return {
+      forDate: data.forDate,
+      isFallback: Boolean(data.isFallback),
+      hasScan: Boolean(data.hasScan ?? (watchlistItems.length > 0)),
+    };
+  }, [watchlistQuery.data, watchlistItems.length]);
 
   useEffect(() => {
     if (!selectedSymbol && watchlistItems.length > 0) {
@@ -140,12 +155,23 @@ export default function Dashboard() {
 
   // Removed the stale selection clear block so users can keep custom command-palette selections even when the watchlist is empty.
 
-  // Auto-select the first candidate found during a fresh live scan
+  // Auto-select the first candidate found during or at the end of a live scan
+  const prevScanActiveRef = useRef(false);
   useEffect(() => {
     if (scanning && watchlistItems.length === 1 && watchlistItems[0]?.category === "SCANNED") {
-      startTransition(() => setSelectedSymbol(watchlistItems[0].symbol));
+      setSelectedSymbol(watchlistItems[0].symbol);
     }
-  }, [scanning, watchlistItems, setSelectedSymbol]);
+    if (prevScanActiveRef.current && !isScanActive) {
+      // Instantly fetch fresh watchlist data (and prices) when scan completes
+      void queryClient.invalidateQueries({ queryKey: ["watchlist"] });
+      
+      if (watchlistItems.length > 0 && !watchlistItems.find(r => r.symbol === selectedSymbol)) {
+        setSelectedSymbol(watchlistItems[0].symbol);
+      }
+    }
+    prevScanActiveRef.current = isScanActive;
+  }, [scanning, isScanActive, watchlistItems, selectedSymbol, setSelectedSymbol, queryClient]);
+
 
   // Dynamic Favicon Logic
   useEffect(() => {
@@ -246,12 +272,7 @@ export default function Dashboard() {
 
   return (
     <div className="relative flex h-[100dvh] flex-col overflow-hidden bg-background text-foreground font-sans">
-      {/* Sci-Fi Vibrant Orbs Background */}
-      <div className="pointer-events-none absolute inset-0 overflow-hidden">
-        <div className="absolute top-[-20%] left-[-10%] w-[50vw] h-[50vw] rounded-full bg-indigo-500/10 blur-[120px] mix-blend-screen animate-breathe" />
-        <div className="absolute top-[20%] right-[-10%] w-[40vw] h-[40vw] rounded-full bg-emerald-500/10 blur-[120px] mix-blend-screen animate-breathe" style={{ animationDelay: '2s' }} />
-        <div className="absolute bottom-[-20%] left-[20%] w-[60vw] h-[60vw] rounded-full bg-purple-500/5 blur-[120px] mix-blend-screen animate-breathe" style={{ animationDelay: '4s' }} />
-      </div>
+      {/* Background is purely dark black now */}
       
       <div className="z-10 flex h-full flex-col overflow-hidden">
         <motion.div
@@ -265,13 +286,18 @@ export default function Dashboard() {
             wsConnected={wsConnected}
             onAuthorize={authorizeUpstox}
             authorizing={authorizing}
-            watchlistDate={undefined}
+            watchlistDate={
+              watchlistQuery.data?.forDate
+                ? `${watchlistQuery.data.isFallback ? "Fallback Scan: " : "Scan Date: "}${watchlistQuery.data.forDate}`
+                : undefined
+            }
             activeSignals={activeSymbols.size}
             scanning={scanning}
             scanProgress={scanState.total > 0 ? (scanState.current / scanState.total) * 100 : undefined}
             onOpenSuggestions={() => startTransition(() => setIsSuggestionsOpen(true))}
             onOpenPaperTrading={() => startTransition(() => setIsPaperTradingOpen(true))}
             onOpenReports={() => startTransition(() => setIsReportsOpen(true))}
+            onOpenEventFeed={() => useStore.getState().setEventFeedOpen(true)}
             onSelectSymbol={(s: string) => startTransition(() => setSelectedSymbol(s))}
           />
         </motion.div>
@@ -291,104 +317,181 @@ export default function Dashboard() {
         </AnimatePresence>
 
         <div className="min-h-0 flex-1 overflow-hidden p-4 pt-2">
-          <div ref={gridContainerRef} className="hidden lg:block w-full h-full relative">
-            {gridMounted && <ResponsiveGridLayout
-              className="layout h-full"
-              width={gridWidth}
-              layouts={{
-                lg: [
-                  { i: "chart", x: 0, y: 0, w: 8, h: 6 },
-                  { i: "watchlist", x: 0, y: 6, w: 8, h: 4 },
-                  { i: "detail", x: 8, y: 0, w: 4, h: 10 }
-                ]
-              }}
-              breakpoints={{ lg: 1024, md: 768, sm: 640, xs: 480, xxs: 0 }}
-              cols={{ lg: 12, md: 10, sm: 6, xs: 4, xxs: 2 }}
-              rowHeight={Math.max((window.innerHeight - 150) / 10, 50)}
-              dragConfig={{ enabled: true, handle: ".drag-handle" }}
-              resizeConfig={{ enabled: true, handles: ["se"] }}
-              margin={[16, 16] as const}
-            >
-              <div key="chart" className="flex flex-col min-h-0 min-w-0 glass-panel rounded-2xl p-1 z-10">
-                <div className="drag-handle h-2 w-full flex justify-center items-center cursor-move opacity-20 hover:opacity-100 transition-opacity"><div className="w-8 h-1 rounded-full bg-foreground" /></div>
-                <PriceChart 
-                  symbol={activeSymbol} 
-                  chartMode={chartMode} 
-                  onChartModeChange={(m) => startTransition(() => setChartMode(m))} 
-                  isMarketOpen={session?.isMarketOpen} 
-                  suggestion={suggestions.find(s => s.symbol === activeSymbol)} 
-                  position={positions.find((p: import("@/types/api").PaperPosition) => p.symbol === activeSymbol && p.status === "OPEN")}
-                  isAuthenticated={status?.upstoxAuthenticated}
-                />
-              </div>
+          <div className="hidden lg:flex w-full h-full gap-0">
+            {/* Left Column: Chart (Top) & Watchlist (Bottom) */}
+            <div className="flex flex-col w-[65%] xl:w-[72%] min-w-0 h-full pr-2">
+                  <motion.div 
+                    className="flex-[65] w-full min-h-0 min-w-0 rounded-2xl mb-3 relative z-10"
+                    initial={{ opacity: 0, y: 30, scale: 0.97, filter: "blur(10px)" }}
+                    animate={{ opacity: 1, y: 0, scale: 1, filter: "blur(0px)" }}
+                    transition={{ type: "spring", stiffness: 300, damping: 30, mass: 0.9, delay: 0.1 }}
+                  >
+                    <AnimatePresence mode="wait">
+                      {isScanActive ? (
+                        <motion.div
+                          key="scan-clock"
+                          className="w-full h-full"
+                          initial={{ opacity: 0, scale: 0.98 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          exit={{ opacity: 0, scale: 0.98 }}
+                          transition={{ duration: 0.2 }}
+                        >
+                          <ScanClockPanel
+                            scanning={scanning}
+                            scanProgress={scanState.total > 0 ? (scanState.current / scanState.total) * 100 : undefined}
+                            current={scanState.current}
+                            total={scanState.total}
+                            isMarketOpen={session?.isMarketOpen}
+                          />
+                        </motion.div>
+                      ) : (
+                        <motion.div
+                          key="price-chart"
+                          className="w-full h-full"
+                          initial={{ opacity: 0, scale: 0.98 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          exit={{ opacity: 0, scale: 0.98 }}
+                          transition={{ duration: 0.2 }}
+                        >
+                          <PriceChart 
+                            symbol={activeSymbol} 
+                            chartMode={chartMode} 
+                            onChartModeChange={(m) => startTransition(() => setChartMode(m))} 
+                            isMarketOpen={session?.isMarketOpen} 
+                            suggestion={suggestions.find(s => s.symbol === activeSymbol)} 
+                            position={positions.find((p: import("@/types/api").PaperPosition) => p.symbol === activeSymbol && p.status === "OPEN")}
+                            isAuthenticated={status?.upstoxAuthenticated}
+                          />
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </motion.div>
+                
+                  <motion.div 
+                    className="flex-[35] w-full min-h-0 min-w-0 pt-2 flex flex-col"
+                    initial={{ opacity: 0, y: 30, scale: 0.97, filter: "blur(10px)" }}
+                    animate={{ opacity: 1, y: 0, scale: 1, filter: "blur(0px)" }}
+                    transition={{ type: "spring", stiffness: 300, damping: 30, mass: 0.9, delay: 0.18 }}
+                  >
+                    <div className="flex-1 min-h-0 relative">
+                      {sidebarTab === "watchlist" ? (
+                        <WatchlistStack 
+                          headerLeft={
+                            <div className="flex items-center p-0.5 bg-foreground/5 rounded-full relative shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => setSidebarTab("watchlist")}
+                                className="relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors text-background"
+                              >
+                                <motion.div layoutId="desktopTabIndicator" className="absolute inset-0 bg-foreground rounded-full" transition={{ type: "spring", bounce: 0.2, duration: 0.6 }} />
+                                <span className="relative z-10">Watchlist</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setSidebarTab("screener")}
+                                className="relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors text-muted-foreground hover:text-foreground"
+                              >
+                                <span className="relative z-10">Screener</span>
+                              </button>
+                            </div>
+                          }
+                          items={watchlistItems} 
+                          monitored={monitoring?.monitoredStocks} 
+                          suggestions={suggestions} 
+                          selectedSymbol={activeSymbol} 
+                          sparklines={sparklinesQuery.data}
+                          watchlistMetadata={watchlistMetadata}
+                          onSelect={(s) => startTransition(() => setSelectedSymbol(s))} 
+                        />
+                      ) : (
+                        <ScreenerTargetsStack 
+                          headerLeft={
+                            <div className="flex items-center p-0.5 bg-foreground/5 rounded-full relative shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => setSidebarTab("watchlist")}
+                                className="relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors text-muted-foreground hover:text-foreground"
+                              >
+                                <span className="relative z-10">Watchlist</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setSidebarTab("screener")}
+                                className="relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors text-background"
+                              >
+                                <motion.div layoutId="desktopTabIndicator" className="absolute inset-0 bg-foreground rounded-full" transition={{ type: "spring", bounce: 0.2, duration: 0.6 }} />
+                                <span className="relative z-10">Screener</span>
+                              </button>
+                            </div>
+                          }
+                          selectedSymbol={activeSymbol} 
+                          sparklines={sparklinesQuery.data} 
+                          onSelect={(s) => startTransition(() => setSelectedSymbol(s))} 
+                        />
+                      )}
+                    </div>
+                  </motion.div>
+            </div>
 
-              <div key="watchlist" className="flex flex-col min-h-0 min-w-0 z-10 glass-panel rounded-2xl overflow-hidden pt-1">
-                <div className="drag-handle h-2 w-full flex justify-center items-center cursor-move opacity-20 hover:opacity-100 transition-opacity"><div className="w-8 h-1 rounded-full bg-foreground" /></div>
-                <div className="flex-1 min-h-0 relative">
-                  {sidebarTab === "watchlist" ? (
-                    <WatchlistStack 
-                      headerLeft={
-                        <div className="flex items-center p-0.5 bg-foreground/5 rounded-full relative shrink-0">
-                          <button onClick={() => setSidebarTab("watchlist")} className="relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full text-background">
-                            <motion.div layoutId="desktopTabIndicator" className="absolute inset-0 bg-foreground rounded-full" />
-                            <span className="relative z-10">Watchlist</span>
-                          </button>
-                          <button onClick={() => setSidebarTab("screener")} className="relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full text-muted-foreground hover:text-foreground">
-                            <span className="relative z-10">Screener</span>
-                          </button>
-                        </div>
-                      }
-                      items={watchlistItems} 
-                      monitored={monitoring?.monitoredStocks} 
-                      suggestions={suggestions} 
-                      selectedSymbol={activeSymbol} 
-                      sparklines={sparklinesQuery.data}
-                      onSelect={(s) => startTransition(() => setSelectedSymbol(s))} 
-                    />
-                  ) : (
-                    <ScreenerTargetsStack 
-                      headerLeft={
-                        <div className="flex items-center p-0.5 bg-foreground/5 rounded-full relative shrink-0">
-                          <button onClick={() => setSidebarTab("watchlist")} className="relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full text-muted-foreground hover:text-foreground">
-                            <span className="relative z-10">Watchlist</span>
-                          </button>
-                          <button onClick={() => setSidebarTab("screener")} className="relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full text-background">
-                            <motion.div layoutId="desktopTabIndicator" className="absolute inset-0 bg-foreground rounded-full" />
-                            <span className="relative z-10">Screener</span>
-                          </button>
-                        </div>
-                      }
-                      selectedSymbol={activeSymbol} 
-                      sparklines={sparklinesQuery.data} 
-                      onSelect={(s) => startTransition(() => setSelectedSymbol(s))} 
-                    />
-                  )}
-                </div>
-              </div>
-
-              <div key="detail" className="flex flex-col min-h-0 min-w-0 glass-panel rounded-2xl z-10 overflow-hidden pt-1">
-                <div className="drag-handle h-2 w-full flex justify-center items-center cursor-move opacity-20 hover:opacity-100 transition-opacity"><div className="w-8 h-1 rounded-full bg-foreground" /></div>
+            {/* Right Column: Detail Panel */}
+            <div className="flex flex-col w-[35%] xl:w-[28%] min-w-0 h-full pl-2">
+              <motion.div 
+                className="h-full w-full min-h-0 min-w-0 rounded-2xl relative z-10 overflow-hidden"
+                initial={{ opacity: 0, x: 20, filter: "blur(10px)" }}
+                animate={{ opacity: 1, x: 0, filter: "blur(0px)" }}
+                transition={{ type: "spring", stiffness: 300, damping: 30, mass: 0.9, delay: 0.25 }}
+              >
                 <DetailPanel
                   suggestions={suggestions}
                   selectedSymbol={activeSymbol}
                   session={session}
                 />
-              </div>
-            </ResponsiveGridLayout>}
+              </motion.div>
+            </div>
           </div>
 
           {/* Mobile Fallback */}
           <div className="flex lg:hidden flex-col gap-4 h-full overflow-y-auto">
             <div className="h-[500px]">
-              <PriceChart 
-                symbol={activeSymbol} 
-                chartMode={chartMode} 
-                onChartModeChange={(m) => startTransition(() => setChartMode(m))} 
-                isMarketOpen={session?.isMarketOpen} 
-                suggestion={suggestions.find(s => s.symbol === activeSymbol)} 
-                position={positions.find((p: import("@/types/api").PaperPosition) => p.symbol === activeSymbol && (p as any).status === "OPEN")}
-                isAuthenticated={status?.upstoxAuthenticated} 
-              />
+              <AnimatePresence mode="wait">
+                {isScanActive ? (
+                  <motion.div
+                    key="scan-clock-mobile"
+                    className="w-full h-full"
+                    initial={{ opacity: 0, scale: 0.98 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.98 }}
+                    transition={{ duration: 0.2 }}
+                  >
+                    <ScanClockPanel
+                      scanning={scanning}
+                      scanProgress={scanState.total > 0 ? (scanState.current / scanState.total) * 100 : undefined}
+                      current={scanState.current}
+                      total={scanState.total}
+                      isMarketOpen={session?.isMarketOpen}
+                    />
+                  </motion.div>
+                ) : (
+                  <motion.div
+                    key="price-chart-mobile"
+                    className="w-full h-full"
+                    initial={{ opacity: 0, scale: 0.98 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.98 }}
+                    transition={{ duration: 0.2 }}
+                  >
+                    <PriceChart 
+                      symbol={activeSymbol} 
+                      chartMode={chartMode} 
+                      onChartModeChange={(m) => startTransition(() => setChartMode(m))} 
+                      isMarketOpen={session?.isMarketOpen} 
+                      suggestion={suggestions.find(s => s.symbol === activeSymbol)} 
+                      position={positions.find((p: import("@/types/api").PaperPosition) => p.symbol === activeSymbol && p.status === "OPEN")}
+                      isAuthenticated={status?.upstoxAuthenticated} 
+                    />
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
             <div className="h-[400px] flex flex-col">
               <div className="flex-1 min-h-0 relative">
@@ -413,7 +516,7 @@ export default function Dashboard() {
                         </button>
                       </div>
                     }
-                    items={watchlistItems} monitored={monitoring?.monitoredStocks} suggestions={suggestions} selectedSymbol={activeSymbol} sparklines={sparklinesQuery.data} onSelect={(s) => startTransition(() => setSelectedSymbol(s))} 
+                    items={watchlistItems} monitored={monitoring?.monitoredStocks} suggestions={suggestions} selectedSymbol={activeSymbol} sparklines={sparklinesQuery.data} watchlistMetadata={watchlistMetadata} onSelect={(s) => startTransition(() => setSelectedSymbol(s))} 
                   />
                 ) : (
                   <ScreenerTargetsStack 

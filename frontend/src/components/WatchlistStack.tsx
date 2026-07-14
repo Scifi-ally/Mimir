@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useRef, useEffect, memo } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/format";
@@ -21,15 +21,33 @@ interface WatchlistStackProps {
   sparklines?: Record<string, number[]>;
   onSelect: (symbol: string) => void;
   headerLeft?: React.ReactNode;
+  watchlistMetadata?: {
+    forDate: string;
+    isFallback?: boolean;
+    hasScan?: boolean;
+  };
 }
 
-export function WatchlistStack({ items, monitored, suggestions, selectedSymbol, sparklines, onSelect, headerLeft }: WatchlistStackProps) {
+export const WatchlistStack = memo(function WatchlistStack({ items, monitored, suggestions, selectedSymbol, sparklines, onSelect, headerLeft, watchlistMetadata }: WatchlistStackProps) {
   const watchlistCounts = useStore((s) => s.watchlistCounts);
   
-  const rows = useMemo(
-    () => buildStockRows(items, monitored ?? [], suggestions, {}, sparklines),
-    [items, monitored, suggestions, sparklines]
+  // Separate sparklines-independent rows calculation
+  const baseRows = useMemo(
+    () => buildStockRows(items, monitored ?? [], suggestions, {}, undefined),
+    [items, monitored, suggestions]
   );
+
+  // Only merge sparklines data if available, without recalculating entire rows
+  const rows = useMemo(() => {
+    if (!sparklines) return baseRows;
+    return baseRows.map(row => {
+      const sparkline = sparklines[row.symbol];
+      if (sparkline) {
+        return { ...row, sparkline };
+      }
+      return row;
+    });
+  }, [baseRows, sparklines]);
 
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [searchText] = useState("");
@@ -149,7 +167,7 @@ export function WatchlistStack({ items, monitored, suggestions, selectedSymbol, 
       return (viewport || scrollRef.current) as HTMLDivElement;
     },
     estimateSize: () => colWidth + 8,
-    overscan: 3,
+    overscan: 2, // Reduced from 3 for better performance
   });
 
   const mobileVirtualizer = useVirtualizer({
@@ -161,7 +179,7 @@ export function WatchlistStack({ items, monitored, suggestions, selectedSymbol, 
       return (viewport || mobileScrollRef.current) as HTMLDivElement;
     },
     estimateSize: () => 72,
-    overscan: 5,
+    overscan: 3, // Reduced from 5 for mobile
   });
 
   useEffect(() => {
@@ -229,6 +247,13 @@ export function WatchlistStack({ items, monitored, suggestions, selectedSymbol, 
         </CardHeader>
       )}
 
+      {watchlistMetadata?.isFallback && rows.length > 0 && (
+        <div className="px-3 py-1.5 mx-2 my-1 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-between text-xs font-mono text-amber-500/90 shrink-0">
+          <span>Showing fallback scan from {watchlistMetadata.forDate}</span>
+          <span className="text-[10px] uppercase opacity-75 font-bold">No scan today</span>
+        </div>
+      )}
+
       {/* DESKTOP: Horizontal Virtualized Grid (Shown when container is wide) */}
       <ScrollArea 
         ref={scrollRef} 
@@ -247,7 +272,9 @@ export function WatchlistStack({ items, monitored, suggestions, selectedSymbol, 
             style={{ width: `${virtualizer.getTotalSize()}px`, height: '100%', minHeight: '160px' }}
           >
           {filteredRows.length === 0 ? (
-            <div className="absolute inset-0 flex items-center justify-center text-xs text-foreground/70 font-mono w-full">
+            <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-6 text-foreground/70 font-mono w-full gap-2">
+              <span className="font-semibold text-sm">No scan for this particular date ({watchlistMetadata?.forDate || "today"})</span>
+              <span className="text-xs text-foreground/50">Run a fresh market scan or wait for off-hours scanner pipeline.</span>
             </div>
           ) : (
             virtualizer.getVirtualItems().map((virtualItem) => {
@@ -285,8 +312,9 @@ export function WatchlistStack({ items, monitored, suggestions, selectedSymbol, 
           style={{ height: `${mobileVirtualizer.getTotalSize()}px` }}
         >
           {filteredRows.length === 0 ? (
-            <div className="flex items-center justify-center text-xs text-foreground/70 font-mono py-10 w-full">
-              No symbols found
+            <div className="flex flex-col items-center justify-center text-center p-6 text-foreground/70 font-mono py-10 w-full gap-2">
+              <span className="font-semibold text-sm">No scan for this particular date ({watchlistMetadata?.forDate || "today"})</span>
+              <span className="text-xs text-foreground/50">Run a fresh market scan or wait for off-hours scanner pipeline.</span>
             </div>
           ) : (
             mobileVirtualizer.getVirtualItems().map((virtualItem) => {
@@ -332,7 +360,7 @@ export function WatchlistStack({ items, monitored, suggestions, selectedSymbol, 
                         symbol={row.symbol} 
                         decimals={2}
                         fallback={row.changePct}
-                        className={cn("text-xs font-bold tabular-nums font-mono leading-tight", selected ? "text-background/70" : "text-foreground/50")}
+                        className={cn("text-xs font-bold tabular-nums font-mono leading-tight", selected ? "text-background/80" : "")}
                       />
                     </div>
 
@@ -350,7 +378,7 @@ export function WatchlistStack({ items, monitored, suggestions, selectedSymbol, 
       </ScrollArea>
     </Card>
   );
-}
+});
 
 
 

@@ -22,6 +22,7 @@ interface Tick {
 const tickBatch = new Map<string, Tick>();
 let batchTimer: ReturnType<typeof setInterval> | null = null;
 let telemetryTimer: ReturnType<typeof setInterval> | null = null;
+const WORKER_TICK_FLUSH_MS = 10;
 
 let totalTicksReceived = 0;
 let ticksThisSecond = 0;
@@ -30,8 +31,7 @@ let queueHighWaterMark = 0;
 
 const startTimers = () => {
   if (!batchTimer) {
-    // Flush at ~60fps (16ms)
-    batchTimer = setInterval(flushTicks, 16);
+    batchTimer = setInterval(flushTicks, WORKER_TICK_FLUSH_MS);
   }
   if (!telemetryTimer) {
     telemetryTimer = setInterval(() => {

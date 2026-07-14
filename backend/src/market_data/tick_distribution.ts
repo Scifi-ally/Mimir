@@ -15,6 +15,11 @@ import { loadBalancer } from "../intelligence/load_balancer";
 import { broadcastMarketTicks } from "../ws/websocket_server";
 import { intelligenceBus } from "../intelligence/event_bus";
 
+const UI_TICK_FLUSH_MS = Math.max(
+  1,
+  Number(process.env["UI_TICK_FLUSH_MS"] ?? "10"),
+);
+
 export interface NormalizedTick {
   symbol: string;
   instrumentKey?: string;
@@ -71,9 +76,9 @@ class TickDistributionServer {
   }
 
   private startTimers(): void {
-    // UI Stream flush at ~50 FPS (20ms interval) to keep rendering fluid at 60 FPS
-    // without flooding DOM or network sockets.
-    this.intervals.push(setInterval(() => this.flushUIStream(), 20));
+    // UI stream flushes in millisecond-scale batches. Analysis dispatch remains
+    // per valid tick below; this interval only controls browser/network batching.
+    this.intervals.push(setInterval(() => this.flushUIStream(), UI_TICK_FLUSH_MS));
 
     // Calculate ticks/sec every 1 second
     this.intervals.push(setInterval(() => {
@@ -133,15 +138,17 @@ class TickDistributionServer {
       return;
     }
 
-    // Throttled mode during live market scans: filter out micro-ticks
+    let shouldStreamToUI = true;
+
+    // Throttled mode during live market scans: filter micro-ticks only from
+    // UI streaming. Analysis still receives every valid tick below.
     if (mode === "throttled" && existing) {
       const priceDiff = Math.abs(ltp - existing.ltp);
       const diffPercent = priceDiff / existing.ltp;
       
-      // If the price changed by less than 0.05%, drop it to save CPU
+      // If the price changed by less than 0.05%, skip the UI flush to save CPU.
       if (diffPercent < 0.0005) {
-        this.droppedTicks++;
-        return;
+        shouldStreamToUI = false;
       }
     }
     // ----------------------------------
@@ -184,7 +191,9 @@ class TickDistributionServer {
       normalized.change = rawTick.change;
     }
 
-    this.pendingUISymbols.add(rawTick.symbol);
+    if (shouldStreamToUI) {
+      this.pendingUISymbols.add(rawTick.symbol);
+    }
 
     const history = this.historyCache.get(rawTick.symbol) ?? [];
     if (!this.historyCache.has(rawTick.symbol)) {

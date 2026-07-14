@@ -140,7 +140,7 @@ export function initWebSocketServer(server: Server): void {
               }
               tc.isAuthenticated = true;
               logger.info({ channel: tc.channelName }, "WS client authenticated successfully");
-            } catch (err) {
+            } catch {
               ws.close(4001, "Invalid token");
             }
             return;
@@ -167,7 +167,7 @@ export function initWebSocketServer(server: Server): void {
               if (tc.activeSymbol === symbol) tc.activeSymbol = null;
               tc.subscribedSymbols.delete(symbol);
 
-              const allClients = wssInstances.reduce((acc, w) => acc.concat(Array.from(w.clients)), [] as any[]);
+              const allClients = wssInstances.reduce((acc, w) => acc.concat(Array.from(w.clients)), [] as WebSocket[]);
               const otherSubscribed = allClients.some((client) => {
                 const tcClient = client as WebSocket & { activeSymbol?: string | null; subscribedSymbols?: Set<string> };
                 return tcClient !== ws && (tcClient.activeSymbol === symbol || tcClient.subscribedSymbols?.has(symbol));
@@ -196,7 +196,7 @@ export function initWebSocketServer(server: Server): void {
 
             if (oldSymbol && oldSymbol !== symbol) {
               // Clean up old activeSymbol monitoring if no other client is currently subscribing to it
-              const allClients = wssInstances.reduce((acc, w) => acc.concat(Array.from(w.clients)), [] as any[]);
+              const allClients = wssInstances.reduce((acc, w) => acc.concat(Array.from(w.clients)), [] as WebSocket[]);
               const otherSubscribed = allClients.some((client) => {
                 const tcClient = client as WebSocket & { activeSymbol?: string | null };
                 return tcClient !== ws && tcClient.activeSymbol === oldSymbol;
@@ -234,7 +234,7 @@ export function initWebSocketServer(server: Server): void {
         const oldSymbol = tc.activeSymbol;
         if (oldSymbol) {
           // Clean up old activeSymbol monitoring if no other client is currently subscribing to it
-          const allClients = wssInstances.reduce((acc, w) => acc.concat(Array.from(w.clients)), [] as any[]);
+          const allClients = wssInstances.reduce((acc, w) => acc.concat(Array.from(w.clients)), [] as WebSocket[]);
           const otherSubscribed = allClients.some((client) => {
             const tcClient = client as WebSocket & { activeSymbol?: string | null };
             return tcClient !== ws && tcClient.activeSymbol === oldSymbol;

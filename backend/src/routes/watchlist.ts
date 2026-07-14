@@ -40,9 +40,16 @@ function deriveSuggestionLabel(sug: any, mon: any) {
 const router = Router();
 const upstoxClient = createUpstoxClient({ cacheTimeMs: 15_000 });
 
+// In-memory cache for enriched watchlist data
+const enrichedCache = new Map<string, { data: ReturnType<typeof emptyWatchlist> | Record<string, unknown>; timestamp: number }>();
+const CACHE_TTL_MS = 30_000; // 30 seconds cache
+
 function emptyWatchlist(forDate = getISTDateStr()) {
+  const today = getISTDateStr();
   return {
     forDate,
+    isFallback: forDate !== today,
+    hasScan: false,
     momentumCandidates: [],
     breakoutCandidates: [],
     gapCandidates: [],
@@ -72,44 +79,50 @@ router.get("/watchlist/tomorrow", async (req, res) => {
 router.get("/watchlist/today", async (req, res) => {
   try {
     const today = getISTDateStr();
+    const noFallback = req.query.fallback === "false";
+
+    // Try today first
     let items = await db
       .select()
       .from(overnightWatchlistTable)
       .where(eq(overnightWatchlistTable.forDate, today));
     let selectedDate = today;
 
-    const noFallback = req.query.fallback === "false";
-
+    // If no items and fallback is enabled, try all fallback dates in parallel
     if (!items.length && !noFallback) {
       const previous = getPreviousTradingDayStr();
-      items = await db
-        .select()
-        .from(overnightWatchlistTable)
-        .where(eq(overnightWatchlistTable.forDate, previous));
-      selectedDate = items.length ? previous : selectedDate;
-    }
-
-    if (!items.length && !noFallback) {
       const tomorrow = getNextTradingDayStr();
-      items = await db
-        .select()
-        .from(overnightWatchlistTable)
-        .where(eq(overnightWatchlistTable.forDate, tomorrow));
-      selectedDate = items.length ? tomorrow : selectedDate;
-    }
 
-    if (!items.length && !noFallback) {
-      const [latest] = await db
-        .select({ forDate: overnightWatchlistTable.forDate })
-        .from(overnightWatchlistTable)
-        .orderBy(desc(overnightWatchlistTable.forDate))
-        .limit(1);
-      if (latest?.forDate) {
+      const [previousItems, tomorrowItems, latestDate] = await Promise.all([
+        db
+          .select()
+          .from(overnightWatchlistTable)
+          .where(eq(overnightWatchlistTable.forDate, previous)),
+        db
+          .select()
+          .from(overnightWatchlistTable)
+          .where(eq(overnightWatchlistTable.forDate, tomorrow)),
+        db
+          .select({ forDate: overnightWatchlistTable.forDate })
+          .from(overnightWatchlistTable)
+          .orderBy(desc(overnightWatchlistTable.forDate))
+          .limit(1),
+      ]);
+
+      // Prefer previous day over tomorrow
+      if (previousItems.length > 0) {
+        items = previousItems;
+        selectedDate = previous;
+      } else if (tomorrowItems.length > 0) {
+        items = tomorrowItems;
+        selectedDate = tomorrow;
+      } else if (latestDate[0]?.forDate) {
+        // Last resort: fetch the most recent date available
         items = await db
           .select()
           .from(overnightWatchlistTable)
-          .where(eq(overnightWatchlistTable.forDate, latest.forDate));
-        selectedDate = items.length ? latest.forDate : selectedDate;
+          .where(eq(overnightWatchlistTable.forDate, latestDate[0].forDate));
+        selectedDate = items.length ? latestDate[0].forDate : selectedDate;
       }
     }
 
@@ -263,10 +276,22 @@ async function buildResponse(
   forDate: string,
   items: (typeof overnightWatchlistTable.$inferSelect)[],
 ) {
-  const enriched = await enrichItemsWithRealPrices(items);
+  // Check cache first
+  const cacheKey = `${forDate}_${items.length}`;
+  const cached = enrichedCache.get(cacheKey);
+  const now = Date.now();
+  
+  if (cached && (now - cached.timestamp) < CACHE_TTL_MS) {
+    return cached.data;
+  }
 
-  return {
+  const enriched = await enrichItemsWithRealPrices(items);
+  const today = getISTDateStr();
+
+  const response = {
     forDate,
+    isFallback: forDate !== today,
+    hasScan: items.length > 0,
     momentumCandidates: enriched.filter((i) => i.category === "MOMENTUM" || i.category === "LONG_SETUP" || i.category === "BEAR_MOMENTUM"),
     breakoutCandidates: enriched.filter((i) => i.category === "BREAKOUT_WATCH" || i.category === "BREAKDOWN_WATCH"),
     gapCandidates: enriched.filter((i) => i.category === "GAP_CANDIDATE"),
@@ -276,6 +301,18 @@ async function buildResponse(
     avoidList: enriched.filter((i) => i.category === "AVOID" || i.category === "SHORT_SETUP"),
     generatedAt: items.length > 0 ? items[0]!.createdAt.toISOString() : null,
   };
+
+  // Cache the result
+  enrichedCache.set(cacheKey, { data: response, timestamp: now });
+  
+  // Clean up old cache entries (keep only last 10)
+  if (enrichedCache.size > 10) {
+    const entries = Array.from(enrichedCache.entries());
+    entries.sort((a, b) => a[1].timestamp - b[1].timestamp);
+    enrichedCache.delete(entries[0][0]);
+  }
+
+  return response;
 }
 
 function serializeItem(i: typeof overnightWatchlistTable.$inferSelect) {
