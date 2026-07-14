@@ -60,6 +60,11 @@ Key service capabilities include:
 * **Paper Trading Engine**: Test quantitative strategies in live market conditions with order fill simulation.
 * **Automated Risk Guardrails**: Built-in automated stop-loss trailing and daily loss thresholds.
 
+### Recent Enhancements
+* **Dynamic Island UI**: Seamless status updates, toast notifications, and event streams decoupled from the primary charting interface.
+* **Pure Digital Scanner**: A visually stunning digital display during overnight scan jobs, removing clutter and showing an elegant count.
+* **Real-Time Watchlist Rendering**: Live ticks push immediately to the client side without relying on polling, ensuring sub-10ms UI reflection.
+
 ---
 
 ## System Architecture
