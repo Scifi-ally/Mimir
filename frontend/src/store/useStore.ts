@@ -12,6 +12,15 @@ export interface ScanLog {
 
 export type ScanPhase = "idle" | "running" | "completed" | "failed" | "stopped";
 
+export interface AppEvent {
+  id: string;
+  type: "info" | "success" | "warning" | "error";
+  title: string;
+  message?: string;
+  timestamp: string;
+  symbol?: string;
+}
+
 export type IslandConfig = {
   icon?: React.ReactNode;
   title: string;
@@ -37,6 +46,7 @@ interface AppStore {
   setScanState: (state: Partial<ScanProgress & { scanning: boolean; phase: ScanPhase; message?: string; updatedAt?: number }>) => void;
   scanLogs: ScanLog[];
   addScanLog: (log: Omit<ScanLog, "id" | "time">) => void;
+  setScanLogs: (logs: ScanLog[]) => void;
   clearScanLogs: () => void;
   latestAlert: string | null;
   setLatestAlert: (message: string | null) => void;
@@ -52,6 +62,11 @@ interface AppStore {
   setCommandPaletteOpen: (open: boolean, search?: string, targetWatchlist?: number | null, editRuleId?: number | null) => void;
   watchlistCounts: Record<string, number>;
   updateWatchlistCounts: (counts: Record<string, number>) => void;
+  eventFeedOpen: boolean;
+  setEventFeedOpen: (open: boolean) => void;
+  events: AppEvent[];
+  addEvent: (event: Omit<AppEvent, "id" | "timestamp">) => void;
+  clearEvents: () => void;
   layoutMode: "comfortable" | "compact";
   setLayoutMode: (mode: "comfortable" | "compact") => void;
   theme: "dark" | "light" | "quant";
@@ -75,20 +90,41 @@ export const useStore = create<AppStore>()(
       scanState: { ...state.scanState, ...partial },
     })),
   scanLogs: [],
+  // MEDIUM FIX (Issue #19): Improved scan log deduplication
+  // Previous code only checked first log, now checks entire array
   addScanLog: (log) => set((state) => {
-    const lastLog = state.scanLogs[0];
-    // If it's the exact same symbol and status, ignore it
-    if (lastLog && lastLog.symbol === log.symbol && lastLog.status === log.status && lastLog.reason === log.reason) {
-      return state;
+    // Find existing log for this symbol in entire array
+    const existingIndex = state.scanLogs.findIndex(
+      l => l.symbol === log.symbol
+    );
+    
+    if (existingIndex >= 0) {
+      const existingLog = state.scanLogs[existingIndex];
+      
+      // If status and reason unchanged, no update needed
+      if (existingLog.status === log.status && existingLog.reason === log.reason) {
+        return state;
+      }
+      
+      // Update existing log with new ID and timestamp
+      const newLogs = [...state.scanLogs];
+      newLogs[existingIndex] = {
+        ...log,
+        id: crypto.randomUUID(), // New ID for React key change detection
+        time: new Date().toISOString() // Use ISO timestamp instead of locale string
+      };
+      return { scanLogs: newLogs.slice(0, 50) };
     }
-    if (lastLog && lastLog.symbol === log.symbol) {
-      const updatedLog: ScanLog = { ...log, id: lastLog.id, time: new Date().toLocaleTimeString() };
-      return { scanLogs: [updatedLog, ...state.scanLogs.slice(1)] };
-    }
-    // Otherwise add as new
-    const newLog: ScanLog = { ...log, id: crypto.randomUUID(), time: new Date().toLocaleTimeString() };
+    
+    // Add new log
+    const newLog: ScanLog = { 
+      ...log, 
+      id: crypto.randomUUID(), 
+      time: new Date().toISOString() 
+    };
     return { scanLogs: [newLog, ...state.scanLogs].slice(0, 50) };
   }),
+  setScanLogs: (logs) => set({ scanLogs: logs }),
   clearScanLogs: () => set({ scanLogs: [] }),
   latestAlert: null,
   setLatestAlert: (message) => set({ latestAlert: message }),
@@ -111,6 +147,20 @@ export const useStore = create<AppStore>()(
     }),
   watchlistCounts: {},
   updateWatchlistCounts: (counts) => set((state) => ({ watchlistCounts: { ...state.watchlistCounts, ...counts } })),
+  eventFeedOpen: false,
+  setEventFeedOpen: (open) => set({ eventFeedOpen: open }),
+  events: [],
+  addEvent: (event) => set((state) => ({
+    events: [
+      {
+        ...event,
+        id: crypto.randomUUID(),
+        timestamp: new Date().toISOString(),
+      },
+      ...state.events,
+    ].slice(0, 100), // Keep last 100 events
+  })),
+  clearEvents: () => set({ events: [] }),
     }),
     {
       name: "mimir-store",

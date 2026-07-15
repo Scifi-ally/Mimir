@@ -1,6 +1,7 @@
 import { useState, useMemo, useRef, useEffect, memo } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { motion, AnimatePresence } from "framer-motion";
+import { Sparkles } from "lucide-react";
 import { cn } from "@/lib/format";
 import { Card, CardHeader } from "@/components/mimir/card";
 import { ScrollArea } from "@/components/mimir/scroll-area";
@@ -53,34 +54,69 @@ export const WatchlistStack = memo(function WatchlistStack({ items, monitored, s
   const [searchText] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const mobileScrollRef = useRef<HTMLDivElement>(null);
-  const [colWidth, setColWidth] = useState(160);
+  const [colWidth, setColWidth] = useState(290);
   const categories = countCategories(rows);
 
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
+    let rafId: number;
     const observer = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        const w = entry.contentRect.width;
-        if (w === 0) continue;
-        const gap = 8;
-        const minW = 240;
-        const numCols = Math.max(1, Math.floor((w + gap) / (minW + gap)));
-        // Use exact width minus 0.1 to avoid subpixel overflow
-        const exactWidth = Math.floor(((w - (numCols - 1) * gap) / numCols) * 10) / 10 - 0.1;
-        setColWidth(exactWidth);
-      }
+      cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        for (const entry of entries) {
+          const w = entry.contentRect.width;
+          if (w === 0) continue;
+          const gap = 10;
+          const minW = 290;
+          const numCols = Math.max(1, Math.floor((w + gap) / (minW + gap)));
+          const exactWidth = Math.floor(((w - (numCols - 1) * gap) / numCols) * 10) / 10 - 0.1;
+          setColWidth(exactWidth);
+        }
+      });
     });
     observer.observe(el);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(rafId);
+    };
+  }, []);
+
+  const cardRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const cardEl = cardRef.current;
+    if (!cardEl) return;
+
+    const onWheelNative = (e: WheelEvent) => {
+      const headerScrollEl = (e.target as HTMLElement)?.closest('.overflow-x-auto') as HTMLElement;
+      if (headerScrollEl && headerScrollEl.scrollWidth > headerScrollEl.clientWidth) {
+        if (e.deltaY !== 0 && Math.abs(e.deltaY) >= Math.abs(e.deltaX)) {
+          e.preventDefault();
+          headerScrollEl.scrollLeft += e.deltaY * 2;
+          return;
+        }
+      }
+
+      const el = (scrollRef.current?.querySelector('[data-radix-scroll-area-viewport]') || scrollRef.current) as HTMLElement;
+      if (!el) return;
+
+      if (e.deltaY !== 0 && Math.abs(e.deltaY) >= Math.abs(e.deltaX)) {
+        if (el.scrollWidth > el.clientWidth) {
+          e.preventDefault();
+        }
+        el.scrollLeft += e.deltaY * 2;
+      }
+    };
+
+    cardEl.addEventListener("wheel", onWheelNative, { passive: false });
+    return () => cardEl.removeEventListener("wheel", onWheelNative);
   }, []);
 
   const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
     const el = scrollRef.current?.querySelector('[data-radix-scroll-area-viewport]') || scrollRef.current;
-    if (el) {
-      if (e.deltaY !== 0 && e.deltaX === 0) {
-        el.scrollLeft += e.deltaY;
-      }
+    if (el && e.deltaY !== 0 && Math.abs(e.deltaY) >= Math.abs(e.deltaX)) {
+      el.scrollLeft += e.deltaY * 2;
     }
   };
 
@@ -166,8 +202,8 @@ export const WatchlistStack = memo(function WatchlistStack({ items, monitored, s
       const viewport = scrollRef.current.querySelector('[data-radix-scroll-area-viewport]');
       return (viewport || scrollRef.current) as HTMLDivElement;
     },
-    estimateSize: () => colWidth + 8,
-    overscan: 2, // Reduced from 3 for better performance
+    estimateSize: () => colWidth + 10,
+    overscan: 4, // Smooth instant rendering
   });
 
   const mobileVirtualizer = useVirtualizer({
@@ -178,8 +214,8 @@ export const WatchlistStack = memo(function WatchlistStack({ items, monitored, s
       const viewport = mobileScrollRef.current.querySelector('[data-radix-scroll-area-viewport]');
       return (viewport || mobileScrollRef.current) as HTMLDivElement;
     },
-    estimateSize: () => 72,
-    overscan: 3, // Reduced from 5 for mobile
+    estimateSize: () => 68,
+    overscan: 4,
   });
 
   useEffect(() => {
@@ -201,11 +237,11 @@ export const WatchlistStack = memo(function WatchlistStack({ items, monitored, s
   }, [selectedSymbol, filteredRows, virtualizer]);
 
   return (
-    <Card className="@container flex h-full min-h-0 flex-col border-0 bg-transparent">
-      {rows.length > 0 && (
-        <CardHeader className="shrink-0 px-2 py-1 flex flex-row items-center justify-between gap-4">
-          {headerLeft}
-          <div className="flex overflow-x-auto whitespace-nowrap flex-nowrap gap-4 text-[10px] font-bold uppercase tracking-wider [&::-webkit-scrollbar]:hidden pb-1 justify-end w-full">
+    <Card ref={cardRef} onWheel={handleWheel} className="@container flex h-full min-h-0 flex-col border-0 bg-transparent">
+      <CardHeader className="shrink-0 h-[48px] px-3 py-0 space-y-0 flex flex-row items-center justify-between gap-4 border-b border-border/10 overflow-hidden">
+        {headerLeft}
+        {rows.length > 0 ? (
+          <div className="flex overflow-x-auto whitespace-nowrap flex-nowrap gap-4 text-[10px] font-bold uppercase tracking-wider [&::-webkit-scrollbar]:hidden pb-1 justify-end w-full items-center">
             <button
               type="button"
               onClick={() => handleCategorySelect(null)}
@@ -244,8 +280,12 @@ export const WatchlistStack = memo(function WatchlistStack({ items, monitored, s
               </button>
             ))}
           </div>
-        </CardHeader>
-      )}
+        ) : (
+          <div className="flex items-center justify-end w-full text-[10px] font-bold uppercase tracking-wider text-muted-foreground/60">
+            <span>0 Symbols</span>
+          </div>
+        )}
+      </CardHeader>
 
       {watchlistMetadata?.isFallback && rows.length > 0 && (
         <div className="px-3 py-1.5 mx-2 my-1 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-between text-xs font-mono text-amber-500/90 shrink-0">
@@ -254,128 +294,129 @@ export const WatchlistStack = memo(function WatchlistStack({ items, monitored, s
         </div>
       )}
 
-      {/* DESKTOP: Horizontal Virtualized Grid (Shown when container is wide) */}
-      <ScrollArea 
-        ref={scrollRef} 
-        className="hidden @min-md:block flex-1 min-h-0 px-2 pb-2 snap-x snap-mandatory" 
-        orientation="horizontal" 
-        onWheel={handleWheel}
-      >
-        <AnimatePresence mode="wait">
-          <motion.div 
-            key={selectedCategory || "all"}
-            initial={{ opacity: 0, filter: "blur(2px)", scale: 0.98 }}
-            animate={{ opacity: 1, filter: "blur(0px)", scale: 1 }}
-            exit={{ opacity: 0, filter: "blur(2px)", scale: 0.98 }}
-            transition={{ type: "spring", stiffness: 400, damping: 30 }}
-            className="relative pb-2" 
-            style={{ width: `${virtualizer.getTotalSize()}px`, height: '100%', minHeight: '160px' }}
-          >
-          {filteredRows.length === 0 ? (
-            <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-6 text-foreground/70 font-mono w-full gap-2">
-              <span className="font-semibold text-sm">No scan for this particular date ({watchlistMetadata?.forDate || "today"})</span>
-              <span className="text-xs text-foreground/50">Run a fresh market scan or wait for off-hours scanner pipeline.</span>
-            </div>
-          ) : (
-            virtualizer.getVirtualItems().map((virtualItem) => {
-              const colRows = columns[virtualItem.index]!;
-              return (
-                <div
-                  key={virtualItem.key}
-                  className="absolute top-0 left-0 h-full grid grid-rows-3 gap-2 snap-start scroll-mx-2"
-                  style={{
-                    width: `${colWidth}px`,
-                    transform: `translateX(${virtualItem.start}px)`,
-                  }}
-                >
-                  {colRows.map((row) => (
-                    <WatchlistCard
-                      key={row.symbol}
-                      row={row as unknown as React.ComponentProps<typeof WatchlistCard>["row"]}
-                      selected={selectedSymbol === row.symbol}
-                      onSelect={onSelect}
-                      sparkline={sparklines?.[row.symbol]}
-                    />
-                  ))}
-                </div>
-              );
-            })
-          )}
-          </motion.div>
-        </AnimatePresence>
-      </ScrollArea>
-
-      {/* MOBILE LIST (vertical) */}
-      <ScrollArea ref={mobileScrollRef} className="block @min-md:hidden flex-1 min-h-0 px-2 pb-2">
-        <div 
-          className="relative w-full"
-          style={{ height: `${mobileVirtualizer.getTotalSize()}px` }}
-        >
-          {filteredRows.length === 0 ? (
-            <div className="flex flex-col items-center justify-center text-center p-6 text-foreground/70 font-mono py-10 w-full gap-2">
-              <span className="font-semibold text-sm">No scan for this particular date ({watchlistMetadata?.forDate || "today"})</span>
-              <span className="text-xs text-foreground/50">Run a fresh market scan or wait for off-hours scanner pipeline.</span>
-            </div>
-          ) : (
-            mobileVirtualizer.getVirtualItems().map((virtualItem) => {
-              const row = filteredRows[virtualItem.index];
-              const selected = selectedSymbol === row.symbol;
-              return (
-                <div
-                  key={virtualItem.key}
-                  className="absolute top-0 left-0 w-full"
-                  style={{
-                    height: `${virtualItem.size}px`,
-                    transform: `translateY(${virtualItem.start}px)`,
-                    paddingBottom: '8px',
-                  }}
-                >
-                  <button
-                    id={`watchlist-item-mobile-${row.symbol}`}
-                    onClick={() => onSelect(row.symbol)}
-                    className={cn(
-                      "flex items-center justify-between rounded-xl px-4 py-3 w-full h-full text-left transition-all relative overflow-hidden group border will-change-transform",
-                      selected
-                        ? "bg-foreground text-background border-foreground shadow-md"
-                        : "bg-secondary/10 border-transparent text-foreground hover:bg-secondary/20"
-                    )}
-                  >
-                    <div className="flex flex-col gap-1.5 min-w-0 flex-1">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className={cn("truncate font-bold text-[15px]", selected ? "text-background" : "text-foreground")}>{row.symbol}</span>
-                        {row.activeSignalDirection && (
-                          <span className={cn("h-2 w-2 rounded-full", row.activeSignalDirection === "BUY" ? "bg-bull" : "bg-bear")} />
-                        )}
-                      </div>
-                    </div>
-                    
-                    <div className="flex flex-col items-end pl-3 z-10">
-                      <LivePrice 
-                        symbol={row.symbol} 
-                        decimals={2}
-                        fallback={row.price}
-                        className={cn("text-[15px] font-bold tabular-nums font-mono leading-tight", selected ? "text-background" : "text-foreground")}
-                      />
-                      <LiveChangePct 
-                        symbol={row.symbol} 
-                        decimals={2}
-                        fallback={row.changePct}
-                        className={cn("text-xs font-bold tabular-nums font-mono leading-tight", selected ? "text-background/80" : "")}
-                      />
-                    </div>
-
-                    {sparklines?.[row.symbol] && (
-                      <div className="absolute bottom-0 left-0 right-0 h-4 opacity-20 pointer-events-none z-0">
-                        <Sparkline data={sparklines[row.symbol]} color={selected ? "currentColor" : undefined} />
-                      </div>
-                    )}
-                  </button>
-                </div>
-              );
-            })
-          )}
+      {filteredRows.length === 0 ? (
+        <div className="flex-1 w-full h-full min-h-[180px] flex flex-col items-center justify-center text-center p-6 gap-3">
+          <div className="w-12 h-12 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shadow-inner">
+            <Sparkles className="w-6 h-6 animate-pulse" />
+          </div>
+          <div className="space-y-1">
+            <h3 className="text-sm font-bold tracking-tight text-foreground">No prior scan</h3>
+            <p className="text-xs text-muted-foreground/80 max-w-[280px] leading-relaxed mx-auto">
+              There are no previous scan results available for today. Run a live market scan or select <strong className="text-foreground">Screener</strong> above to pick stocks manually.
+            </p>
+          </div>
         </div>
-      </ScrollArea>
+      ) : (
+        <>
+          {/* DESKTOP: Horizontal Virtualized Grid (Shown when container is wide) */}
+          <ScrollArea 
+            ref={scrollRef} 
+            className="hidden @min-md:block flex-1 min-h-0 px-2 pb-2" 
+            orientation="horizontal" 
+            onWheel={handleWheel}
+          >
+            <AnimatePresence mode="wait">
+              <motion.div 
+                key={selectedCategory || "all"}
+                initial={{ opacity: 0, scale: 0.98 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.98 }}
+                transition={{ type: "spring", stiffness: 450, damping: 32 }}
+                style={{ willChange: "transform, opacity", width: `${virtualizer.getTotalSize()}px`, height: '100%', minHeight: '160px' }}
+              >
+                {virtualizer.getVirtualItems().map((virtualItem) => {
+                  const colRows = columns[virtualItem.index]!;
+                  return (
+                    <div
+                      key={virtualItem.key}
+                      className="absolute top-0 left-0 h-full grid grid-rows-3 gap-2 snap-start scroll-mx-2"
+                      style={{
+                        width: `${colWidth}px`,
+                        transform: `translateX(${virtualItem.start}px)`,
+                      }}
+                    >
+                      {colRows.map((row) => (
+                        <WatchlistCard
+                          key={row.symbol}
+                          row={row as unknown as React.ComponentProps<typeof WatchlistCard>["row"]}
+                          selected={selectedSymbol === row.symbol}
+                          onSelect={onSelect}
+                          sparkline={sparklines?.[row.symbol]}
+                        />
+                      ))}
+                    </div>
+                  );
+                })}
+              </motion.div>
+            </AnimatePresence>
+          </ScrollArea>
+
+          {/* MOBILE LIST (vertical) */}
+          <ScrollArea ref={mobileScrollRef} className="block @min-md:hidden flex-1 min-h-0 px-2 pb-2">
+            <div 
+              className="relative w-full"
+              style={{ height: `${mobileVirtualizer.getTotalSize()}px` }}
+            >
+              {mobileVirtualizer.getVirtualItems().map((virtualItem) => {
+                const row = filteredRows[virtualItem.index];
+                const selected = selectedSymbol === row.symbol;
+                return (
+                  <div
+                    key={virtualItem.key}
+                    className="absolute top-0 left-0 w-full"
+                    style={{
+                      height: `${virtualItem.size}px`,
+                      transform: `translateY(${virtualItem.start}px)`,
+                      paddingBottom: '8px',
+                    }}
+                  >
+                    <button
+                      id={`watchlist-item-mobile-${row.symbol}`}
+                      onClick={() => onSelect(row.symbol)}
+                      className={cn(
+                        "flex items-center justify-between rounded-xl px-4 py-3 w-full h-full text-left transition-all relative overflow-hidden group border will-change-transform",
+                        selected
+                          ? "bg-foreground text-background border-foreground shadow-md"
+                          : "bg-secondary/10 border-transparent text-foreground hover:bg-secondary/20"
+                      )}
+                    >
+                      <div className="flex flex-col gap-1.5 min-w-0 flex-1">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className={cn("truncate font-bold text-[15px]", selected ? "text-background" : "text-foreground")}>{row.symbol}</span>
+                          {row.activeSignalDirection && (
+                            <span className={cn("h-2 w-2 rounded-full", row.activeSignalDirection === "BUY" ? "bg-bull" : "bg-bear")} />
+                          )}
+                        </div>
+                      </div>
+                      
+                      <div className="flex flex-col items-end pl-3 z-10">
+                        <LivePrice 
+                          symbol={row.symbol} 
+                          decimals={2}
+                          fallback={row.price}
+                          className={cn("text-[15px] font-bold tabular-nums font-mono leading-tight", selected ? "text-background" : "text-foreground")}
+                        />
+                        <LiveChangePct 
+                          symbol={row.symbol} 
+                          decimals={2}
+                          fallback={row.changePct}
+                          className={cn("text-xs font-bold tabular-nums font-mono leading-tight", selected ? "text-background/80" : "")}
+                        />
+                      </div>
+
+                      {sparklines?.[row.symbol] && (
+                        <div className="absolute bottom-0 left-0 right-0 h-4 opacity-20 pointer-events-none z-0">
+                          <Sparkline data={sparklines[row.symbol]} color={selected ? "currentColor" : undefined} />
+                        </div>
+                      )}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </ScrollArea>
+        </>
+      )}
     </Card>
   );
 });
@@ -392,5 +433,18 @@ function countCategories(rows: StockRow[]) {
     const k = r.category.replaceAll("_", " ").replace("WATCH", "").trim() || "Other";
     m.set(k, (m.get(k) ?? 0) + 1);
   }
-  return [...m.entries()].slice(0, 4);
+  const sorted = [...m.entries()].sort((a, b) => {
+    const aActive = a[0].toUpperCase().includes("ACTIVE");
+    const bActive = b[0].toUpperCase().includes("ACTIVE");
+    if (aActive && !bActive) return -1;
+    if (!aActive && bActive) return 1;
+
+    const aMonitored = a[0].toUpperCase().includes("MONITORED");
+    const bMonitored = b[0].toUpperCase().includes("MONITORED");
+    if (aMonitored && !bMonitored) return -1;
+    if (!aMonitored && bMonitored) return 1;
+
+    return b[1] - a[1];
+  });
+  return sorted.slice(0, 6);
 }

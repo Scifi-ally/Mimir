@@ -11,6 +11,7 @@ import { reportsRouter } from "./reports";
 import { benchmarkRouter } from "./benchmark";
 import systemRouter from "./system";
 import paperTradingRouter from "./paper_trading";
+import alertsRouter from "./alerts";
 
 const router: IRouter = Router();
 
@@ -24,6 +25,7 @@ router.use(watchlistRouter);
 router.use(configRouter);
 router.use(systemRouter);
 router.use(paperTradingRouter);
+router.use(alertsRouter);
 router.use("/reports", reportsRouter);
 router.use("/benchmark", benchmarkRouter);
 

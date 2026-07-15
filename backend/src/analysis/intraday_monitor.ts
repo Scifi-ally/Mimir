@@ -18,11 +18,6 @@ import { db } from "../../db/src";
 import { suggestionsTable, overnightWatchlistTable } from "../../db/src";
 import { desc, eq } from "drizzle-orm";
 import { getLatestPrice, getTickData } from "../market_data/tick_feeder";
-import {
-  type ActiveWatchlistStock,
-  getBestMonitoringSeeds,
-  getEffectiveUniverse,
-} from "./stock_scanner";
 import { calculateTopSectors } from "./sector_rotation";
 import { broadcast } from "../ws/websocket_server";
 import { createServerEvent } from "../ws/events";
@@ -642,7 +637,7 @@ let activeSuggestionsCache: { symbols: Set<string>; timestamp: number } = {
 
 async function getActiveSymbolsSet(): Promise<Set<string>> {
   const now = Date.now();
-  if (now - activeSuggestionsCache.timestamp < 30000 && activeSuggestionsCache.symbols.size > 0) {
+  if (now - activeSuggestionsCache.timestamp < 2000 && activeSuggestionsCache.symbols.size > 0) {
     return activeSuggestionsCache.symbols;
   }
   try {
@@ -770,6 +765,7 @@ async function generateIntraDaySuggestion(
       return;
     }
 
+    activeSuggestionsCache.timestamp = 0;
     activeSuggestionsCache.symbols.add(symbol);
     monitored.signalGenerated = true;
     await stateStore.saveMonitoredStock(symbol, monitored).catch(() => {});

@@ -125,8 +125,7 @@ export interface ActiveSuggestion {
   expiresAt: number;
   isNew?: boolean;
   marketRegime?: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  signalFactors?: Record<string, any>;
+  signalFactors?: Record<string, unknown>;
   aiScore?: number;
   patternScore?: number;
   technicalScore?: number;
@@ -177,4 +176,5 @@ export interface InternalEvents {
   breadthUpdated: BreadthSnapshot;
   universeUpdated: UniverseStock[];
   dailyLossLimitReached: { lossAmount: number; limitAmount: number };
+  websocketReconnect: { durationMs: number };
 }

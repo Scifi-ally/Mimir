@@ -35,7 +35,8 @@ export function ReportsLibrary({ isOpen, onClose }: ReportsLibraryProps) {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm"
+            transition={{ duration: 0.2 }}
+            className="fixed inset-0 z-[60] bg-background/80"
             onClick={onClose}
           />
 
@@ -44,8 +45,8 @@ export function ReportsLibrary({ isOpen, onClose }: ReportsLibraryProps) {
             initial={{ y: "100%", x: "-50%" }}
             animate={{ y: 0, x: "-50%" }}
             exit={{ y: "100%", x: "-50%" }}
-            transition={{ type: "spring", stiffness: 400, damping: 30, mass: 0.8 }}
-            className="fixed left-1/2 bottom-0 z-[70] flex flex-col bg-background/95 backdrop-blur-md border-t border-x border-border/30 text-foreground overflow-hidden h-[86vh] w-full max-w-4xl rounded-t-3xl shadow-[0_0_40px_rgba(0,0,0,0.5)]"
+            transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
+            className="fixed left-1/2 bottom-0 z-[70] flex flex-col bg-background text-foreground overflow-hidden h-[86vh] w-full max-w-4xl rounded-t-3xl shadow-[0_-8px_40px_rgba(0,0,0,0.08)] dark:shadow-[0_-8px_40px_rgba(0,0,0,0.4)] border border-b-0 border-foreground/5 ring-0 outline-none"
           >
             {/* Header */}
             <div className="relative px-8 pt-6 pb-4 flex flex-col sm:flex-row items-center justify-between shrink-0 border-b border-border/10">

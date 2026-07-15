@@ -5,8 +5,8 @@
  * hours and updates the in-memory market state so the regime detector has real
  * data to work with.
  *
- * Without this, `niftyChangePct` and `indiaVix` remain null forever and the
- * regime is always UNKNOWN — meaning no VIX-based pause gates can fire.
+ * HIGH FIX (Issue #9): Added retry logic with exponential backoff and trading
+ * calendar awareness to handle transient failures and market holidays properly.
  */
 import axios from "axios";
 import { getAccessToken, invalidateAccessToken } from "../upstox/auth";
@@ -19,6 +19,10 @@ import { createUpstoxClient } from "../lib/upstox-client";
 const NIFTY_KEY = "NSE_INDEX|Nifty 50";
 const VIX_KEY = "NSE_INDEX|India VIX";
 const marketFeedClient = createUpstoxClient({ cacheTimeMs: 1_000 });
+
+// HIGH FIX (Issue #9): Track retry attempts and implement exponential backoff
+const MAX_RETRIES = 3;
+const RETRY_DELAY_MS = 2000;
 
 function normalizeInstrumentKey(value: string): string {
   return value.trim().toUpperCase().replace(":", "|");
@@ -147,6 +151,7 @@ export async function initMarketFeed(): Promise<void> {
 /**
  * Fetch live Nifty 50 + India VIX LTP and update market state.
  * Called every 5 minutes during market hours by the scheduler.
+ * HIGH FIX (Issue #9): Added retry logic with exponential backoff for transient failures
  */
 export async function updateMarketFeed(): Promise<void> {
   const token = getAccessToken();
@@ -165,110 +170,138 @@ export async function updateMarketFeed(): Promise<void> {
     await initMarketFeed();
   }
 
-  try {
-    const prices = await marketFeedClient.fetchLTPForInstruments(
-      [NIFTY_KEY, VIX_KEY],
-      token,
-    );
+  // HIGH FIX (Issue #9): Implement retry logic with exponential backoff
+  let lastError: any = null;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const prices = await marketFeedClient.fetchLTPForInstruments(
+        [NIFTY_KEY, VIX_KEY],
+        token,
+      );
 
-    const niftyLTP = prices[normalizeInstrumentKey(NIFTY_KEY)] ?? null;
-    const vixLTP = prices[normalizeInstrumentKey(VIX_KEY)] ?? null;
-    const availableKeys = Object.keys(prices);
+      const niftyLTP = prices[normalizeInstrumentKey(NIFTY_KEY)] ?? null;
+      const vixLTP = prices[normalizeInstrumentKey(VIX_KEY)] ?? null;
+      const availableKeys = Object.keys(prices);
 
-    if (niftyLTP === null && vixLTP === null) {
+      if (niftyLTP === null && vixLTP === null) {
+        feedSnapshot = {
+          ...feedSnapshot,
+          status: "partial",
+          authenticated: true,
+          fetchedAt: new Date().toISOString(),
+          note: "No quote data returned",
+        };
+        logger.warn(
+          { availableKeys, attempt },
+          "Market feed: no Nifty/VIX data returned from Upstox",
+        );
+        
+        // Retry if no data returned
+        if (attempt < MAX_RETRIES) {
+          await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS * Math.pow(2, attempt)));
+          continue;
+        }
+        return;
+      }
+
+      const stateUpdate: Parameters<typeof updateMarketState>[0] = {};
+
+      if (niftyLTP !== null) {
+        stateUpdate.niftyPrice = niftyLTP;
+        if (niftyPrevClose !== null && niftyPrevClose > 0) {
+          stateUpdate.niftyChangePct = parseFloat(
+            (((niftyLTP - niftyPrevClose) / niftyPrevClose) * 100).toFixed(3),
+          );
+        }
+      }
+
+      if (vixLTP !== null) {
+        stateUpdate.indiaVix = vixLTP;
+      }
+
+      updateMarketState(stateUpdate);
       feedSnapshot = {
-        ...feedSnapshot,
-        status: "partial",
+        status: niftyLTP !== null && vixLTP !== null ? "ready" : "partial",
         authenticated: true,
         fetchedAt: new Date().toISOString(),
-        note: "No quote data returned",
+        prevClose: niftyPrevClose,
+        niftyLtp: niftyLTP,
+        vixLtp: vixLTP,
+        niftyChangePct: stateUpdate.niftyChangePct ?? null,
+        note:
+          niftyLTP !== null || vixLTP !== null
+            ? "Upstox quotes updated"
+            : "Waiting for quote data",
       };
-      logger.warn(
-        { availableKeys },
-        "Market feed: no Nifty/VIX data returned from Upstox",
+
+      // Regime detector now has real data — run it immediately
+      detectRegime();
+
+      logger.debug(
+        {
+          niftyLTP,
+          vixLTP,
+          niftyChangePct: stateUpdate.niftyChangePct,
+          availableKeys,
+          attempt,
+        },
+        "Market feed updated successfully",
       );
       return;
-    }
+      
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } catch (err: any) {
+      lastError = err;
+      const status = err?.response?.status;
+      
+      if (status === 401 || status === 403) {
+        await invalidateAccessToken(`market_feed_http_${status}`);
+        feedSnapshot = {
+          ...feedSnapshot,
+          status: "unauthenticated",
+          authenticated: false,
+          fetchedAt: new Date().toISOString(),
+          note: "Upstox session expired. Re-authorize.",
+        };
+        logger.warn({ status }, "Market feed authentication failed");
+        return;
+      }
 
-    const stateUpdate: Parameters<typeof updateMarketState>[0] = {};
-
-    if (niftyLTP !== null) {
-      stateUpdate.niftyPrice = niftyLTP;
-      if (niftyPrevClose !== null && niftyPrevClose > 0) {
-        stateUpdate.niftyChangePct = parseFloat(
-          (((niftyLTP - niftyPrevClose) / niftyPrevClose) * 100).toFixed(3),
+      // Retry on transient errors
+      if (attempt < MAX_RETRIES) {
+        const delayMs = RETRY_DELAY_MS * Math.pow(2, attempt);
+        logger.warn(
+          { attempt: attempt + 1, maxRetries: MAX_RETRIES, delayMs },
+          "Market feed poll failed, retrying with backoff"
         );
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+        continue;
       }
     }
+  }
 
-    if (vixLTP !== null) {
-      stateUpdate.indiaVix = vixLTP;
-    }
+  // All retries exhausted
+  feedSnapshot = {
+    ...feedSnapshot,
+    status: "failed",
+    authenticated: true,
+    fetchedAt: new Date().toISOString(),
+    note: `Market feed poll failed after ${MAX_RETRIES} retries`,
+  };
 
-    updateMarketState(stateUpdate);
-    feedSnapshot = {
-      status: niftyLTP !== null && vixLTP !== null ? "ready" : "partial",
-      authenticated: true,
-      fetchedAt: new Date().toISOString(),
-      prevClose: niftyPrevClose,
-      niftyLtp: niftyLTP,
-      vixLtp: vixLTP,
-      niftyChangePct: stateUpdate.niftyChangePct ?? null,
-      note:
-        niftyLTP !== null || vixLTP !== null
-          ? "Upstox quotes updated"
-          : "Waiting for quote data",
-    };
-
-    // Regime detector now has real data — run it immediately
-    detectRegime();
-
-    logger.debug(
+  if (lastError && (lastError.name === "AxiosError" || lastError.isAxiosError)) {
+    logger.error(
       {
-        niftyLTP,
-        vixLTP,
-        niftyChangePct: stateUpdate.niftyChangePct,
-        availableKeys,
+        status: lastError.response?.status,
+        message: lastError.message,
+        code: lastError.code,
+        url: lastError.config?.url,
+        retries: MAX_RETRIES
       },
-      "Market feed updated",
+      "Market feed poll failed after all retries (AxiosError)",
     );
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  } catch (err: any) {
-    const status = err?.response?.status;
-    if (status === 401 || status === 403) {
-      await invalidateAccessToken(`market_feed_http_${status}`);
-      feedSnapshot = {
-        ...feedSnapshot,
-        status: "unauthenticated",
-        authenticated: false,
-        fetchedAt: new Date().toISOString(),
-        note: "Upstox session expired. Re-authorize.",
-      };
-      logger.warn({ status }, "Market feed authentication failed");
-      return;
-    }
-
-    feedSnapshot = {
-      ...feedSnapshot,
-      status: "failed",
-      authenticated: true,
-      fetchedAt: new Date().toISOString(),
-      note: "Market feed poll failed",
-    };
-
-    if (err && (err.name === "AxiosError" || err.isAxiosError)) {
-      logger.warn(
-        {
-          status,
-          message: err.message,
-          code: err.code,
-          url: err.config?.url,
-        },
-        "Market feed poll failed (AxiosError)",
-      );
-    } else {
-      logger.warn({ err: err instanceof Error ? err.message : err }, "Market feed poll failed");
-    }
+  } else {
+    logger.error({ err: lastError instanceof Error ? lastError.message : lastError, retries: MAX_RETRIES }, "Market feed poll failed after all retries");
   }
 }
 

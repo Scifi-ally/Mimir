@@ -32,7 +32,9 @@ class ScannerOrchestrator {
 
   private readonly candidates = new Map<string, CandidateSignal>();
   private readonly opportunities = new Map<string, TechnicalOpportunity>();
-  
+  // HIGH FIX (Issue #8): Add mutex lock for concurrent map operations
+  private candidatesLock = Promise.resolve();
+  private trimDebounceTimer: NodeJS.Timeout | null = null;
 
 
   private status: ServiceHealth = "idle";
@@ -251,11 +253,16 @@ class ScannerOrchestrator {
     if (this.breadthTimer) clearInterval(this.breadthTimer);
     if (this.staleDataTimer) clearInterval(this.staleDataTimer);
     if (this.aiRankingTimer) clearTimeout(this.aiRankingTimer);
+    if (this.trimDebounceTimer) clearTimeout(this.trimDebounceTimer);
     this.frontendTimer = null;
     this.breadthTimer = null;
     this.staleDataTimer = null;
     this.aiRankingTimer = null;
+    this.trimDebounceTimer = null;
     this.lastCandidateEval.clear();
+    // HIGH FIX (Issue #8): Clear maps and wait for pending operations
+    this.candidates.clear();
+    this.opportunities.clear();
     upstoxConnectionManager.disconnect();
     this.status = "stopped";
     logger.info("Market intelligence orchestrator stopped");
@@ -297,14 +304,28 @@ class ScannerOrchestrator {
   }
 
   private trimCandidates() {
-    if (this.candidates.size <= intelligenceConfig.maxCandidates) return;
-    const sorted = Array.from(this.candidates.values()).sort((a, b) => b.score - a.score);
-    const toRemove = sorted.slice(intelligenceConfig.maxCandidates);
-
-    for (const item of toRemove) {
-      this.candidates.delete(item.instrumentKey);
-      this.candleBuilder.clearBuffer(item.instrumentKey);
+    // HIGH FIX (Issue #8): Debounce trim operations to reduce concurrent access
+    if (this.trimDebounceTimer) {
+      clearTimeout(this.trimDebounceTimer);
     }
+    
+    this.trimDebounceTimer = setTimeout(() => {
+      // Acquire lock for map operations
+      const currentLock = this.candidatesLock;
+      this.candidatesLock = currentLock.then(() => {
+        if (this.candidates.size <= intelligenceConfig.maxCandidates) return;
+        
+        // Create snapshot for sorting to avoid iterator invalidation
+        const snapshot = Array.from(this.candidates.values());
+        const sorted = snapshot.sort((a, b) => b.score - a.score);
+        const toRemove = sorted.slice(intelligenceConfig.maxCandidates);
+
+        for (const item of toRemove) {
+          this.candidates.delete(item.instrumentKey);
+          this.candleBuilder.clearBuffer(item.instrumentKey);
+        }
+      });
+    }, 500); // Batch trim operations every 500ms
   }
 
   private startTimers(): void {

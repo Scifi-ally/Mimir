@@ -1,6 +1,7 @@
 import { createUpstoxClient } from "../lib/upstox-client";
 import { getLastCompletedTradingDayStr, shiftISTDateStr } from "../lib/ist-time";
 import { logger } from "../lib/logger";
+import type { StockSector } from "../analysis/stock_scanner";
 
 export const upstoxClient = createUpstoxClient({ cacheTimeMs: 15_000 });
 
@@ -47,7 +48,7 @@ export function resolveIndexAsStock(rawSymbol: string) {
       symbol: symbolLabel,
       key: indexKey,
       name: symbolLabel,
-      sector: "INDEX",
+      sector: "INDEX" as StockSector,
     };
   }
   return null;

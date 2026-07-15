@@ -230,6 +230,10 @@ router.get("/system/session-state", (_req, res) => {
     scanRunning: scanStatus.running,
     scanMode: scanStatus.mode,
     scanMessage: scanStatus.lastScanMessage,
+    scanProgress: {
+      current: scanStatus.generation.currentProgress ?? 0,
+      total: scanStatus.generation.eligibleCandidates ?? 0,
+    },
     updatedAt: new Date().toISOString(),
   });
 });

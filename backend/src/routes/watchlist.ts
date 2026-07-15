@@ -2,12 +2,13 @@ import { Router } from "express";
 import { logger } from "../lib/logger";
 import { db } from "../../db/src";
 import { overnightWatchlistTable, suggestionsTable } from "../../db/src";
-import { desc, eq, inArray } from "drizzle-orm";
+import { desc, asc, eq, inArray } from "drizzle-orm";
 import {
   getISTDateStr,
   getNextTradingDayStr,
   getPreviousTradingDayStr,
 } from "../lib/ist-time";
+import { getTargetTradingSessionDate } from "../market_data/market_state";
 import { findStockBySymbol } from "../analysis/stock_scanner";
 import { createUpstoxClient } from "../lib/upstox-client";
 import { getAccessToken } from "../upstox/auth";
@@ -45,10 +46,10 @@ const enrichedCache = new Map<string, { data: ReturnType<typeof emptyWatchlist> 
 const CACHE_TTL_MS = 30_000; // 30 seconds cache
 
 function emptyWatchlist(forDate = getISTDateStr()) {
-  const today = getISTDateStr();
+  const targetDate = getTargetTradingSessionDate();
   return {
     forDate,
-    isFallback: forDate !== today,
+    isFallback: forDate !== targetDate,
     hasScan: false,
     momentumCandidates: [],
     breakoutCandidates: [],
@@ -78,15 +79,15 @@ router.get("/watchlist/tomorrow", async (req, res) => {
 // GET /api/watchlist/today — candidates for the current trading session (including gap plays)
 router.get("/watchlist/today", async (req, res) => {
   try {
-    const today = getISTDateStr();
+    const targetDate = getTargetTradingSessionDate();
     const noFallback = req.query.fallback === "false";
 
-    // Try today first
+    // Try targetDate first
     let items = await db
       .select()
       .from(overnightWatchlistTable)
-      .where(eq(overnightWatchlistTable.forDate, today));
-    let selectedDate = today;
+      .where(eq(overnightWatchlistTable.forDate, targetDate));
+    let selectedDate = targetDate;
 
     // If no items and fallback is enabled, try all fallback dates in parallel
     if (!items.length && !noFallback) {
@@ -161,7 +162,8 @@ router.get("/watchlist/for", async (req, res) => {
     const items = await db
       .select()
       .from(overnightWatchlistTable)
-      .where(eq(overnightWatchlistTable.forDate, date));
+      .where(eq(overnightWatchlistTable.forDate, date))
+      .orderBy(desc(overnightWatchlistTable.priority), asc(overnightWatchlistTable.symbol));
 
     res.json(await buildResponse(date, items));
   } catch (err) {
@@ -286,11 +288,11 @@ async function buildResponse(
   }
 
   const enriched = await enrichItemsWithRealPrices(items);
-  const today = getISTDateStr();
+  const targetDate = getTargetTradingSessionDate();
 
   const response = {
     forDate,
-    isFallback: forDate !== today,
+    isFallback: forDate !== targetDate,
     hasScan: items.length > 0,
     momentumCandidates: enriched.filter((i) => i.category === "MOMENTUM" || i.category === "LONG_SETUP" || i.category === "BEAR_MOMENTUM"),
     breakoutCandidates: enriched.filter((i) => i.category === "BREAKOUT_WATCH" || i.category === "BREAKDOWN_WATCH"),

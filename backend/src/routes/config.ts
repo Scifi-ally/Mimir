@@ -5,7 +5,7 @@ import { UpdateConfigBody } from "../schemas";
 const router = Router();
 const SECRET_MASK = "********";
 
-function serializeConfig(cfg: ReturnType<typeof getConfig>) {
+function serializeConfig(cfg: ReturnType<typeof getConfig>, reveal = false) {
   return {
     tradingCapital: cfg.tradingCapital,
     maxRiskPerTradePct: cfg.maxRiskPerTradePct,
@@ -29,18 +29,23 @@ function serializeConfig(cfg: ReturnType<typeof getConfig>) {
     rollingDrawdownPct: cfg.rollingDrawdownPct,
     paperTradingEnabled: cfg.paperTradingEnabled,
     upstoxApiKey: cfg.upstoxApiKey,
-    upstoxApiSecret: cfg.upstoxApiSecret ? SECRET_MASK : "",
+    upstoxApiSecret: reveal ? (cfg.upstoxApiSecret || "") : (cfg.upstoxApiSecret ? SECRET_MASK : ""),
     upstoxDataApiKey: cfg.upstoxDataApiKey,
-    upstoxDataApiSecret: cfg.upstoxDataApiSecret ? SECRET_MASK : "",
+    upstoxDataApiSecret: reveal ? (cfg.upstoxDataApiSecret || "") : (cfg.upstoxDataApiSecret ? SECRET_MASK : ""),
     upstoxRedirectUri: cfg.upstoxRedirectUri,
     stopLossMode: cfg.stopLossMode,
+    maxDeployedCapitalPct: cfg.maxDeployedCapitalPct,
+    discordWebhookUrl: cfg.discordWebhookUrl,
+    telegramBotToken: reveal ? (cfg.telegramBotToken || "") : (cfg.telegramBotToken ? SECRET_MASK : ""),
+    telegramChatId: cfg.telegramChatId,
   };
 }
 
 // GET /api/config
-router.get("/config", (_req, res) => {
+router.get("/config", (req, res) => {
   const cfg = getConfig();
-  res.json(serializeConfig(cfg));
+  const reveal = req.query.reveal === "true" || req.query.reveal === "1";
+  res.json(serializeConfig(cfg, reveal));
 });
 
 // PATCH /api/config
@@ -84,6 +89,12 @@ router.patch("/config", async (req, res) => {
         parsed.data.upstoxDataApiSecret !== SECRET_MASK && { upstoxDataApiSecret: parsed.data.upstoxDataApiSecret }),
       ...(parsed.data.upstoxRedirectUri != null && { upstoxRedirectUri: parsed.data.upstoxRedirectUri }),
       ...(parsed.data.stopLossMode != null && { stopLossMode: parsed.data.stopLossMode }),
+      ...(parsed.data.maxDeployedCapitalPct != null && { maxDeployedCapitalPct: parsed.data.maxDeployedCapitalPct }),
+      ...(parsed.data.discordWebhookUrl != null && { discordWebhookUrl: parsed.data.discordWebhookUrl }),
+      ...(parsed.data.telegramBotToken != null &&
+        parsed.data.telegramBotToken !== "" &&
+        parsed.data.telegramBotToken !== SECRET_MASK && { telegramBotToken: parsed.data.telegramBotToken }),
+      ...(parsed.data.telegramChatId != null && { telegramChatId: parsed.data.telegramChatId }),
     });
 
     res.json(serializeConfig(updated));

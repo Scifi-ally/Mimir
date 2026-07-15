@@ -20,6 +20,7 @@ async function run() {
       ALTER TABLE "custom_screener" ALTER COLUMN "indicator_b" DROP NOT NULL;
       
       ALTER TABLE "custom_screener_targets" ADD COLUMN IF NOT EXISTS "screener_id" integer REFERENCES "custom_screener"("id") ON DELETE cascade;
+      ALTER TABLE "suggestions" ADD COLUMN IF NOT EXISTS "stop_loss_mode" varchar(20);
     `);
     console.log("Table altered successfully");
   } catch (err) {

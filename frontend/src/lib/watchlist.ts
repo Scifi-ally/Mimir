@@ -74,13 +74,18 @@ export function buildStockRows(
     };
   });
 
-  // Sort rows so that active signals and watches appear at the top,
+  // Sort rows so that active signals and monitored items appear at the top,
   // then sort by composite score descending.
   rows.sort((a, b) => {
-    const aSignal = a.activeSignalDirection != null;
-    const bSignal = b.activeSignalDirection != null;
+    const aSignal = a.activeSignalDirection != null || a.category === "ACTIVE SIGNALS";
+    const bSignal = b.activeSignalDirection != null || b.category === "ACTIVE SIGNALS";
     if (aSignal && !bSignal) return -1;
     if (!aSignal && bSignal) return 1;
+
+    const aMonitored = monitoredMap.has(a.symbol) || (a.condition && a.condition.includes("Monitored"));
+    const bMonitored = monitoredMap.has(b.symbol) || (b.condition && b.condition.includes("Monitored"));
+    if (aMonitored && !bMonitored) return -1;
+    if (!aMonitored && bMonitored) return 1;
     
     // Both are signal or both are not signal, sort by score
     const scoreA = a.compositeScore || 0;

@@ -63,3 +63,58 @@ server.listen(port, "0.0.0.0", () => {
   logger.info({ port }, "Server listening on 0.0.0.0");
   logger.info(`API server ready on :${port} — frontend served by nginx on :3000`);
 });
+
+// ARCHITECTURAL FIX (Issue #38): Graceful shutdown handling
+let isShuttingDown = false;
+
+async function gracefulShutdown(signal: string) {
+  if (isShuttingDown) {
+    logger.warn({ signal }, "Shutdown already in progress");
+    return;
+  }
+  
+  isShuttingDown = true;
+  logger.info({ signal }, "Received shutdown signal - starting graceful shutdown");
+  
+  // Stop accepting new connections
+  server.close(() => {
+    logger.info("HTTP server closed - no new connections accepted");
+  });
+  
+  try {
+    // Stop background services
+    logger.info("Stopping scheduler and market intelligence...");
+    const { stopScheduler } = await import("./scheduler/jobs");
+    const { marketIntelligence } = await import("./intelligence/orchestrator");
+    
+    if (typeof stopScheduler === 'function') {
+      stopScheduler();
+    }
+    marketIntelligence.stop();
+    
+    // Wait for in-flight operations to complete (max 30 seconds)
+    logger.info("Waiting for in-flight operations to complete...");
+    await new Promise(resolve => setTimeout(resolve, 5000));
+    
+    // Close database connections
+    const { pool } = await import("../db/src");
+    await pool.end();
+    
+    // Close Redis
+    logger.info("Closing Redis connections...");
+    const { redisClient } = await import("./lib/redis");
+    if (redisClient.status === "ready") {
+      await redisClient.quit();
+    }
+    
+    logger.info("Graceful shutdown complete");
+    process.exit(0);
+  } catch (err) {
+    logger.error({ err }, "Error during graceful shutdown");
+    process.exit(1);
+  }
+}
+
+// Handle termination signals
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));

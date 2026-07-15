@@ -82,7 +82,6 @@ export function updateSectorFlowFromTick(symbol: string, price: number, volume: 
       if (sf) {
           sectorMoneyFlow += sf.moneyFlow;
           sectorVolume += sf.volume;
-          const pClose = previousCloses.get(s.symbol);
           // Advance/decline doesn't have current price easily here, but we can infer from sf.moneyFlow
           if (sf.moneyFlow > 0) advances++;
           else if (sf.moneyFlow < 0) declines++;

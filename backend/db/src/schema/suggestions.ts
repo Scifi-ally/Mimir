@@ -51,6 +51,7 @@ export const suggestionsTable = pgTable("suggestions", {
   expectedHoldMinutes: integer("expected_hold_minutes"),
   expiresAt: timestamp("expires_at", { withTimezone: true }),
   status: varchar("status", { length: 20 }).notNull().default("ACTIVE"),
+  stopLossMode: varchar("stop_loss_mode", { length: 20 }),
   outcomePrice: decimal("outcome_price", { precision: 10, scale: 2 }),
   pnlInr: decimal("pnl_inr", { precision: 10, scale: 2 }),
   generatedAt: timestamp("generated_at", { withTimezone: true })

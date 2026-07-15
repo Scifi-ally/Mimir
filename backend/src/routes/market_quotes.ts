@@ -52,7 +52,7 @@ function fallbackDashboardIndices(): DashboardIndices {
 async function buildDashboardIndices(): Promise<DashboardIndices | null> {
   const computeYF = async (symbol: string): Promise<LiveIndexQuote> => {
     try {
-      const res = await axios.get(`https://query1.finance.yahoo.com/v8/finance/chart/${symbol}`, { timeout: 4000 });
+      const res = await axios.get(`https://query1.finance.yahoo.com/v8/finance/chart/${symbol}`, { timeout: 1500 });
       const meta = res.data.chart?.result?.[0]?.meta;
       if (!meta) throw new Error("Invalid Yahoo Finance payload");
       

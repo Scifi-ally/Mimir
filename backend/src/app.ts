@@ -48,6 +48,60 @@ app.use(express.json({ limit: "256kb" }));
 app.use(express.urlencoded({ extended: true, limit: "64kb" }));
 
 app.use("/api", apiRateLimit);
+
+// ARCHITECTURAL FIX (Issue #37): Health check endpoints for monitoring and orchestration
+app.get("/health", (_req, res) => {
+  res.json({ 
+    status: 'ok', 
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime()
+  });
+});
+
+app.get("/ready", async (_req, res) => {
+  try {
+    // Check database connectivity
+    const { db } = await import("../db/src");
+    const { sql } = await import("drizzle-orm");
+    await db.execute(sql`SELECT 1`);
+    
+    // Check Redis connectivity
+    const { redisClient } = await import("./lib/redis");
+    if (redisClient.status !== "ready") {
+      throw new Error("Redis not connected");
+    }
+    await redisClient.ping();
+    
+    // Check market feed status
+    const { getMarketFeedSnapshot } = await import("./market_data/market_feed");
+    const feed = getMarketFeedSnapshot();
+    
+    res.json({ 
+      status: 'ready',
+      checks: {
+        database: 'ok',
+        redis: 'ok',
+        marketFeed: feed.status === 'failed' ? 'degraded' : 'ok'
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (err) {
+    logger.error({ err }, "Readiness check failed");
+    res.status(503).json({
+      status: 'not ready',
+      error: err instanceof Error ? err.message : 'Unknown error',
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+app.get("/live", (_req, res) => {
+  // Simple liveness check - is process responsive?
+  res.json({ 
+    status: 'alive',
+    timestamp: new Date().toISOString()
+  });
+});
 app.use("/api", requireAdmin);
 app.use("/api", router);
 app.use("/api", screenerRouter);

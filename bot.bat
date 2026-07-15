@@ -30,6 +30,16 @@ popd
 if not exist "%PROJECT_DIR%\.codex-logs" mkdir "%PROJECT_DIR%\.codex-logs" >nul 2>&1
 if exist "%PROJECT_DIR%\.codex-logs\menu_top.txt" del /f /q "%PROJECT_DIR%\.codex-logs\menu_top.txt" >nul 2>&1
 
+:: Find Node.js path (Portable or Global) right at startup so stop/restart can run scripts cleanly
+set "NODE_CMD=node"
+if exist "%PROJECT_DIR%\.portable\node\node.exe" set "NODE_CMD=%PROJECT_DIR%\.portable\node\node.exe"
+
+:: Find Python path (Portable or .venv) right at startup
+set "PYTHON_CMD="
+if exist "%PROJECT_DIR%\.portable\python\python.exe" set "PYTHON_CMD=%PROJECT_DIR%\.portable\python\python.exe"
+if "%PYTHON_CMD%"=="" if exist "%PROJECT_DIR%\.venv\Scripts\python.exe" set "PYTHON_CMD=%PROJECT_DIR%\.venv\Scripts\python.exe"
+if "%PYTHON_CMD%"=="" if exist "%PROJECT_DIR%\..\.venv\Scripts\python.exe" set "PYTHON_CMD=%PROJECT_DIR%\..\.venv\Scripts\python.exe"
+
 set "ACTION=%~1"
 if /i "%ACTION%"=="start" goto start
 if /i "%ACTION%"=="stop" goto stop
@@ -43,14 +53,10 @@ echo !C_CYAN!Usage: bot [start^|stop^|status^|restart^|tunnel ^<port^>^|tunnel-s
 exit /b 1
 
 :print_banner
-echo.
-echo.
-echo  !C_PURPLE! /\    /\ !C_RESET!
-echo  !C_BLUE! //\  /\\ !C_RESET!  !C_WHITE!!C_BOLD!MIMIR!C_RESET!
-echo  !C_CYAN! // \/ \\ !C_RESET!  !C_GRAY!Intelligent Market Analysis Engine!C_RESET!
-echo  !C_CYAN! //    \\ !C_RESET!  !C_DIM!!C_GRAY!v2.0!C_RESET!
-echo.
-exit /b 0
+echo !C_WHITE!  ======================================!C_RESET!
+echo !C_CYAN!       MIMIR TRADING SYSTEM v2.5       !C_RESET!
+echo !C_WHITE!  ======================================!C_RESET!
+goto :eof
 
 :toggle
 call :isRunning
@@ -60,27 +66,17 @@ goto start
 :start
 call :isRunning
 if "%RUNNING%"=="1" (
-    echo !C_YELLOW!  ^> Already running.!C_RESET! !C_DIM!!C_GRAY!Use "bot stop" first.!C_RESET!
-    goto status
+    echo !C_YELLOW!  [!] Bot is already running! Run 'bot restart' to reboot.!C_RESET!
+    goto :eof
 )
 call :print_banner
 echo !C_GRAY!  --------------------------------------!C_RESET!
 echo !C_WHITE!  ^> !C_GREEN!Initializing Engine...!C_RESET!
 :: Clean up any leftover zombie processes to prevent file locking issues
-call node "%SCRIPT_DIR%scripts\kill-zombies.mjs" >nul 2>&1
+call "!NODE_CMD!" "%SCRIPT_DIR%scripts\kill-zombies.mjs" >nul 2>&1
 :: Remove stale literal %STATE_FILE% junk file from a previous script version
 if exist "%SCRIPT_DIR%%%STATE_FILE%%" del /f /q "%SCRIPT_DIR%%%STATE_FILE%%" >nul 2>&1
 > "%STATE_FILE%" echo running
-
-:: Find Node.js path (Portable or Global)
-set "NODE_CMD=node"
-if exist "%PROJECT_DIR%\.portable\node\node.exe" set "NODE_CMD=%PROJECT_DIR%\.portable\node\node.exe"
-
-:: Find Python path (Portable or .venv)
-set "PYTHON_CMD="
-if exist "%PROJECT_DIR%\.portable\python\python.exe" set "PYTHON_CMD=%PROJECT_DIR%\.portable\python\python.exe"
-if "%PYTHON_CMD%"=="" if exist "%PROJECT_DIR%\.venv\Scripts\python.exe" set "PYTHON_CMD=%PROJECT_DIR%\.venv\Scripts\python.exe"
-if "%PYTHON_CMD%"=="" if exist "%PROJECT_DIR%\..\.venv\Scripts\python.exe" set "PYTHON_CMD=%PROJECT_DIR%\..\.venv\Scripts\python.exe"
 
 if "%PYTHON_CMD%"=="" (
     echo !C_RED!  [X] Python not found!C_RESET!
@@ -196,37 +192,40 @@ if "%UPSTOXBOT_ADMIN_TOKEN%"=="your_secure_token_here" (
 set "TUNNEL_PORT=%~2"
 if "%TUNNEL_PORT%"=="" set "TUNNEL_PORT=3000"
 set "CF_CMD=%PROJECT_DIR%\.portable\cloudflared.exe"
-if not exist "!CF_CMD!" (
-    echo !C_RED!  [X] cloudflared not found at .portable\cloudflared.exe!C_RESET!
-    goto :eof
-)
+
 echo !C_YELLOW!  ^> Generating new tunnel link on port %TUNNEL_PORT%...!C_RESET!
 :: Kill existing tunnel
-call :killPidFromFile "%SCRIPT_DIR%.codex-logs\trade.tunnel.pid" "Cloudflare Tunnel"
+call :killPidFromFile "%SCRIPT_DIR%.codex-logs\trade.tunnel.pid" "Tunnel"
 taskkill /im cloudflared.exe /f >nul 2>&1
+taskkill /im ngrok.exe /f >nul 2>&1
 if exist "%SCRIPT_DIR%.codex-logs\trade.tunnel.err.log" del /f /q "%SCRIPT_DIR%.codex-logs\trade.tunnel.err.log" >nul 2>&1
 ping -n 2 127.0.0.1 >nul
-:: Start new tunnel
+
+:: Check if ngrok is available
+where ngrok >nul 2>&1
+if not errorlevel 1 (
+    :: Start ngrok tunnel
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%scripts\run-detached.ps1" -FilePath "ngrok" -ArgumentList "http %TUNNEL_PORT% --log stdout" -WorkingDirectory "%PROJECT_DIR%" -PidFile "%SCRIPT_DIR%.codex-logs\trade.tunnel.pid" -LogOut "%SCRIPT_DIR%.codex-logs\trade.tunnel.out.log" -LogErr "%SCRIPT_DIR%.codex-logs\trade.tunnel.err.log"
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%scripts\wait-ngrok.ps1" -Port "%TUNNEL_PORT%"
+    goto :eof
+)
+
+if not exist "!CF_CMD!" (
+    echo !C_RED!  [X] Neither ngrok nor cloudflared found! Please install ngrok.!C_RESET!
+    goto :eof
+)
+
+:: Start cloudflare tunnel
 powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%scripts\run-detached.ps1" -FilePath "!CF_CMD!" -ArgumentList "tunnel --url http://localhost:%TUNNEL_PORT%" -WorkingDirectory "%PROJECT_DIR%" -PidFile "%SCRIPT_DIR%.codex-logs\trade.tunnel.pid" -LogOut "%SCRIPT_DIR%.codex-logs\trade.tunnel.out.log" -LogErr "%SCRIPT_DIR%.codex-logs\trade.tunnel.err.log"
 :: Wait for URL to appear in logs
-set "CF_URL="
-for /l %%i in (1,1,20) do (
-    if "!CF_URL!"=="" (
-        for /f "tokens=*" %%a in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "if (Test-Path '%SCRIPT_DIR%.codex-logs\trade.tunnel.err.log') { (Get-Content '%SCRIPT_DIR%.codex-logs\trade.tunnel.err.log' -ErrorAction SilentlyContinue | Select-String 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' | Select-Object -First 1).Matches[0].Value }" 2^>nul') do set "CF_URL=%%a"
-        if "!CF_URL!"=="" ping -n 2 127.0.0.1 >nul
-    )
-)
-if not "!CF_URL!"=="" (
-    echo !C_GREEN!  [OK] !C_WHITE!New Tunnel!C_RESET!!C_GRAY!           !CF_URL! -> localhost:%TUNNEL_PORT%!C_RESET!
-) else (
-    echo !C_RED!  [X] Tunnel failed — check .codex-logs\trade.tunnel.err.log!C_RESET!
-)
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%scripts\wait-tunnel.ps1" -LogFile "%SCRIPT_DIR%.codex-logs\trade.tunnel.err.log" -Port "%TUNNEL_PORT%"
 goto :eof
 
 :tunnel_stop
 echo !C_YELLOW!  ^> Stopping tunnel...!C_RESET!
-call :killPidFromFile "%SCRIPT_DIR%.codex-logs\trade.tunnel.pid" "Cloudflare Tunnel"
+call :killPidFromFile "%SCRIPT_DIR%.codex-logs\trade.tunnel.pid" "Tunnel"
 taskkill /im cloudflared.exe /f >nul 2>&1
+taskkill /im ngrok.exe /f >nul 2>&1
 if exist "C:\Program Files\Tailscale\tailscale.exe" (
     "C:\Program Files\Tailscale\tailscale.exe" funnel reset >nul 2>&1
     "C:\Program Files\Tailscale\tailscale.exe" serve reset >nul 2>&1
@@ -259,6 +258,9 @@ echo !C_YELLOW!  ^> Stopping Engine...!C_RESET!
 if exist "%STATE_FILE%" del /f /q "%STATE_FILE%" >nul 2>&1
 set "STOPPED=0"
 
+:: First pass: Run robust node cleanup script immediately to terminate any running services or ports
+call "!NODE_CMD!" "%SCRIPT_DIR%scripts\kill-zombies.mjs" >nul 2>&1
+
 call :killPidFromFile "%AI_PID_FILE%" "AI microservice"
 call :killPidFromFile "%BACKEND_PID_FILE%" "backend api server"
 call :killPidFromFile "%ENGINE_PID_FILE%" "trading engine"
@@ -267,7 +269,7 @@ call :killPidFromFile "%FRONTEND_PID_FILE%" "frontend"
 :: Stop Portable Redis
 if exist "%PROJECT_DIR%\.portable\redis\redis-server.exe" (
  echo !C_GRAY! +-- !C_DIM!Stopping Redis...!C_RESET!
- taskkill /F /IM redis-server.exe >nul 2>&1
+ taskkill /f /im redis-server.exe >nul 2>&1
  call :killPidFromFile "%SCRIPT_DIR%.codex-logs\trade.redis.pid" "Redis wrapper"
 )
 
@@ -280,17 +282,15 @@ if exist "%PROJECT_DIR%\.portable\pgsql\bin\pg_ctl.exe" (
 
 :: Kill Cloudflare tunnel
 call :killPidFromFile "%SCRIPT_DIR%.codex-logs\trade.tunnel.pid" "Cloudflare Tunnel"
-taskkill /im cloudflared.exe /f >nul 2>&1
+taskkill /f /im cloudflared.exe >nul 2>&1
 if exist "C:\Program Files\Tailscale\tailscale.exe" "C:\Program Files\Tailscale\tailscale.exe" serve reset >nul 2>&1
-:: Terminate any remaining zombie node/python processes from the project
-call node "%SCRIPT_DIR%scripts\kill-zombies.mjs" >nul 2>&1
 
 :: Clean up orphaned processes on known ports (deduplicate PIDs to avoid double-kill)
 set "_KILLED_PIDS="
 for %%P in (3000 8001 5000) do (
     for /f "tokens=5" %%p in ('netstat -ano ^| findstr /C:":%%P" ^| findstr /C:"LISTENING" 2^>nul') do (
         if not "%%p"=="" if %%p neq 0 (
-            echo !_KILLED_PIDS! | findstr /C:"[%%p]" >nul 2>&1
+            echo !_KILLED_PIDS! | findstr /L /C:"[%%p]" >nul 2>&1
             if !errorlevel! NEQ 0 (
                 taskkill /f /t /pid %%p >nul 2>&1
                 if !errorlevel! EQU 0 (
@@ -304,6 +304,8 @@ for %%P in (3000 8001 5000) do (
 )
 set "_KILLED_PIDS="
 
+:: Final pass: Ensure no remaining zombie node/python processes survived
+call "!NODE_CMD!" "%SCRIPT_DIR%scripts\kill-zombies.mjs" >nul 2>&1
 
 if "%STOPPED%"=="0" (
   echo !C_GRAY!    No active processes were found.!C_RESET!
@@ -351,19 +353,17 @@ exit /b 0
 set "PIDFILE=%~1"
 set "LABEL=%~2"
 if not exist "%PIDFILE%" exit /b 0
+set "PID="
 set /p PID=<"%PIDFILE%"
-if "%PID%"=="" (
+if "!PID!"=="" (
   del /f /q "%PIDFILE%" >nul 2>&1
   exit /b 0
 )
 
-tasklist /fi "pid eq %PID%" 2>nul | findstr "%PID%" >nul
+taskkill /f /t /pid !PID! >nul 2>&1
 if !errorlevel! EQU 0 (
-  taskkill /f /t /pid %PID% >nul 2>&1
-  if !errorlevel! EQU 0 (
-    echo !C_GRAY!    +-- !C_DIM!Stopped %LABEL% PID %PID%!C_RESET!
-    set "STOPPED=1"
-  )
+  echo !C_GRAY!    +-- !C_DIM!Stopped %LABEL% PID !PID!!C_RESET!
+  set "STOPPED=1"
 )
 del /f /q "%PIDFILE%" >nul 2>&1
 exit /b 0
@@ -387,7 +387,7 @@ if "%RUNNING%"=="1" (
     echo     !C_RED!Status: [STOPPED]!C_RESET! Bot is not running.
 )
 echo !C_GRAY!  ======================================!C_RESET!
-powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%scripts\menu.ps1" -Running "!BOT_RUNNING!"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%scripts\menu.ps1" -Running "!RUNNING!"
 set "MENU_OPT=!errorlevel!"
 
 if "!MENU_OPT!"=="0" goto :eof

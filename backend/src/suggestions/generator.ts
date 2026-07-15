@@ -61,6 +61,7 @@ export interface SuggestionGenerationDiagnostics {
   lastDurationMs: number | null;
   averageDurationMs: number | null;
   runCount: number;
+  currentProgress?: number;
   generated: number;
   eligibleCandidates: number;
   watchlistDateUsed: string | null;
@@ -514,6 +515,7 @@ export async function generateSuggestionsFromWatchlist(options?: {
         const stock = await findStockBySymbol(candidate.symbol);
         if (!stock) {
           completedCount++;
+          lastGenerationDiagnostics.currentProgress = completedCount;
           broadcast(
             createServerEvent.scanProgress({
               current: completedCount,
@@ -535,6 +537,7 @@ export async function generateSuggestionsFromWatchlist(options?: {
           if (!result) {
             const reason = await diagnoseScanNullReason(stock);
             completedCount++;
+          lastGenerationDiagnostics.currentProgress = completedCount;
             broadcast(
               createServerEvent.scanProgress({
                 current: completedCount,
@@ -548,6 +551,7 @@ export async function generateSuggestionsFromWatchlist(options?: {
             return { candidate, stock, result: null, scanNullReason: reason };
           }
           completedCount++;
+          lastGenerationDiagnostics.currentProgress = completedCount;
           broadcast(
             createServerEvent.scanProgress({
               current: completedCount,
@@ -561,6 +565,7 @@ export async function generateSuggestionsFromWatchlist(options?: {
         } catch (err) {
           logger.error({ err, symbol: candidate.symbol }, "Error scanning candidate");
           completedCount++;
+          lastGenerationDiagnostics.currentProgress = completedCount;
           broadcast(
             createServerEvent.scanProgress({
               current: completedCount,

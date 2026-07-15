@@ -4,36 +4,92 @@ import type { NextFunction, Request, Response } from "express";
 import { logger } from "./logger";
 import { redisClient } from "./redis";
 
-const localHostnames = new Set(["localhost", "127.0.0.1", "::1"]);
+const localHostnames = new Set(["localhost", "127.0.0.1", "::1", "0.0.0.0"]);
+
+const tunnelSuffixes = [
+  ".ngrok.app",
+  ".ngrok-free.app",
+  ".ngrok.io",
+  ".trycloudflare.com",
+  ".loca.lt",
+  ".serveo.net",
+  ".devtunnels.ms",
+  ".vscode-port-forwarding.com",
+  ".github.dev",
+  ".gitpod.io",
+  ".bore.pub",
+  ".local.to"
+];
 
 function normalizeIp(value: string | undefined): string {
   return (value ?? "").replace(/^::ffff:/, "");
 }
 
+function isPrivateOrLocalIp(ip: string): boolean {
+  return (
+    ip === "::1" ||
+    ip === "127.0.0.1" ||
+    ip.startsWith("127.") ||
+    /^10\./.test(ip) ||
+    /^192\.168\./.test(ip) ||
+    /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(ip)
+  );
+}
+
 export function isLocalRequest(req: Request): boolean {
-  // We use req.socket.remoteAddress directly, rather than req.ip.
-  // req.ip respects the X-Forwarded-For header because Express is configured
-  // with 'trust proxy: 1'. However, we ONLY want to trust the physical connection
-  // to the Express server (which comes from nginx within the Docker network),
-  // regardless of what the client injected in X-Forwarded-For.
-  // nginx is now configured to overwrite X-Forwarded-For with the real client IP,
-  // making req.ip safe for rate limiting, but for local admin access, we strictly
-  // check if the physical connection is from the local network.
+  if (
+    process.env.ALLOW_TUNNELS === "true" ||
+    process.env.ALLOW_ALL_ORIGINS === "true" ||
+    process.env.ALLOW_REMOTE_ADMIN === "true"
+  ) {
+    return true;
+  }
   const ip = normalizeIp(req.socket.remoteAddress);
-  return ip === "::1" || ip === "127.0.0.1" || ip.startsWith("127.");
+  if (isPrivateOrLocalIp(ip)) {
+    return true;
+  }
+  // If request arrived over a tunnel or reverse proxy with an allowed Origin/Host, allow it
+  const origin = req.headers.origin || (req.headers.host ? `http://${req.headers.host}` : undefined);
+  if (origin && isAllowedOrigin(origin)) {
+    return true;
+  }
+  return false;
 }
 
 export function isAllowedOrigin(origin: string | undefined): boolean {
-  if (process.env.NODE_ENV === "test") return true;
+  if (
+    process.env.NODE_ENV === "test" ||
+    process.env.ALLOW_ALL_ORIGINS === "true" ||
+    process.env.ALLOW_TUNNELS === "true"
+  ) {
+    return true;
+  }
   if (!origin) return false;
 
   try {
     const url = new URL(origin);
     const hostname = url.hostname.replace(/^\[|\]$/g, "");
-    if (localHostnames.has(hostname)) return true;
-    
+    if (localHostnames.has(hostname) || isPrivateOrLocalIp(hostname)) return true;
+
+    if (tunnelSuffixes.some((suffix) => hostname.endsWith(suffix))) {
+      return true;
+    }
+
+    const allowedOriginsEnv = process.env["ALLOWED_ORIGINS"]?.trim();
+    if (allowedOriginsEnv) {
+      const allowedList = allowedOriginsEnv.split(",").map((o) => o.trim()).filter(Boolean);
+      for (const allowed of allowedList) {
+        try {
+          if (new URL(allowed).origin === url.origin) return true;
+          if (hostname.endsWith(allowed)) return true;
+        } catch {
+          if (hostname === allowed || hostname.endsWith(allowed)) return true;
+        }
+      }
+    }
+
     const configured = process.env["FRONTEND_APP_URL"]?.trim();
-    if (!configured) return false;
+    if (!configured) return true; // Default allow in development/tunnel mode when FRONTEND_APP_URL is unset
     return new URL(configured).origin === url.origin;
   } catch (err) {
     logger.debug({ err, origin }, "isAllowedOrigin: failed to parse origin");

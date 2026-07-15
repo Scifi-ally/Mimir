@@ -18,7 +18,8 @@ import { overnightWatchlistTable } from "../../db/src";
 import { eq } from "drizzle-orm";
 import { broadcast } from "../ws/websocket_server";
 import { createServerEvent } from "../ws/events";
-import { getNextTradingDayStr } from "../lib/ist-time";
+import { getISTDateStr } from "../lib/ist-time";
+import { getTargetTradingSessionDate } from "../market_data/market_state";
 import { getEffectiveUniverse } from "./stock_scanner";
 import { analyzeMultiTimeframe } from "./multi_timeframe";
 import { beginWorkflow, endWorkflow } from "../workflow/coordinator";
@@ -244,8 +245,8 @@ export async function runPostMarketFullScan(
 
     // Persist before announcing completion. The client refetches the watchlist
     // on this event, so emitting earlier creates a stale-data race.
-    const nextTradingDay = getNextTradingDayStr();
-    await saveWatchlistCandidates(ranked, nextTradingDay);
+    const targetTradingDay = getTargetTradingSessionDate();
+    await saveWatchlistCandidates(ranked, targetTradingDay);
 
     broadcast(
       createServerEvent.scanCompleted({
@@ -282,8 +283,26 @@ export async function runPostMarketFullScan(
 
 export function abortPostMarketFullScan(): boolean {
   if (!scannerState.running) return false;
+  logger.warn("Manual abort requested for post-market scanner");
   abortRequested = true;
   scannerState.lastMessage = "Stopping post-market scan...";
+  scannerState.lastStatus = "stopped";
+  broadcast(
+    createServerEvent.systemAlert({
+      message: "Post-market scan manually stopped",
+      severity: "warning",
+    })
+  );
+  // Send zero progress to clear scan state
+  broadcast(
+    createServerEvent.scanProgress({
+      total: 0, 
+      current: 0,
+      status: "STOPPED",
+      currentStock: "",
+      reason: ""
+    })
+  );
   return true;
 }
 

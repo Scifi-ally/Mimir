@@ -15,6 +15,12 @@ import Decimal from "decimal.js";
 
 let engineActive = false;
 
+// MEDIUM FIX (Issue #22): Track circuit limit detection per symbol
+const circuitLimitTracker = new Map<string, {
+  consecutiveZeroVolumeTicks: number;
+  firstDetectedAt: number;
+}>();
+
 function getStartingBalance(): string {
   return getConfig().tradingCapital.toFixed(2);
 }
@@ -99,27 +105,36 @@ export async function initPaperEngine() {
       // ---------------------------------------------------------
 
       // ---------------------------------------------------------
-      // Dynamic Position Sizing (Quarter-Kelly Criterion)
+      // Dynamic Position Sizing - Simplified Risk-Based Approach
+      // HIGH FIX (Issue #17): Removed Kelly Criterion due to uncalibrated confidence
+      // Kelly requires actual win probability, but we only have AI confidence scores
+      // Using conservative fixed-percentage risk instead
       // ---------------------------------------------------------
       const maxRiskCap = config.maxRiskPerTradePct || 2.0; // Hard cap at 2% risk
-
-      // Derive Kelly variables
-      // NOTE: confidence is NOT a calibrated win probability. It is an uncalibrated AI heuristic score.
-      const winProb = (suggestion.confidence || 50) / 100; // 0.0 to 1.0 range
-      const riskReward = Number(suggestion.riskReward) || 2.0; // Fallback to 1:2 if missing
-
-      // Full Kelly = W - ( (1 - W) / R )
-      const fullKelly = winProb - ((1.0 - winProb) / riskReward);
       
-      // Use Quarter-Kelly for safety — AI confidence is uncalibrated and should not be
-      // treated as a true win probability. Quarter-Kelly provides a conservative margin
-      // until proper calibration (e.g. Platt scaling) is implemented against historical outcomes.
-      const kellyRiskPct = fullKelly > 0 ? (fullKelly * 100) / 4.0 : 0.5; 
+      // Start with conservative base risk
+      let riskPct = 1.0; // 1% base risk
       
-      const riskPct = Math.min(Math.max(kellyRiskPct, 0.5), maxRiskCap); // Minimum 0.5% risk
+      // Scale up slightly for high confidence (but conservatively)
+      const confidence = suggestion.confidence || 50;
+      if (confidence >= 80) {
+        riskPct = 1.5; // High confidence: 1.5%
+      } else if (confidence >= 70) {
+        riskPct = 1.25; // Medium-high: 1.25%
+      } else if (confidence < 60) {
+        riskPct = 0.5; // Low confidence: reduce to 0.5%
+      }
+      
+      // Ensure within bounds
+      riskPct = Math.min(Math.max(riskPct, 0.5), maxRiskCap);
       const riskAmount = balance.mul(riskPct).div(100);
       
-      logger.info({ symbol: suggestion.symbol, winProb, riskReward, fullKelly, riskPct }, "PaperEngine: Sized trade");
+      logger.info({ 
+        symbol: suggestion.symbol, 
+        confidence, 
+        riskPct,
+        riskAmount: riskAmount.toNumber() 
+      }, "PaperEngine: Position sized with risk-based approach");
       // ---------------------------------------------------------
       
       // ---------------------------------------------------------
@@ -142,21 +157,32 @@ export async function initPaperEngine() {
       const rawEntry = new Decimal(suggestion.entry);
       const entry = isBuy ? rawEntry.mul(1.0005) : rawEntry.mul(0.9995);
       const stopLoss = new Decimal(suggestion.stopLoss);
-      const stopDistance = entry.minus(stopLoss).abs();
       
+      // CRITICAL FIX (Issue #1): Check for zero/invalid stop distance BEFORE using it
+      // If entry equals stopLoss, this prevents division by zero
+      const stopDistance = entry.minus(stopLoss).abs();
       if (stopDistance.isZero() || stopDistance.isNaN()) {
-        logger.debug({ symbol: suggestion.symbol, stopDistance: stopDistance.toNumber(), entry: entry.toNumber(), stopLoss: stopLoss.toNumber() }, "PaperEngine: Aborted entry due to invalid stopDistance");
+        logger.warn({ 
+          symbol: suggestion.symbol, 
+          entry: entry.toNumber(), 
+          stopLoss: stopLoss.toNumber(),
+          stopDistance: stopDistance.toNumber() 
+        }, "PaperEngine: Aborted entry due to invalid stopDistance (entry equals stopLoss or NaN)");
         return;
       }
 
       // Calculate quantity, but guarantee at least 1 share if margin allows it
       let quantity = Decimal.max(1, riskAmount.div(stopDistance).floor()).toNumber();
 
+      // Proper trader intraday MIS leverage on NSE (5x leverage -> 20% margin required per share)
+      const intradayLeverage = new Decimal(5);
+      const marginPerShare = entry.div(intradayLeverage);
+
       // Ensure we don't exceed available margin
-      let requiredMargin = entry.mul(quantity);
+      let requiredMargin = marginPerShare.mul(quantity);
       if (requiredMargin.gt(availableMargin)) {
-        quantity = availableMargin.div(entry).floor().toNumber();
-        requiredMargin = entry.mul(quantity); // Recalculate with new quantity
+        quantity = availableMargin.div(marginPerShare).floor().toNumber();
+        requiredMargin = marginPerShare.mul(quantity); // Recalculate with new quantity
         if (quantity <= 0) {
           logger.warn({ symbol: suggestion.symbol, availableMargin: availableMargin.toNumber(), entry: entry.toNumber() }, "PaperEngine: Aborted entry because quantity is 0 after margin adjustment");
           return;
@@ -177,8 +203,32 @@ export async function initPaperEngine() {
         return;
       }
 
+      // CRITICAL FIX (Issue #3): Use serializable isolation and row locking to prevent margin race condition
+      // Two simultaneous suggestions could both see available margin and over-allocate
       await db.transaction(async (tx) => {
-        // 1. Create Position
+        // 1. Lock the account row with FOR UPDATE to prevent concurrent modifications
+        const lockRes = await tx.execute(sql`
+          SELECT id, balance, allocated_margin 
+          FROM ${paperAccountsTable} 
+          WHERE id = ${account.id} 
+          FOR UPDATE
+        `);
+        const lockedAccount = lockRes.rows[0];
+        
+        if (!lockedAccount) {
+          throw new Error("PaperEngine: Failed to lock account for update");
+        }
+
+        // 2. Re-check available margin with locked values
+        const currentBalance = new Decimal(lockedAccount.balance as string);
+        const currentAllocated = new Decimal(lockedAccount.allocated_margin as string);
+        const currentAvailable = currentBalance.minus(currentAllocated);
+        
+        if (requiredMargin.gt(currentAvailable)) {
+          throw new Error("PaperEngine: Insufficient margin after lock (race condition detected)");
+        }
+
+        // 3. Create Position
         await tx.insert(paperPositionsTable).values({
           suggestionId: suggestion.id,
           symbol: suggestion.symbol,
@@ -191,7 +241,7 @@ export async function initPaperEngine() {
           trailingStopLoss: stopLoss.toFixed(2),
         });
 
-        // 2. Create Order
+        // 4. Create Order
         await tx.insert(paperOrdersTable).values({
           suggestionId: suggestion.id,
           symbol: suggestion.symbol,
@@ -212,15 +262,10 @@ export async function initPaperEngine() {
           status: "EXECUTED"
         });
 
-        // 3. Update Account
-        const updateRes = await tx.update(paperAccountsTable)
+        // 5. Update Account with locked values
+        await tx.update(paperAccountsTable)
           .set({ allocatedMargin: sql`allocated_margin + ${requiredMargin.toFixed(2)}` })
-          .where(sql`${paperAccountsTable.id} = ${account.id} AND balance - allocated_margin >= ${requiredMargin.toFixed(2)}`)
-          .returning();
-          
-        if (updateRes.length === 0) {
-          throw new Error("PaperEngine: Trade aborted due to insufficient margin or race condition");
-        }
+          .where(eq(paperAccountsTable.id, account.id));
       });
 
       logger.info({ symbol: suggestion.symbol, quantity, requiredMargin }, "PaperEngine: Entered Position");
@@ -306,20 +351,113 @@ export async function initPaperEngine() {
         }
 
         if (exitReason) {
-          // Circuit limit guard: If volume is 0 or bid/ask is missing when trying to exit, it means liquidity vanished (circuit hit).
-          if ((tick.volume == null || tick.volume === 0) || (isBuy && (tick.bid == null || tick.bid === 0)) || (!isBuy && (tick.ask == null || tick.ask === 0))) {
-            logger.warn({ symbol: pos.symbol, exitReason, bid: tick.bid, ask: tick.ask }, "PaperEngine: Deferred exit due to suspected circuit limit or zero liquidity");
+          // MEDIUM FIX (Issue #22): Enhanced circuit limit detection with tracking
+          // Check for consecutive zero-volume ticks to confirm circuit hit (not just one tick)
+          const isLiquidityZero = (tick.volume == null || tick.volume === 0) || 
+                                  (isBuy && (tick.bid == null || tick.bid === 0)) || 
+                                  (!isBuy && (tick.ask == null || tick.ask === 0));
+          
+          if (isLiquidityZero) {
+            const tracker = circuitLimitTracker.get(pos.symbol) || {
+              consecutiveZeroVolumeTicks: 0,
+              firstDetectedAt: Date.now()
+            };
+            
+            tracker.consecutiveZeroVolumeTicks++;
+            const elapsedSeconds = (Date.now() - tracker.firstDetectedAt) / 1000;
+            
+            // Defer exit if we haven't confirmed circuit limit yet (need 3+ consecutive ticks)
+            if (tracker.consecutiveZeroVolumeTicks < 3) {
+              circuitLimitTracker.set(pos.symbol, tracker);
+              logger.warn({ 
+                symbol: pos.symbol, 
+                exitReason, 
+                consecutiveTicks: tracker.consecutiveZeroVolumeTicks,
+                bid: tick.bid, 
+                ask: tick.ask 
+              }, "PaperEngine: Potential circuit limit detected, monitoring...");
+              continue;
+            }
+            
+            // Force exit after 30 seconds of circuit limit (5+ ticks and 30+ seconds)
+            if (tracker.consecutiveZeroVolumeTicks >= 5 || elapsedSeconds > 30) {
+              logger.error({
+                symbol: pos.symbol,
+                exitReason,
+                consecutiveTicks: tracker.consecutiveZeroVolumeTicks,
+                durationSeconds: elapsedSeconds
+              }, "PaperEngine: Forcing exit due to prolonged circuit limit - using wider slippage");
+              
+              // Force exit with wider slippage (0.5% instead of 0.05%)
+              const ltpAtTrigger = new Decimal(tick.ltp || pos.avgEntryPrice); // Fallback to entry if no LTP
+              const slippedLtp = isBuy ? ltpAtTrigger.mul(0.995) : ltpAtTrigger.mul(1.005);
+              const realizedPnl = isBuy ? slippedLtp.minus(entryPrice).mul(qty) : entryPrice.minus(slippedLtp).mul(qty);
+              
+              // Create exit with circuit limit flag
+              const account = await getAccount();
+              await db.transaction(async (tx) => {
+                await tx.update(paperPositionsTable)
+                  .set({
+                    status: "CLOSED",
+                    realizedPnl: realizedPnl.toFixed(2),
+                    unrealizedPnl: "0.00",
+                    closedAt: sql`now()`
+                  })
+                  .where(eq(paperPositionsTable.id, pos.id));
+
+                await tx.insert(paperOrdersTable).values({
+                  suggestionId: pos.suggestionId,
+                  symbol: pos.symbol,
+                  direction: isBuy ? "SELL" : "BUY",
+                  orderType: "CIRCUIT_LIMIT_EXIT",
+                  quantity: qty.toNumber(),
+                  price: slippedLtp.toFixed(2),
+                  status: "EXECUTED"
+                });
+
+                const releasedMargin = qty.mul(entryPrice).div(5);
+                await tx.update(paperAccountsTable)
+                  .set({ 
+                    allocatedMargin: sql`GREATEST(0, allocated_margin - ${releasedMargin.toFixed(2)})`,
+                    balance: sql`balance + ${realizedPnl.toFixed(2)}`
+                  })
+                  .where(eq(paperAccountsTable.id, account.id));
+              });
+              
+              circuitLimitTracker.delete(pos.symbol);
+              logger.warn({ symbol: pos.symbol, realizedPnl: realizedPnl.toNumber() }, "PaperEngine: Forced exit during circuit limit");
+              continue;
+            }
+            
+            // Still waiting for circuit to clear
+            circuitLimitTracker.set(pos.symbol, tracker);
+            logger.warn({ 
+              symbol: pos.symbol, 
+              exitReason, 
+              consecutiveTicks: tracker.consecutiveZeroVolumeTicks,
+              bid: tick.bid, 
+              ask: tick.ask 
+            }, "PaperEngine: Circuit limit confirmed, waiting for liquidity to return");
             continue;
+          } else {
+            // Liquidity returned - clear tracker
+            circuitLimitTracker.delete(pos.symbol);
           }
 
-           let slippedLtp = ltp;
-           if (isBuy) {
-              if (exitReason === "STOP_EXIT") slippedLtp = currentStop.mul(0.9995);
-              else if (exitReason === "TARGET_EXIT") slippedLtp = target.mul(0.9995);
-           } else {
-              if (exitReason === "STOP_EXIT") slippedLtp = currentStop.mul(1.0005);
-              else if (exitReason === "TARGET_EXIT") slippedLtp = target.mul(1.0005);
-           }
+          // HIGH FIX (Issue #11): Apply slippage to LTP at trigger time, not to target/stop prices
+          // Previous code applied slippage to target/stop, which artificially reduced profits
+          // Now we use actual LTP when condition triggers and apply realistic slippage
+          const ltpAtTrigger = new Decimal(tick.ltp);
+          let slippedLtp: Decimal;
+          
+          if (isBuy) {
+            // For BUY positions, we SELL on exit - slippage works against us
+            slippedLtp = ltpAtTrigger.mul(0.9995); // 0.05% slippage down
+          } else {
+            // For SELL positions, we BUY on exit - slippage works against us
+            slippedLtp = ltpAtTrigger.mul(1.0005); // 0.05% slippage up
+          }
+          
           const realizedPnl = isBuy ? slippedLtp.minus(entryPrice).mul(qty) : entryPrice.minus(slippedLtp).mul(qty);
 
           const account = await getAccount();
@@ -351,11 +489,11 @@ export async function initPaperEngine() {
               status: "EXECUTED"
             });
 
-            // 3. Update Account
-            const requiredMargin = qty.mul(entryPrice);
+            // 3. Update Account (release intraday 5x required margin cleanly without going below zero)
+            const releasedMargin = qty.mul(entryPrice).div(5);
             await tx.update(paperAccountsTable)
               .set({ 
-                allocatedMargin: sql`allocated_margin - ${requiredMargin.toFixed(2)}`,
+                allocatedMargin: sql`GREATEST(0, allocated_margin - ${releasedMargin.toFixed(2)})`,
                 balance: sql`balance + ${realizedPnl.toFixed(2)}`
               })
               .where(eq(paperAccountsTable.id, account.id));

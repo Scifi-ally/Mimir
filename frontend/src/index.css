@@ -79,6 +79,24 @@
     --island-text: #ffffff;
   }
 
+  /* Prevent zoom on mobile devices */
+  * {
+    touch-action: pan-x pan-y;
+  }
+
+  html {
+    /* Prevent iOS zoom on input focus */
+    -webkit-text-size-adjust: 100%;
+    /* Prevent font boosting */
+    -moz-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  body {
+    /* Prevent zoom gestures */
+    touch-action: pan-x pan-y;
+  }
+
 
 }
 
@@ -134,10 +152,17 @@
 }
 
 @layer components {
+  .glass-panel {
+    background: rgba(10, 10, 10, 0.65);
+    backdrop-filter: blur(12px) saturate(160%);
+    -webkit-backdrop-filter: blur(12px) saturate(160%);
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+  }
+
+
   /* Lightweight bespoke micro-interactions for specific icons */
   svg.lucide {
-    transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1), color 0.2s ease, opacity 0.2s ease;
-    will-change: transform;
+    transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), color 0.15s ease, opacity 0.15s ease;
   }
   
   /* Generic press effect */
@@ -284,10 +309,15 @@
   background: rgba(255, 255, 255, 0.3);
 }
 
-::view-transition-old(root),
+::view-transition-old(root) {
+  animation: none;
+  mix-blend-mode: normal;
+  z-index: -1;
+}
 ::view-transition-new(root) {
   animation: none;
   mix-blend-mode: normal;
+  z-index: 1;
 }
 
 @layer base {
@@ -377,15 +407,16 @@ html {
 /* Apple-style hover interaction */
 .apple-hover {
   transition:
-    transform 0.35s var(--apple-spring),
-    box-shadow 0.35s var(--apple-ease-out),
-    opacity 0.2s var(--apple-ease);
+    transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275),
+    box-shadow 0.4s ease-out,
+    background-color 0.3s ease,
+    opacity 0.2s ease;
   will-change: transform;
 }
 
 .apple-hover:hover {
-  transform: scale(1.02) translateY(-1px);
-  box-shadow: 0 8px 25px -8px rgba(0, 0, 0, 0.3);
+  transform: scale(1.04) translateY(-1px);
+  box-shadow: 0 12px 30px -10px rgba(0, 0, 0, 0.5), 0 0 20px -5px rgba(255,255,255,0.05);
 }
 
 .apple-hover:active {
@@ -431,96 +462,167 @@ html {
   -ms-overflow-style: none;
 }
 
-/* Glass Panel utility — frosted glassmorphism card */
-.glass-panel {
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+/* ─── LivePrice tick flash animations (ONLY TEXT COLOR, NO BOX AROUND THEM) ──────────────── */
+@keyframes flash-green {
+  0%   { 
+    color: #22c55e !important; 
+    text-shadow: none !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+  100% { 
+    color: inherit; 
+    text-shadow: none !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+}
+@keyframes flash-red {
+  0%   { 
+    color: #ef4444 !important; 
+    text-shadow: none !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+  100% { 
+    color: inherit; 
+    text-shadow: none !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+}
+.flash-up {
+  animation: flash-green 0.35s cubic-bezier(0.4, 0, 0.2, 1) forwards !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  border-color: transparent !important;
+}
+.flash-down {
+  animation: flash-red 0.35s cubic-bezier(0.4, 0, 0.2, 1) forwards !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  border-color: transparent !important;
 }
 
-/* ── react-grid-layout overrides ── */
-.react-grid-layout {
+/* Pulse animation for active live elements */
+@keyframes live-pulse {
+  0%, 100% { 
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.4);
+  }
+  50% { 
+    box-shadow: 0 0 0 4px rgba(34, 197, 94, 0);
+  }
+}
+
+.live-indicator {
+  animation: live-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* ─── Apple Dynamic Island Confirmation Mark Animations ─────────────────────────── */
+.confirmation-mark {
   position: relative;
-  transition: height 200ms ease;
-}
-.react-grid-item {
-  transition: all 200ms ease;
-  transition-property: left, top, width, height;
-}
-.react-grid-item.cssTransforms {
-  transition-property: transform, width, height;
-}
-.react-grid-item.resizing {
-  z-index: 30;
-  will-change: width, height;
-  opacity: 0.9;
-}
-.react-grid-item.react-draggable-dragging {
-  z-index: 30;
-  will-change: transform;
-  opacity: 0.85;
-  box-shadow: 0 20px 60px -10px rgba(0, 0, 0, 0.5);
-}
-/* Placeholder while dragging */
-.react-grid-item.react-grid-placeholder {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px dashed rgba(255, 255, 255, 0.15);
-  border-radius: 1rem;
-  opacity: 0.5;
-  transition-duration: 100ms;
-  z-index: 2;
-  user-select: none;
-}
-/* Resize handle */
-.react-resizable-handle {
-  position: absolute;
-  width: 20px;
-  height: 20px;
-  bottom: 0;
-  right: 0;
-  cursor: se-resize;
-  opacity: 0;
-  transition: opacity 0.2s ease;
-}
-.react-grid-item:hover .react-resizable-handle {
-  opacity: 0.4;
-}
-.react-resizable-handle::after {
-  content: "";
-  position: absolute;
-  right: 4px;
-  bottom: 4px;
-  width: 8px;
-  height: 8px;
-  border-right: 2px solid rgba(255, 255, 255, 0.3);
-  border-bottom: 2px solid rgba(255, 255, 255, 0.3);
-  border-radius: 0 0 2px 0;
+  width: 77px;
+  height: 77px;
+  filter: drop-shadow(0 0 8px rgba(117, 237, 124, 0.25));
 }
 
-/* ── Quant Theme Variables ── */
-[data-theme="quant"] {
-  --background: #050a0e;
-  --foreground: #00ff88;
-  --card: #0a1118;
-  --card-foreground: #00ff88;
-  --popover: #0c1620;
-  --popover-foreground: #00ff88;
-  --primary: #00ff88;
-  --primary-foreground: #050a0e;
-  --secondary: #0d1f2d;
-  --secondary-foreground: #00ff88;
-  --muted: #0d1f2d;
-  --muted-foreground: #338866;
-  --accent: #0d1f2d;
-  --accent-foreground: #00ff88;
-  --destructive: #ff3366;
-  --destructive-foreground: #050a0e;
-  --border: #0d1f2d;
-  --input: #0d1f2d;
-  --ring: #00ff88;
+.confirmation-ring {
+  stroke: #8cf58d;
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-dasharray: 246;
+  stroke-dashoffset: 246;
 }
-[data-theme="quant"] .glass-panel {
-  background: rgba(0, 255, 136, 0.02);
-  border-color: rgba(0, 255, 136, 0.08);
+
+.confirmation-check {
+  stroke: #8cf58d;
+  stroke-width: 5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 62;
+  stroke-dashoffset: 62;
 }
+
+.dynamic-island--active .confirmation-ring {
+  animation: draw-ring 680ms cubic-bezier(0.22, 1, 0.36, 1) 100ms forwards;
+}
+
+.dynamic-island--active .confirmation-check {
+  animation: draw-check 420ms cubic-bezier(0.22, 1, 0.36, 1) 590ms forwards;
+}
+
+.dynamic-island--active .confirmation-mark {
+  animation: confirmation-pop 900ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes draw-ring {
+  to { stroke-dashoffset: 0; }
+}
+
+@keyframes draw-check {
+  to { stroke-dashoffset: 0; }
+}
+
+@keyframes confirmation-pop {
+  0% { transform: scale(0.72); opacity: 0; }
+  42% { transform: scale(1.06); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dynamic-island--active .confirmation-ring,
+  .dynamic-island--active .confirmation-check,
+  .dynamic-island--active .confirmation-mark {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Global Input Reset & Customization (Hide Browser Defaults)
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* Hide number input spinners */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield; /* Firefox */
+}
+
+/* Hide search input cancel buttons and styling */
+input[type="search"]::-webkit-search-decoration,
+input[type="search"]::-webkit-search-cancel-button,
+input[type="search"]::-webkit-search-results-button,
+input[type="search"]::-webkit-search-results-decoration {
+  -webkit-appearance: none;
+}
+
+/* Hide native date/time pickers */
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="time"]::-webkit-calendar-picker-indicator,
+input[type="datetime-local"]::-webkit-calendar-picker-indicator,
+input[type="month"]::-webkit-calendar-picker-indicator {
+  display: none;
+  -webkit-appearance: none;
+}
+
+/* Hide default select dropdown arrows */
+select {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+}
+
+/* Override browser autofill styles for light/dark mode compatibility */
+input:-webkit-autofill,
+input:-webkit-autofill:hover, 
+input:-webkit-autofill:focus, 
+input:-webkit-autofill:active {
+    -webkit-box-shadow: 0 0 0 30px var(--background) inset !important;
+    -webkit-text-fill-color: var(--foreground) !important;
+    transition: background-color 5000s ease-in-out 0s;
+}
+

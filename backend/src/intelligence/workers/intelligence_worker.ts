@@ -1,7 +1,6 @@
 import { parentPort } from "node:worker_threads";
 import axios from "axios";
-import { getGlobalMacroState } from "../analysis/global_macro";
-import { getRLPrediction } from "../analysis/ai_client";
+import { getRLPrediction, type RLPrediction } from "../../analysis/ai_client";
 import { buildSnapshot, type OHLCV } from "../../analysis/technical";
 import type { CandidateSignal, MarketState, TechnicalOpportunity, RankedOpportunity } from "../types";
 
@@ -190,7 +189,7 @@ async function rankAiOpportunities(
        scoreMap.set(res.symbol, res);
     }
     
-    const rlMap = new Map<string, any>();
+    const rlMap = new Map<string, RLPrediction | null>();
     for (let i = 0; i < limited.length; i++) {
        rlMap.set(limited[i].opportunity.symbol, rlPredictions[i]);
     }

@@ -7,24 +7,34 @@ import {
 } from "../../db/src/schema/paper_trading";
 import { eq, desc } from "drizzle-orm";
 import { logger } from "../lib/logger";
-import { getConfig } from "../config";
+// import { getConfig } from "../config";
 
 const router = Router();
 
 function getStartingBalance(): string {
-  return getConfig().tradingCapital.toFixed(2);
+  return "10000.00";
 }
 
 router.get("/paper/account", async (_req, res) => {
   try {
     let [account] = await db.select().from(paperAccountsTable).limit(1);
+    const targetBalance = getStartingBalance();
     if (!account) {
       [account] = await db.insert(paperAccountsTable).values({
         userId: "system",
-        balance: getStartingBalance(),
-        startingBalance: getStartingBalance(),
+        balance: targetBalance,
+        startingBalance: targetBalance,
         allocatedMargin: "0.00"
       }).returning();
+    } else if (account.startingBalance !== targetBalance && (parseFloat(account.startingBalance) === 500000 || parseFloat(account.startingBalance) === 100000 || parseFloat(account.startingBalance) > 50000)) {
+      [account] = await db.update(paperAccountsTable)
+        .set({
+          balance: targetBalance,
+          startingBalance: targetBalance,
+          allocatedMargin: "0.00"
+        })
+        .where(eq(paperAccountsTable.id, account.id))
+        .returning();
     }
 
     // Get live unrealized PNL

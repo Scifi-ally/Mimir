@@ -28,15 +28,23 @@ interface StatusBarProps {
 }
 
 export const StatusBar = memo(function StatusBar({ status, regime, wsConnected, macro }: StatusBarProps) {
+  const aiStatus = status?.aiStatus?.toLowerCase() ?? "unknown";
+  const aiMode = status?.aiMode?.toLowerCase() ?? "";
+  const aiOk = aiStatus.includes("healthy") || aiMode === "ai mode";
+  const aiWarn = !aiOk && (aiStatus.includes("degraded") || aiMode.includes("fallback"));
+  const aiLabel = status?.aiStatus
+    ? status.aiStatus.toUpperCase()
+    : "UNKNOWN";
+
   return (
     <div className="shrink-0 h-10 pb-1.5 w-full bg-background flex items-center px-4 sm:px-6 text-[9px] font-mono text-muted-foreground tracking-widest uppercase z-50 overflow-x-auto whitespace-nowrap [&::-webkit-scrollbar]:hidden">
       <div className="flex shrink-0 items-center gap-4 sm:gap-6 text-foreground/70">
         <span className="flex items-center gap-1.5 cursor-help" title="AI Status: Health of Native Math Models">
           AI
           <div className="flex items-center gap-1.5 bg-foreground/5 px-2 py-0.5 rounded-full border border-border/20">
-            <StatusLed status={status?.aiStatus?.toLowerCase().includes("healthy") ? "ok" : "error"} />
-            <span className={cn("font-bold text-[10px]", status?.aiStatus?.toLowerCase().includes("healthy") ? "text-emerald-500" : "text-destructive")}>
-              {status?.aiStatus ? status.aiStatus : "UNKNOWN"}
+            <StatusLed status={aiOk ? "ok" : aiWarn ? "warn" : "error"} />
+            <span className={cn("font-bold text-[10px]", aiOk ? "text-emerald-500" : aiWarn ? "text-yellow-500" : "text-destructive")}>
+              {aiLabel}
             </span>
           </div>
         </span>
@@ -148,7 +156,7 @@ export const StatusBar = memo(function StatusBar({ status, regime, wsConnected, 
           <span className="mx-1 text-border/40">|</span>
           <div className="flex items-center gap-1.5">
             <span>USD/INR:</span>
-            <span className={cn("font-medium", macro.usdInr > 83.5 ? "text-red-500" : "text-foreground")}>
+            <span className={cn("font-medium", macro.usdInr > 86.0 ? "text-red-500" : "text-foreground")}>
               {macro.usdInr ? macro.usdInr.toFixed(2) : "—"}
             </span>
             <span className="mx-1 text-border/40">|</span>

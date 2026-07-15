@@ -405,8 +405,12 @@ export const UpdateConfigBody = zod.object({
   upstoxApiSecret: zod.string().trim().max(500).optional(),
   upstoxDataApiKey: zod.string().trim().max(200).optional(),
   upstoxDataApiSecret: zod.string().trim().max(500).optional(),
-  upstoxRedirectUri: zod.string().trim().url().optional(),
+  upstoxRedirectUri: zod.string().trim().url().or(zod.literal("")).optional(),
   stopLossMode: zod.enum(["FIXED", "TRAILING", "BREAKEVEN"]).optional(),
+  maxDeployedCapitalPct: zod.number().min(1).max(100).optional(),
+  discordWebhookUrl: zod.string().trim().max(500).optional(),
+  telegramBotToken: zod.string().trim().max(500).optional(),
+  telegramChatId: zod.string().trim().max(200).optional(),
 });
 
 export const UpdateConfigResponse = zod.object({
@@ -437,6 +441,10 @@ export const UpdateConfigResponse = zod.object({
   upstoxDataApiSecret: zod.string(),
   upstoxRedirectUri: zod.string(),
   stopLossMode: zod.string(),
+  maxDeployedCapitalPct: zod.number().optional(),
+  discordWebhookUrl: zod.string().optional(),
+  telegramBotToken: zod.string().optional(),
+  telegramChatId: zod.string().optional(),
 });
 
 /**

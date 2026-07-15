@@ -157,7 +157,7 @@ export function DynamicIsland() {
           >
             {showEventFeed ? (
               <div style={{ width: 340 }} className="w-full flex flex-col">
-                <EventFeed onClose={() => setEventFeedOpen(false)} />
+                <EventFeed />
               </div>
             ) : isSuccess ? (
               <AppleTick key="success" />

@@ -58,7 +58,7 @@ export function ScanClockPanel(_props: ScanClockPanelProps) {
   const ss = s.toString().padStart(2, "0");
 
   return (
-    <div className="w-full h-full flex items-center justify-center bg-background">
+    <div className="w-full h-full flex items-center justify-center bg-transparent">
       <div className="flex items-center">
         <SingleDigit char={hh[0]} />
         <SingleDigit char={hh[1]} />

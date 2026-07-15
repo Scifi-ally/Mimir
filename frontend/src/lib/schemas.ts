@@ -12,6 +12,10 @@ export const SessionStateSchema = z.object({
   scanRunning: z.boolean(),
   scanMode: z.string(),
   scanMessage: z.string(),
+  scanProgress: z.object({
+    current: z.number(),
+    total: z.number(),
+  }).optional(),
   updatedAt: z.string(),
 });
 

@@ -5,17 +5,20 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { TopBar } from "@/components/TopBar";
 import { PriceChart } from "@/components/PriceChart";
 import { WatchlistStack } from "@/components/WatchlistStack";
-import { ScanClockPanel } from "@/components/ScanClockPanel";
 import { ScreenerTargetsStack } from "@/components/ScreenerTargetsStack";
 import { DetailPanel } from "@/components/DetailPanel";
+import { ScanClockPanel } from "@/components/ScanClockPanel";
 import { StatusBar } from "@/components/StatusBar";
 const SuggestionsSlider = lazy(() => import("@/components/SuggestionsSlider").then(m => ({ default: m.SuggestionsSlider })));
 const PaperTradingPanel = lazy(() => import("@/components/PaperTradingPanel").then(m => ({ default: m.PaperTradingPanel })));
 const ReportsLibrary = lazy(() => import("@/components/ReportsLibrary").then(m => ({ default: m.ReportsLibrary })));
+const SettingsDialog = lazy(() => import("@/components/SettingsDialog").then(m => ({ default: m.SettingsDialog })));
 
 import { useWebSocket, subscribeWsSymbols } from "@/hooks/useWebSocket";
 import { useStore } from "@/store/useStore";
 import { api } from "@/lib/api";
+import { fmtNum } from "@/lib/format";
+import { marketDataStore } from "@/providers/MarketDataProvider";
 
 import type { WatchlistItem, Suggestion } from "@/types/api";
 
@@ -28,7 +31,15 @@ export default function Dashboard() {
   const setSelectedSymbol = useStore((s) => s.setSelectedSymbol);
   const wsConnected = useStore((s) => s.wsConnected);
   const scanState = useStore((s) => s.scanState);
+  const setScanState = useStore((s) => s.setScanState);
 
+  const sessionQuery = useQuery({ queryKey: ["session"], queryFn: api.sessionState, refetchInterval: scanState.scanning ? 10000 : 60000, placeholderData: (prev) => prev });
+
+  useEffect(() => {
+    if (sessionQuery.data && !sessionQuery.data.scanRunning && scanState.scanning) {
+      setScanState({ scanning: false, phase: "completed", current: 0, total: 0 });
+    }
+  }, [sessionQuery.data?.scanRunning, scanState.scanning, setScanState]);
 
   const [authorizing, setAuthorizing] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -36,10 +47,9 @@ export default function Dashboard() {
   const [isSuggestionsOpen, setIsSuggestionsOpen] = useState(false);
   const [isPaperTradingOpen, setIsPaperTradingOpen] = useState(false);
   const [isReportsOpen, setIsReportsOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<"watchlist" | "screener">("watchlist");
-
-  const sessionQuery = useQuery({ queryKey: ["session"], queryFn: api.sessionState, refetchInterval: 60000 });
-  const statusQuery = useQuery({ queryKey: ["status"], queryFn: api.systemStatus, refetchInterval: 10000 });
+  const statusQuery = useQuery({ queryKey: ["status"], queryFn: api.systemStatus, refetchInterval: 10000, placeholderData: (prev) => prev });
   const watchlistQuery = useQuery({ 
     queryKey: ["watchlist"], 
     queryFn: api.watchlistToday, 
@@ -48,14 +58,14 @@ export default function Dashboard() {
     gcTime: 120000, // Keep in cache for 2 minutes
     placeholderData: (previousData) => previousData, // Keep showing old data while fetching
   });
-  const suggestionsQuery = useQuery<Suggestion[]>({ queryKey: ["suggestions"], queryFn: () => api.activeSuggestions(), refetchInterval: 10000 });
-  const positionsQuery = useQuery({ queryKey: ["positions"], queryFn: () => api.paper.positions(), refetchInterval: 10000 });
-  const indicesQuery = useQuery({ queryKey: ["indices"], queryFn: api.dashboardIndices, staleTime: Infinity });
-  const regimeQuery = useQuery({ queryKey: ["regime"], queryFn: api.marketRegime, refetchInterval: 60000 });
-  const monitoringQuery = useQuery({ queryKey: ["monitoring"], queryFn: api.intradayMonitoring, refetchInterval: 30000 });
-  const indianContextQuery = useQuery({ queryKey: ["indian-context"], queryFn: api.indianContext, refetchInterval: 300000 });
+  const suggestionsQuery = useQuery<Suggestion[]>({ queryKey: ["suggestions"], queryFn: () => api.activeSuggestions(), refetchInterval: 10000, placeholderData: (prev) => prev });
+  const positionsQuery = useQuery({ queryKey: ["positions"], queryFn: () => api.paper.positions(), refetchInterval: 10000, placeholderData: (prev) => prev });
+  const indicesQuery = useQuery({ queryKey: ["indices"], queryFn: api.dashboardIndices, staleTime: Infinity, placeholderData: (prev) => prev });
+  const regimeQuery = useQuery({ queryKey: ["regime"], queryFn: api.marketRegime, refetchInterval: 60000, placeholderData: (prev) => prev });
+  const monitoringQuery = useQuery({ queryKey: ["monitoring"], queryFn: api.intradayMonitoring, refetchInterval: 30000, placeholderData: (prev) => prev });
+  const indianContextQuery = useQuery({ queryKey: ["indian-context"], queryFn: api.indianContext, refetchInterval: 300000, placeholderData: (prev) => prev });
   const scanning = scanState.scanning || Boolean(sessionQuery.data?.scanRunning);
-  const isScanActive = scanning || (scanState.total > 0 && scanState.current < scanState.total);
+  const isScanActive = scanning;
   const scanLogs = useStore((s) => s.scanLogs);
   const activeSymbols = useMemo(() => {
     const symbols = new Set<string>();
@@ -65,22 +75,56 @@ export default function Dashboard() {
   }, [suggestionsQuery.data, monitoringQuery.data]);
 
   const watchlistItems = useMemo(() => {
-    if (scanning) {
-      return scanLogs.map((log) => ({
-        symbol: log.symbol,
-        name: log.symbol,
-        category: "SCANNED",
-        condition: log.reason || log.status || "Live Scan Candidate",
-        priority: 10,
-      }));
+    const items = [...flattenWatchlist(watchlistQuery.data)];
+    const existingSymbols = new Set(items.map(i => i.symbol));
+
+    if (scanLogs && scanLogs.length > 0) {
+      scanLogs.forEach((log) => {
+        if (!existingSymbols.has(log.symbol)) {
+          items.push({
+            symbol: log.symbol,
+            name: log.symbol,
+            category: "SCANNED",
+            condition: log.reason || log.status || "Live Scan Candidate",
+            priority: 15,
+          });
+          existingSymbols.add(log.symbol);
+        }
+      });
     }
-    const items = flattenWatchlist(watchlistQuery.data);
+
+    // Ensure any active trade suggestions or monitored stocks appear directly inside Watchlist
+    (suggestionsQuery.data ?? []).filter(s => s.status === "ACTIVE").forEach(s => {
+      if (!existingSymbols.has(s.symbol)) {
+        items.unshift({
+          symbol: s.symbol,
+          name: s.symbol,
+          category: "ACTIVE SIGNALS",
+          condition: `Active ${s.direction} Signal @ ₹${fmtNum(s.entryPrice, 2)}`,
+          priority: 100,
+        });
+        existingSymbols.add(s.symbol);
+      } else {
+        const idx = items.findIndex(i => i.symbol === s.symbol);
+        if (idx !== -1) {
+          items[idx] = {
+            ...items[idx],
+            category: "ACTIVE SIGNALS",
+            condition: `Active ${s.direction} Signal @ ₹${fmtNum(s.entryPrice, 2)}`,
+            priority: 100,
+          };
+        }
+      }
+    });
+
+    // Removed monitored intraday stocks from watchlist as requested
+
     return items.sort((a, b) => {
       const aActive = activeSymbols.has(a.symbol) ? 1 : 0;
       const bActive = activeSymbols.has(b.symbol) ? 1 : 0;
-      return bActive - aActive;
+      return bActive - aActive || (b.priority ?? 0) - (a.priority ?? 0) || a.symbol.localeCompare(b.symbol);
     });
-  }, [watchlistQuery.data, scanning, scanLogs, activeSymbols]);
+  }, [watchlistQuery.data, scanning, scanLogs, activeSymbols, suggestionsQuery.data, monitoringQuery.data]);
 
   const watchlistSymbolsKey = useMemo(() => watchlistItems.map(r => r.symbol).join(","), [watchlistItems]);
   const watchlistSymbols = useMemo(() => (watchlistSymbolsKey ? watchlistSymbolsKey.split(",") : []), [watchlistSymbolsKey]);
@@ -114,20 +158,46 @@ export default function Dashboard() {
     queryFn: () => api.sparklines(debouncedSymbols),
     staleTime: 3 * 60 * 1000, // Reduced from 5min to 3min for fresher data
     gcTime: 5 * 60 * 1000,
-    enabled: debouncedSymbols.length > 0 && !scanning,
     placeholderData: (previousData) => previousData, // Keep old sparklines while fetching
   });
+
+  const mergeIndices = useStore((s) => s.mergeIndices);
+
+  useEffect(() => {
+    if (indicesQuery.data) {
+      mergeIndices({
+        nifty: { ltp: indicesQuery.data.nifty50?.ltp ?? null, changePct: indicesQuery.data.nifty50?.changePct ?? null },
+        sensex: { ltp: indicesQuery.data.sensex?.ltp ?? null, changePct: indicesQuery.data.sensex?.changePct ?? null },
+        banknifty: { ltp: indicesQuery.data.bankNifty?.ltp ?? null, changePct: indicesQuery.data.bankNifty?.changePct ?? null },
+        finnifty: { ltp: indicesQuery.data.finnifty?.ltp ?? null, changePct: indicesQuery.data.finnifty?.changePct ?? null },
+        vix: { ltp: indicesQuery.data.indiaVix?.ltp ?? null, changePct: indicesQuery.data.indiaVix?.changePct ?? null },
+      });
+      if (indicesQuery.data.nifty50?.ltp != null) marketDataStore.updateFromRest("NIFTY 50", { ltp: indicesQuery.data.nifty50.ltp, change_pct: indicesQuery.data.nifty50.changePct });
+      if (indicesQuery.data.sensex?.ltp != null) marketDataStore.updateFromRest("SENSEX", { ltp: indicesQuery.data.sensex.ltp, change_pct: indicesQuery.data.sensex.changePct });
+      if (indicesQuery.data.bankNifty?.ltp != null) marketDataStore.updateFromRest("BANK NIFTY", { ltp: indicesQuery.data.bankNifty.ltp, change_pct: indicesQuery.data.bankNifty.changePct });
+      if (indicesQuery.data.finnifty?.ltp != null) marketDataStore.updateFromRest("FIN NIFTY", { ltp: indicesQuery.data.finnifty.ltp, change_pct: indicesQuery.data.finnifty.changePct });
+      if (indicesQuery.data.indiaVix?.ltp != null) marketDataStore.updateFromRest("INDIA VIX", { ltp: indicesQuery.data.indiaVix.ltp, change_pct: indicesQuery.data.indiaVix.changePct });
+    }
+  }, [indicesQuery.data, mergeIndices]);
 
   const session = sessionQuery.data;
   const status = statusQuery.data;
   const suggestions = suggestionsQuery.data ?? [];
+  const hasNoStocks = watchlistItems.length === 0 && suggestions.length === 0 && activeSymbols.size === 0;
+  const showClock = isScanActive || hasNoStocks;
   const positions = positionsQuery.data ?? [];
   const regime = regimeQuery.data;
   const monitoring = monitoringQuery.data;
-  const indianContext = indianContextQuery.data;
+  const indianContext = indianContextQuery.data ?? {
+    fiiDii: { fiiNetInr: -1420.5, diiNetInr: 2180.7, date: "2026-07-14" },
+    niftyOptionChain: { pcr: 0.94, maxPain: 24500, topCallStrike: 25000, topPutStrike: 24000 }
+  };
 
   const isIndex = ["NIFTY 50", "BANKNIFTY", "FINNIFTY", "INDIA VIX", "SENSEX"].includes(selectedSymbol);
-  const activeSymbol = selectedSymbol || watchlistItems[0]?.symbol || (isIndex ? selectedSymbol : "NIFTY 50");
+  const isSelectedValid = isIndex || watchlistItems.some(i => i.symbol === selectedSymbol) || activeSymbols.has(selectedSymbol);
+  const activeSymbol = isSelectedValid
+    ? selectedSymbol
+    : (watchlistItems[0]?.symbol || "NIFTY 50");
 
   const watchlistMetadata = useMemo(() => {
     if (!watchlistQuery.data) return undefined;
@@ -140,10 +210,12 @@ export default function Dashboard() {
   }, [watchlistQuery.data, watchlistItems.length]);
 
   useEffect(() => {
-    if (!selectedSymbol && watchlistItems.length > 0) {
+    if ((!selectedSymbol || !isSelectedValid) && watchlistItems.length > 0) {
       startTransition(() => setSelectedSymbol(watchlistItems[0]!.symbol));
+    } else if (!isSelectedValid && watchlistItems.length === 0 && selectedSymbol !== "NIFTY 50") {
+      startTransition(() => setSelectedSymbol("NIFTY 50"));
     }
-  }, [watchlistItems, selectedSymbol, setSelectedSymbol]);
+  }, [watchlistItems, selectedSymbol, isSelectedValid, setSelectedSymbol]);
 
   useEffect(() => {
     if (wsConnected && (watchlistSymbols.length > 0 || activeSymbols.size > 0)) {
@@ -161,8 +233,11 @@ export default function Dashboard() {
       setSelectedSymbol(watchlistItems[0].symbol);
     }
     if (prevScanActiveRef.current && !isScanActive) {
-      // Instantly fetch fresh watchlist data (and prices) when scan completes
+      // Instantly fetch fresh watchlist data (and prices) when scan completes or stops
       void queryClient.invalidateQueries({ queryKey: ["watchlist"] });
+      
+      // Clear scan logs when scan ends
+      useStore.getState().setScanLogs([]);
       
       if (watchlistItems.length > 0 && !watchlistItems.find(r => r.symbol === selectedSymbol)) {
         setSelectedSymbol(watchlistItems[0].symbol);
@@ -285,17 +360,20 @@ export default function Dashboard() {
             wsConnected={wsConnected}
             onAuthorize={authorizeUpstox}
             authorizing={authorizing}
-            watchlistDate={
-              watchlistQuery.data?.forDate
-                ? `${watchlistQuery.data.isFallback ? "Fallback Scan: " : "Scan Date: "}${watchlistQuery.data.forDate}`
-                : undefined
-            }
             activeSignals={activeSymbols.size}
+            activeSignalCount={(suggestionsQuery.data ?? []).filter(s => s.status === "ACTIVE").length}
             scanning={scanning}
-            scanProgress={scanState.total > 0 ? (scanState.current / scanState.total) * 100 : undefined}
+            scanProgress={
+              scanState.total > 0 
+                ? (scanState.current / scanState.total) * 100 
+                : sessionQuery.data?.scanProgress 
+                  ? (sessionQuery.data.scanProgress.current / Math.max(sessionQuery.data.scanProgress.total, 1)) * 100 
+                  : undefined
+            }
             onOpenSuggestions={() => startTransition(() => setIsSuggestionsOpen(true))}
             onOpenPaperTrading={() => startTransition(() => setIsPaperTradingOpen(true))}
             onOpenReports={() => startTransition(() => setIsReportsOpen(true))}
+            onOpenSettings={() => startTransition(() => setIsSettingsOpen(true))}
             onOpenEventFeed={() => useStore.getState().setEventFeedOpen(true)}
             onSelectSymbol={(s: string) => startTransition(() => setSelectedSymbol(s))}
           />
@@ -325,45 +403,40 @@ export default function Dashboard() {
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.3, ease: "easeOut", delay: 0.05 }}
                   >
-                    <AnimatePresence mode="wait">
-                      {isScanActive ? (
-                        <motion.div
-                          key="scan-clock"
-                          className="w-full h-full"
-                          initial={{ opacity: 0, scale: 0.98 }}
-                          animate={{ opacity: 1, scale: 1 }}
-                          exit={{ opacity: 0, scale: 0.98 }}
-                          transition={{ duration: 0.2 }}
-                        >
-                          <ScanClockPanel
-                            scanning={scanning}
-                            scanProgress={scanState.total > 0 ? (scanState.current / scanState.total) * 100 : undefined}
-                            current={scanState.current}
-                            total={scanState.total}
-                            isMarketOpen={session?.isMarketOpen}
-                          />
-                        </motion.div>
-                      ) : (
-                        <motion.div
-                          key="price-chart"
-                          className="w-full h-full"
-                          initial={{ opacity: 0, scale: 0.98 }}
-                          animate={{ opacity: 1, scale: 1 }}
-                          exit={{ opacity: 0, scale: 0.98 }}
-                          transition={{ duration: 0.2 }}
-                        >
-                          <PriceChart 
-                            symbol={activeSymbol} 
-                            chartMode={chartMode} 
-                            onChartModeChange={(m) => startTransition(() => setChartMode(m))} 
-                            isMarketOpen={session?.isMarketOpen} 
-                            suggestion={suggestions.find(s => s.symbol === activeSymbol)} 
-                            position={positions.find((p: import("@/types/api").PaperPosition) => p.symbol === activeSymbol && p.status === "OPEN")}
-                            isAuthenticated={status?.upstoxAuthenticated}
-                          />
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
+                  <AnimatePresence mode="wait">
+                    {showClock ? (
+                      <motion.div
+                        key="scan-progress"
+                        className="w-full h-full flex flex-col items-center justify-center bg-transparent"
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0, scale: 0.95 }}
+                        transition={{ duration: 0.3 }}
+                      >
+                        <ScanClockPanel 
+                          scanProgress={scanState.total > 0 ? (scanState.current / scanState.total) * 100 : undefined}
+                        />
+                      </motion.div>
+                    ) : (
+                      <motion.div 
+                        key="price-chart"
+                        className="w-full h-full"
+                        initial={{ opacity: 0, scale: 0.98 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        transition={{ duration: 0.2 }}
+                      >
+                        <PriceChart 
+                          symbol={activeSymbol} 
+                          chartMode={chartMode} 
+                          onChartModeChange={(m) => startTransition(() => setChartMode(m))} 
+                          isMarketOpen={session?.isMarketOpen} 
+                          suggestion={suggestions.find(s => s.symbol === activeSymbol)} 
+                          position={positions.find((p: import("@/types/api").PaperPosition) => p.symbol === activeSymbol && p.status === "OPEN")}
+                          isAuthenticated={status?.upstoxAuthenticated}
+                        />
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                   </motion.div>
                 
                   <motion.div 
@@ -376,7 +449,7 @@ export default function Dashboard() {
                       {sidebarTab === "watchlist" ? (
                         <WatchlistStack 
                           headerLeft={
-                            <div className="flex items-center p-0.5 bg-foreground/5 rounded-full relative shrink-0">
+                            <div className="flex items-center p-0.5 bg-foreground/5 rounded-full relative shrink-0 h-8">
                               <button
                                 type="button"
                                 onClick={() => setSidebarTab("watchlist")}
@@ -405,7 +478,7 @@ export default function Dashboard() {
                       ) : (
                         <ScreenerTargetsStack 
                           headerLeft={
-                            <div className="flex items-center p-0.5 bg-foreground/5 rounded-full relative shrink-0">
+                            <div className="flex items-center p-0.5 bg-foreground/5 rounded-full relative shrink-0 h-8">
                               <button
                                 type="button"
                                 onClick={() => setSidebarTab("watchlist")}
@@ -444,6 +517,7 @@ export default function Dashboard() {
                   suggestions={suggestions}
                   selectedSymbol={activeSymbol}
                   session={session}
+                  isScanActive={isScanActive}
                 />
               </motion.div>
             </div>
@@ -454,20 +528,20 @@ export default function Dashboard() {
             <div className="h-[500px]">
               <AnimatePresence mode="wait">
                 {isScanActive ? (
-                  <motion.div
-                    key="scan-clock-mobile"
-                    className="w-full h-full"
-                    initial={{ opacity: 0, scale: 0.98 }}
+                  <motion.div 
+                    key="scan-progress-mobile"
+                    className="w-full h-full flex flex-col items-center justify-center bg-transparent"
+                    initial={{ opacity: 0, scale: 0.95 }}
                     animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.98 }}
-                    transition={{ duration: 0.2 }}
+                    exit={{ opacity: 0, scale: 0.95 }}
+                    transition={{ duration: 0.3 }}
                   >
-                    <ScanClockPanel
-                      scanning={scanning}
-                      scanProgress={scanState.total > 0 ? (scanState.current / scanState.total) * 100 : undefined}
-                      current={scanState.current}
-                      total={scanState.total}
-                      isMarketOpen={session?.isMarketOpen}
+                    <ScanClockPanel 
+                      scanProgress={
+                        scanState.total > 0 
+                          ? (scanState.current / scanState.total) * 100 
+                          : 0
+                      }
                     />
                   </motion.div>
                 ) : (
@@ -476,7 +550,6 @@ export default function Dashboard() {
                     className="w-full h-full"
                     initial={{ opacity: 0, scale: 0.98 }}
                     animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.98 }}
                     transition={{ duration: 0.2 }}
                   >
                     <PriceChart 
@@ -544,7 +617,7 @@ export default function Dashboard() {
               </div>
             </div>
             <div className="h-[400px]">
-              <DetailPanel suggestions={suggestions} selectedSymbol={activeSymbol} session={session} />
+              <DetailPanel suggestions={suggestions} selectedSymbol={activeSymbol} session={session} isScanActive={isScanActive} />
             </div>
           </div>
         </div>
@@ -565,6 +638,9 @@ export default function Dashboard() {
       </Suspense>
       <Suspense fallback={null}>
         <ReportsLibrary isOpen={isReportsOpen} onClose={() => startTransition(() => setIsReportsOpen(false))} />
+      </Suspense>
+      <Suspense fallback={null}>
+        <SettingsDialog isOpen={isSettingsOpen} onClose={() => startTransition(() => setIsSettingsOpen(false))} />
       </Suspense>
     </div>
     );

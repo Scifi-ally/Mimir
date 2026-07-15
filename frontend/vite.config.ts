@@ -21,10 +21,13 @@ export default defineConfig({
       "/api": {
         target: "http://127.0.0.1:5000",
         changeOrigin: true,
+        secure: false,
       },
       "/ws": {
         target: "ws://127.0.0.1:5000",
         ws: true,
+        changeOrigin: true,
+        secure: false,
       },
     },
   },
@@ -36,10 +39,13 @@ export default defineConfig({
       "/api": {
         target: "http://127.0.0.1:5000",
         changeOrigin: true,
+        secure: false,
       },
       "/ws": {
         target: "ws://127.0.0.1:5000",
         ws: true,
+        changeOrigin: true,
+        secure: false,
       },
     },
   },

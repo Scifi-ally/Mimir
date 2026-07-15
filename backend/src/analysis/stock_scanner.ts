@@ -85,15 +85,9 @@ import {
 import { detectMeanReversionLong, detectMeanReversionShort } from "./mean_reversion_scanner";
 import { detectRangeLong, detectRangeShort } from "./range_scanner";
 import { updateMarketState } from "../market_data/market_state";
-import {
-  analyzeMultiTimeframeFromData,
-} from "./multi_timeframe";
+import { analyzeMultiTimeframeFromData } from "./multi_timeframe";
 import { createUpstoxClient } from "../lib/upstox-client";
-import {
-  getISTDateStr,
-  getLastCompletedTradingDayStr,
-  shiftISTDateStr,
-} from "../lib/ist-time";
+import { getISTDateStr, getLastCompletedTradingDayStr, shiftISTDateStr } from "../lib/ist-time";
 
 export type StockSector =
   | "IT"
@@ -111,6 +105,7 @@ export type StockSector =
   | "Consumer"
   | "Media"
   | "Chemicals"
+  | "INDEX"
   | "Other";
 
 // ── NSE Universe — Nifty 100 + Next 50 liquid stocks ─────────────────────────

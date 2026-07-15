@@ -1,6 +1,6 @@
 import { memo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Bell, Info, CheckCircle2, AlertTriangle, XCircle, Trash2, X } from "lucide-react";
+import { Bell, Info, CheckCircle2, AlertTriangle, XCircle, Trash2 } from "lucide-react";
 import { useStore, type AppEvent } from "@/store/useStore";
 
 const typeConfig: Record<AppEvent["type"], { icon: typeof Info; color: string }> = {
@@ -49,7 +49,10 @@ function EventItem({ event }: { event: AppEvent }) {
           </span>
         </div>
         {event.message && (
-          <p className="text-[12px] font-normal text-foreground/80 mt-1 leading-relaxed break-words">
+          <p 
+            className="text-[12px] font-normal text-foreground/80 mt-1 leading-relaxed break-words line-clamp-3"
+            title={event.message}
+          >
             {event.message}
           </p>
         )}
@@ -58,12 +61,9 @@ function EventItem({ event }: { event: AppEvent }) {
   );
 }
 
-interface EventFeedProps {
-  open: boolean;
-  onClose: () => void;
-}
 
-export const EventFeed = memo(function EventFeed({ onClose }: Omit<EventFeedProps, "open">) {
+
+export const EventFeed = memo(function EventFeed() {
   const events = useStore((s) => s.events);
   const clearEvents = useStore((s) => s.clearEvents);
 
@@ -87,13 +87,6 @@ export const EventFeed = memo(function EventFeed({ onClose }: Omit<EventFeedProp
               <Trash2 className="h-4 w-4" />
             </button>
           )}
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground transition-colors"
-            title="Close activity feed"
-          >
-            <X className="h-4 w-4" />
-          </button>
         </div>
       </div>
 

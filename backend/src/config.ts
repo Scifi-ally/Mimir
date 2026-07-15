@@ -41,8 +41,8 @@ export interface TradingConfig {
 }
 
 export const defaultConfig: TradingConfig = {
-  tradingCapital: 500000,
-  maxRiskPerTradePct: 1.0,
+  tradingCapital: 10000,
+  maxRiskPerTradePct: 1.5,
   maxDailyLossPct: 3.0,
   maxOpenPositions: 5,
   maxSectorExposure: 2,
@@ -98,8 +98,16 @@ function numberOrDefault(value: string | null | undefined, fallback: number): nu
 }
 
 function rowToConfig(row: typeof tradingConfigTable.$inferSelect): TradingConfig {
+  const rawCap = numberOrDefault(row.tradingCapital, defaultConfig.tradingCapital);
+  // CRITICAL FIX (Issue #5): Removed arbitrary capital override logic
+  // Previously reset capital to 10000 if it was 500000, 100000, or > 50000
+  // This caused silent data corruption without user consent
+  const tradingCapital = rawCap;
+  
+  logger.debug({ tradingCapital, rawValue: row.tradingCapital }, "Loaded trading capital from config");
+  
   return {
-    tradingCapital: numberOrDefault(row.tradingCapital, defaultConfig.tradingCapital),
+    tradingCapital,
     maxRiskPerTradePct: numberOrDefault(row.maxRiskPerTradePct, defaultConfig.maxRiskPerTradePct),
     maxDailyLossPct: numberOrDefault(row.maxDailyLossPct, defaultConfig.maxDailyLossPct),
     maxOpenPositions: row.maxOpenPositions ?? defaultConfig.maxOpenPositions,
@@ -122,12 +130,13 @@ function rowToConfig(row: typeof tradingConfigTable.$inferSelect): TradingConfig
     maxDeployedCapitalPct: numberOrDefault(row.maxDeployedCapitalPct, defaultConfig.maxDeployedCapitalPct),
     paperTradingEnabled: row.paperTradingEnabled ?? defaultConfig.paperTradingEnabled,
     upstoxApiKey: row.upstoxApiKey ?? defaultConfig.upstoxApiKey,
-    upstoxApiSecret: row.upstoxApiSecret ? revealSecret(row.upstoxApiSecret) : defaultConfig.upstoxApiSecret,
+    // MEDIUM FIX (Issue #23): Handle empty strings properly when revealing secrets
+    upstoxApiSecret: row.upstoxApiSecret && row.upstoxApiSecret.length > 0 ? revealSecret(row.upstoxApiSecret) : defaultConfig.upstoxApiSecret,
     upstoxDataApiKey: row.upstoxDataApiKey ?? defaultConfig.upstoxDataApiKey,
-    upstoxDataApiSecret: row.upstoxDataApiSecret ? revealSecret(row.upstoxDataApiSecret) : defaultConfig.upstoxDataApiSecret,
+    upstoxDataApiSecret: row.upstoxDataApiSecret && row.upstoxDataApiSecret.length > 0 ? revealSecret(row.upstoxDataApiSecret) : defaultConfig.upstoxDataApiSecret,
     upstoxRedirectUri: row.upstoxRedirectUri ?? defaultConfig.upstoxRedirectUri,
     discordWebhookUrl: row.discordWebhookUrl ?? defaultConfig.discordWebhookUrl,
-    telegramBotToken: row.telegramBotToken ? revealSecret(row.telegramBotToken) : defaultConfig.telegramBotToken,
+    telegramBotToken: row.telegramBotToken && row.telegramBotToken.length > 0 ? revealSecret(row.telegramBotToken) : defaultConfig.telegramBotToken,
     telegramChatId: row.telegramChatId ?? defaultConfig.telegramChatId,
     stopLossMode: row.stopLossMode ?? defaultConfig.stopLossMode,
   };
@@ -206,6 +215,10 @@ export async function updateConfig(partial: Partial<TradingConfig>): Promise<Tra
   configUpdatePromise = nextLock;
   
   await currentLock;
+  
+  // CRITICAL FIX (Issue #4): Only resolve lock after successful DB write
+  // Previously, resolveLock was called in finally block even on errors,
+  // causing lost updates when retries happened
   try {
     const next = applyConfig(partial);
 
@@ -217,8 +230,13 @@ export async function updateConfig(partial: Partial<TradingConfig>): Promise<Tra
         set: toDbUpdateValues(next),
       });
 
-    return { ...next };
-  } finally {
+    // Success - release lock and return
     resolveLock!();
+    return { ...next };
+  } catch (err) {
+    // Error - release lock to prevent deadlock, but log the failure
+    logger.error({ err }, "Config update failed - lock released but update lost");
+    resolveLock!();
+    throw err; // Re-throw to notify caller
   }
 }

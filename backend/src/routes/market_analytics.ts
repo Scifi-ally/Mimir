@@ -12,6 +12,45 @@ import type { UniverseStock } from "../analysis/stock_scanner";
 
 const router = Router();
 
+type AnalyticsCacheEntry<T> = {
+  expiresAt: number;
+  value?: T;
+  inFlight?: Promise<T>;
+};
+
+const analyticsCache = new Map<string, AnalyticsCacheEntry<unknown>>();
+
+async function getCachedAnalytics<T>(
+  key: string,
+  ttlMs: number,
+  load: () => Promise<T>,
+): Promise<T> {
+  const now = Date.now();
+  const cached = analyticsCache.get(key) as AnalyticsCacheEntry<T> | undefined;
+  if (cached?.value !== undefined && cached.expiresAt > now) {
+    return cached.value;
+  }
+  if (cached?.inFlight) {
+    return cached.inFlight;
+  }
+
+  const inFlight = load()
+    .then((value) => {
+      analyticsCache.set(key, { value, expiresAt: Date.now() + ttlMs });
+      return value;
+    })
+    .catch((err) => {
+      analyticsCache.delete(key);
+      throw err;
+    });
+
+  analyticsCache.set(key, { inFlight, expiresAt: now + ttlMs });
+  return inFlight;
+}
+
+const FORECAST_CACHE_TTL_MS = 2 * 60 * 1000;
+const SYMBOL_INSIGHTS_CACHE_TTL_MS = 60 * 1000;
+
 // GET /api/market/forecast?symbol=TCS
 router.get("/market/forecast", async (req, res) => {
   try {
@@ -37,57 +76,68 @@ router.get("/market/forecast", async (req, res) => {
       return;
     }
 
-    const niftyCandles = await fetchNiftyDailyCandles(70);
-    const context = await resolveSymbolInsightContext(stock as UniverseStock, niftyCandles, true);
-    if (!context?.candles.length) {
-      res.status(200).json({
-        symbol: stock.symbol,
-        available: false,
-        error: "Insufficient candle history for forecast",
-      });
-      return;
-    }
+    const payload = await getCachedAnalytics(
+      `forecast:${stock.symbol}`,
+      FORECAST_CACHE_TTL_MS,
+      async () => {
+        const niftyCandles = await fetchNiftyDailyCandles(70);
+        const context = await resolveSymbolInsightContext(stock as UniverseStock, niftyCandles, true);
+        if (!context?.candles.length) {
+          return {
+            symbol: stock.symbol,
+            available: false,
+            error: "Insufficient candle history for forecast",
+          };
+        }
 
-    const ai = await inferSymbolForecast(stock.symbol, context.candles, {
-      rs60: context.rs60,
-      mtfConfluenceScore: context.scan?.mtfConfluenceScore,
-      setupType: context.scan?.setup.setupType,
-    });
+        const ai = await inferSymbolForecast(stock.symbol, context.candles, {
+          rs60: context.rs60,
+          mtfConfluenceScore: context.scan?.mtfConfluenceScore,
+          setupType: context.scan?.setup.setupType,
+        });
 
-    if (!ai) {
-      res.status(503).json({
-        error: "AI forecast service unavailable",
-        available: false,
-        symbol: stock.symbol,
-      });
-      return;
-    }
+        if (!ai) {
+          return {
+            error: "AI forecast service unavailable",
+            available: false,
+            symbol: stock.symbol,
+          };
+        }
 
-    const lastClose = context.candles[context.candles.length - 1]?.close ?? null;
-    const isFallback = Boolean(
-      ai.isFallback ||
-      ai.chronos?.source === "fallback" ||
-      ai.technicalRanking?.source === "fallback" ||
-      ai.technicalRanking?.source === "Advanced Stochastic Engine" ||
-      ai.chronos?.source === "error" ||
-      ai.technicalRanking?.source === "error"
+        const lastClose = context.candles[context.candles.length - 1]?.close ?? null;
+        const isFallback = Boolean(
+          ai.isFallback ||
+          ai.chronos?.source === "fallback" ||
+          ai.technicalRanking?.source === "fallback" ||
+          ai.technicalRanking?.source === "Advanced Stochastic Engine" ||
+          ai.chronos?.source === "error" ||
+          ai.technicalRanking?.source === "error"
+        );
+
+        return {
+          symbol: stock.symbol,
+          available: true,
+          source: ai.chronos?.source || "unknown",
+          isFallback,
+          trend: ai.chronos?.trend || "neutral",
+          forecastReturnPct: ai.chronos?.forecast_return_pct || 0,
+          medianForecast: ai.chronos?.median_forecast || [],
+          quantileForecasts: ai.chronos?.quantile_forecasts || {},
+          worldSentiment: ai.world_sentiment_score || 0,
+          compositeScore: ai.composite_score,
+          components: ai.components || {},
+          lastClose,
+          fetchedAt: new Date().toISOString(),
+        };
+      },
     );
-    
-    res.json({
-      symbol: stock.symbol,
-      available: true,
-      source: ai.chronos?.source || "unknown",
-      isFallback,
-      trend: ai.chronos?.trend || "neutral",
-      forecastReturnPct: ai.chronos?.forecast_return_pct || 0,
-      medianForecast: ai.chronos?.median_forecast || [],
-      quantileForecasts: ai.chronos?.quantile_forecasts || {},
-      worldSentiment: ai.world_sentiment_score || 0,
-      compositeScore: ai.composite_score,
-      components: ai.components || {},
-      lastClose,
-      fetchedAt: new Date().toISOString(),
-    });
+
+    if (!payload.available && payload.error === "AI forecast service unavailable") {
+      res.status(503).json(payload);
+      return;
+    }
+
+    res.json(payload);
   } catch (err: unknown) {
     logApiError(req, err);
     res.status(500).json({ error: "Failed to generate forecast", available: false });
@@ -109,7 +159,7 @@ router.get("/market/symbol-insights", async (req, res) => {
       return;
     }
 
-    const stock = await findStockBySymbol(rawSymbol);
+    const stock = resolveIndexAsStock(rawSymbol) || await findStockBySymbol(rawSymbol);
     logger.info({ route: "symbolInsights", requestedRawSymbol: req.query.symbol, rawSymbol, resolvedStock: stock?.symbol, resolvedKey: stock?.key }, "Tracing symbolInsights request for Data Integrity Bug");
 
     if (!stock) {
@@ -124,6 +174,13 @@ router.get("/market/symbol-insights", async (req, res) => {
         fetchedAt: new Date().toISOString(),
         error: `Symbol ${rawSymbol} not found in universe`,
       });
+      return;
+    }
+
+    const insightsCacheKey = `symbol-insights:${stock.symbol}`;
+    const cachedInsights = analyticsCache.get(insightsCacheKey);
+    if (cachedInsights?.value !== undefined && cachedInsights.expiresAt > Date.now()) {
+      res.json(cachedInsights.value);
       return;
     }
 
@@ -189,7 +246,7 @@ router.get("/market/symbol-insights", async (req, res) => {
       logger.warn({ symbol: stock.symbol }, "Failed to fetch learning metrics");
     }
 
-    res.json({
+    const payload = {
       symbol: stock.symbol,
       name: stock.name,
       sector: stock.sector,
@@ -259,7 +316,13 @@ router.get("/market/symbol-insights", async (req, res) => {
             regimeAlign: metrics.regimeAlign,
           },
       fetchedAt: new Date().toISOString(),
+    };
+
+    analyticsCache.set(insightsCacheKey, {
+      value: payload,
+      expiresAt: Date.now() + SYMBOL_INSIGHTS_CACHE_TTL_MS,
     });
+    res.json(payload);
   } catch (err: unknown) {
     logApiError(req, err);
     res.status(500).json({ error: "Failed to load symbol insights" });

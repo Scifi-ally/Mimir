@@ -12,6 +12,45 @@ import { resolveIndexAsStock, isCandleInterval, CandleInterval, upstoxClient } f
 
 const router = Router();
 
+type MarketHistoryCacheEntry<T> = {
+  expiresAt: number;
+  value?: T;
+  inFlight?: Promise<T>;
+};
+
+const marketHistoryCache = new Map<string, MarketHistoryCacheEntry<unknown>>();
+
+async function getCachedMarketHistory<T>(
+  key: string,
+  ttlMs: number,
+  load: () => Promise<T>,
+): Promise<T> {
+  const now = Date.now();
+  const cached = marketHistoryCache.get(key) as MarketHistoryCacheEntry<T> | undefined;
+  if (cached?.value !== undefined && cached.expiresAt > now) {
+    return cached.value;
+  }
+  if (cached?.inFlight) {
+    return cached.inFlight;
+  }
+
+  const inFlight = load()
+    .then((value) => {
+      marketHistoryCache.set(key, { value, expiresAt: Date.now() + ttlMs });
+      return value;
+    })
+    .catch((err) => {
+      marketHistoryCache.delete(key);
+      throw err;
+    });
+
+  marketHistoryCache.set(key, { inFlight, expiresAt: now + ttlMs });
+  return inFlight;
+}
+
+const CANDLES_CACHE_TTL_MS = 60 * 1000;
+const SPARKLINES_CACHE_TTL_MS = 5 * 60 * 1000;
+
 // GET /api/market/candles?symbol=TCS&interval=5minute&lookbackDays=5
 router.get("/market/candles", async (req, res) => {
   try {
@@ -52,29 +91,37 @@ router.get("/market/candles", async (req, res) => {
     const toDate = toDateStr;
     const fromDate = shiftISTDateStr(toDate, -Math.max(1, lookbackDays));
 
-    const rawCandles = await upstoxClient.fetchHistoricalCandles(
-      stock.key,
-      intervalStr as CandleInterval,
-      toDate,
-      fromDate,
-      token
+    const payload = await getCachedMarketHistory(
+      `candles:${stock.key}:${intervalStr}:${fromDate}:${toDate}`,
+      CANDLES_CACHE_TTL_MS,
+      async () => {
+        const rawCandles = await upstoxClient.fetchHistoricalCandles(
+          stock.key,
+          intervalStr as CandleInterval,
+          toDate,
+          fromDate,
+          token
+        );
+
+        logger.debug(`[market.ts] fetchHistoricalCandles for ${stock.key} interval=${intervalStr} returned ${rawCandles.length} candles`);
+
+        const formatted = rawCandles.map((c) => {
+          const row = c as [string, number, number, number, number, number];
+          return {
+            ts: row[0],
+            open: Number(row[1]),
+            high: Number(row[2]),
+            low: Number(row[3]),
+            close: Number(row[4]),
+            volume: Number(row[5]),
+          };
+        }).reverse();
+
+        return { candles: formatted, symbol: stock.symbol };
+      },
     );
 
-    logger.debug(`[market.ts] fetchHistoricalCandles for ${stock.key} interval=${intervalStr} returned ${rawCandles.length} candles`);
-
-    const formatted = rawCandles.map((c) => {
-      const row = c as [string, number, number, number, number, number];
-      return {
-        ts: row[0],
-        open: Number(row[1]),
-        high: Number(row[2]),
-        low: Number(row[3]),
-        close: Number(row[4]),
-        volume: Number(row[5]),
-      };
-    }).reverse();
-
-    res.json({ candles: formatted, symbol: stock.symbol });
+    res.json(payload);
   } catch (err: unknown) {
     logApiError(req, err);
     let isAuthErr = false;
@@ -112,7 +159,12 @@ router.get("/market/sparklines", async (req, res) => {
       return;
     }
 
-    const data = await fetchSparklines(symbols);
+    const cacheKey = `sparklines:${[...symbols].sort().join(",")}`;
+    const data = await getCachedMarketHistory(
+      cacheKey,
+      SPARKLINES_CACHE_TTL_MS,
+      () => fetchSparklines(symbols),
+    );
     res.json(data);
   } catch (err: unknown) {
     req.log.error({ err }, "Failed to fetch sparklines");

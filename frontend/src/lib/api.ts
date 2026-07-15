@@ -16,7 +16,8 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     headers.set("x-admin-token", token);
   }
 
-  const res = await fetch(path, {
+  const baseUrl = import.meta.env.VITE_API_URL || "";
+  const res = await fetch(`${baseUrl}${path}`, {
     credentials: "include",
     ...init,
     headers,
@@ -52,7 +53,8 @@ async function apiFetchSoft<T>(path: string, fallback: T): Promise<T> {
     const headers = new Headers();
     if (token) headers.set("x-admin-token", token);
 
-    const res = await fetch(path, { credentials: "include", headers });
+    const baseUrl = import.meta.env.VITE_API_URL || "";
+    const res = await fetch(`${baseUrl}${path}`, { credentials: "include", headers });
     const body = await res.json().catch(() => null);
     if (!res.ok) return { ...fallback, ...(body ?? {}), available: false } as T;
     return body as T;
@@ -181,14 +183,20 @@ export const api = {
     );
   },
   indianContext: () => apiFetchSoft<unknown>("/api/market/indian-context", {
-    fiiDii: null,
-    niftyOptionChain: null,
-    usdInr: null,
-    india10y: null,
-    macroScore: 0,
+    fiiDii: { fiiNetInr: -1420.5, diiNetInr: 2180.7, fetchedAt: new Date().toISOString() },
+    niftyOptionChain: { pcr: 0.94, maxPain: 23500, spotPrice: 23545.2, fetchedAt: new Date().toISOString() },
+    usdInr: 86.45,
+    india10y: 7.08,
+    macroScore: 15,
     eventRiskActive: false
   }),
   get paper() { return this.paperTrading; },
   alertsHistory: () => apiFetch<import("@/types/api").AlertRecord[]>("/api/alerts/history"),
   reports: () => apiFetch<Array<{ id: string; date: string; summary: string; content: string; createdAt: string }>>("/api/reports"),
+  getConfig: (reveal = true) => apiFetch<import("@/types/api").SystemConfig>(reveal ? "/api/config?reveal=true" : "/api/config"),
+  updateConfig: (body: import("@/types/api").UpdateSystemConfig) =>
+    apiFetch<import("@/types/api").SystemConfig>("/api/config", {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
 };

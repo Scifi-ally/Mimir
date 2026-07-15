@@ -237,6 +237,7 @@ export function CommandPalette({ onClose, onWidthChange }: { onClose: () => void
 
           {isBuildingRule ? (
             <motion.div
+              layout
               key="rule-builder"
               initial={{ opacity: 0, scale: 0.98, filter: "blur(4px)" }}
               animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}

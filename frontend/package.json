@@ -17,6 +17,7 @@
     "@tailwindcss/typography": "^0.5.20",
     "@tanstack/react-query": "^5.90.21",
     "@tanstack/react-virtual": "^3.14.3",
+    "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "framer-motion": "^12.23.24",
@@ -29,7 +30,7 @@
     "react-hotkeys-hook": "^5.3.2",
     "react-markdown": "^10.1.0",
     "react-resizable": "^4.0.2",
-    "tailwind-merge": "^3.3.1",
+    "tailwind-merge": "^3.6.0",
     "zod": "^3.25.76",
     "zustand": "^5.0.8"
   },

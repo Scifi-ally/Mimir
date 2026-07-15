@@ -7,7 +7,13 @@ import { marketDataStore } from "@/providers/MarketDataProvider";
 let activeWsSocket: WebSocket | null = null;
 let pendingSymbols: string[] = [];
 
+let lastSubscribedSymbolsKey = "";
+
 export function subscribeWsSymbols(symbols: string[]) {
+  const newKey = symbols.slice().sort().join(",");
+  if (newKey === lastSubscribedSymbolsKey) return;
+  lastSubscribedSymbolsKey = newKey;
+
   if (activeWsSocket?.readyState === WebSocket.OPEN && symbols && symbols.length > 0) {
     activeWsSocket.send(JSON.stringify({ event: "subscribe_symbols", data: { symbols } }));
   } else if (symbols && symbols.length > 0) {
@@ -219,17 +225,33 @@ export function useWebSocket() {
                   reason: event.data.reason,
                 });
               }
-              setScanState({
-                scanning: true,
-                phase: "running",
-                current: event.data.current,
-                total: event.data.total,
-                currentStock: event.data.currentStock,
-                status: event.data.status,
-                reason: event.data.reason,
-                message: event.data.reason || event.data.status || "Scanning",
-                updatedAt: Date.now(),
-              });
+              // If status is STOPPED, reset the scan state immediately
+              if (event.data.status === "STOPPED") {
+                setScanState({
+                  scanning: false,
+                  phase: "stopped",
+                  current: 0,
+                  total: 0,
+                  currentStock: "",
+                  status: "STOPPED",
+                  reason: "Scan manually stopped",
+                  message: "Scan manually stopped",
+                  updatedAt: Date.now(),
+                });
+                clearScanLogs();
+              } else {
+                setScanState({
+                  scanning: true,
+                  phase: "running",
+                  current: event.data.current,
+                  total: event.data.total,
+                  currentStock: event.data.currentStock,
+                  status: event.data.status,
+                  reason: event.data.reason,
+                  message: event.data.reason || event.data.status || "Scanning",
+                  updatedAt: Date.now(),
+                });
+              }
               break;
             case "scan_completed":
               {
@@ -241,9 +263,17 @@ export function useWebSocket() {
                 setScanState({
                   scanning: false,
                   phase,
+                  current: 0,
+                  total: 0,
                   message: event.data.message || (phase === "completed" ? "Scan completed" : `Scan ${phase}`),
                   updatedAt: Date.now(),
                 });
+                // Also clear the optimistic scanRunning flag in session cache
+                queryClient.setQueryData(["session"], (old: any) => old ? { ...old, scanRunning: false } : old);
+                // Clear scan logs when scan completes or is stopped
+                if (phase === "stopped") {
+                  clearScanLogs();
+                }
               }
               debouncedInvalidate(["watchlist"]);
               debouncedInvalidate(["suggestions"]);
@@ -303,6 +333,14 @@ export function useWebSocket() {
                 title: "System Notification",
                 message: event.data.message,
               });
+              // Safety net: if the alert is about a scan failure, force-reset scan state
+              {
+                const msg = (event.data.message || "").toLowerCase();
+                if (msg.includes("scanner failed") || msg.includes("scan failed")) {
+                  setScanState({ scanning: false, phase: "failed", current: 0, total: 0, message: event.data.message, updatedAt: Date.now() });
+                  queryClient.setQueryData(["session"], (old: any) => old ? { ...old, scanRunning: false } : old);
+                }
+              }
               break;
             case "session_state_changed":
               debouncedInvalidate(["session"]);
@@ -310,6 +348,11 @@ export function useWebSocket() {
               break;
             case "indices_update":
               mergeIndices(event.data);
+              if (event.data.nifty?.ltp != null) marketDataStore.updateFromTick("NIFTY 50", { ltp: event.data.nifty.ltp, change_pct: event.data.nifty.changePct });
+              if (event.data.sensex?.ltp != null) marketDataStore.updateFromTick("SENSEX", { ltp: event.data.sensex.ltp, change_pct: event.data.sensex.changePct });
+              if (event.data.banknifty?.ltp != null) marketDataStore.updateFromTick("BANK NIFTY", { ltp: event.data.banknifty.ltp, change_pct: event.data.banknifty.changePct });
+              if (event.data.finnifty?.ltp != null) marketDataStore.updateFromTick("FIN NIFTY", { ltp: event.data.finnifty.ltp, change_pct: event.data.finnifty.changePct });
+              if (event.data.vix?.ltp != null) marketDataStore.updateFromTick("INDIA VIX", { ltp: event.data.vix.ltp, change_pct: event.data.vix.changePct });
               break;
             case "watchlist_counts":
               updateWatchlistCounts(event.data);

@@ -39,6 +39,8 @@ export interface WatchlistItem {
 
 export interface Watchlist {
   forDate: string;
+  isFallback?: boolean;
+  hasScan?: boolean;
   momentumCandidates: WatchlistItem[];
   breakoutCandidates: WatchlistItem[];
   gapCandidates: WatchlistItem[];
@@ -181,6 +183,7 @@ export interface SymbolInsights {
     trend: string;
     distFromEma20Pct: number;
     close?: number;
+    vwap?: number;
   } | null;
   monitoring: MonitoredStock | null;
   ai: {
@@ -233,3 +236,39 @@ export interface AlertRecord {
   message: string;
   createdAt: string;
 }
+
+export interface SystemConfig {
+  tradingCapital: number;
+  maxRiskPerTradePct: number;
+  maxDailyLossPct: number;
+  maxOpenPositions: number;
+  maxSectorExposure: number;
+  minRiskReward: number;
+  minDailyVolume: number;
+  vixPauseThreshold: number;
+  minSuggestionScore: number;
+  minMtfConfluencePct: number;
+  minAutoConfidencePct: number;
+  brokeragePerOrderInr: number;
+  slippageBps: number;
+  confidenceThresholdByRegimeJson: string;
+  maxSameDirectionOpenPositions: number;
+  avoidFirstMinutes: number;
+  avoidMiddayStartMinute: number;
+  avoidMiddayEndMinute: number;
+  weeklyLossLimitPct: number;
+  rollingDrawdownPct: number;
+  paperTradingEnabled: boolean;
+  upstoxApiKey?: string;
+  upstoxApiSecret?: string;
+  upstoxDataApiKey?: string;
+  upstoxDataApiSecret?: string;
+  upstoxRedirectUri?: string;
+  stopLossMode: "FIXED" | "TRAILING" | "BREAKEVEN";
+  maxDeployedCapitalPct?: number;
+  discordWebhookUrl?: string;
+  telegramBotToken?: string;
+  telegramChatId?: string;
+}
+
+export type UpdateSystemConfig = Partial<SystemConfig>;

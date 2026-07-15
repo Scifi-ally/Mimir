@@ -62,6 +62,10 @@ import {
 import { evaluateAutomationHealth } from "../analysis/confidence_engine";
 import { getSuccessfulScanForDate } from "../workflow/scan_persistence";
 
+// HIGH FIX (Issue #10, #18): Add Redis-based distributed locking for scheduler jobs
+import crypto from "crypto";
+import { createRedisClient } from "../lib/redis";
+
 const SCHEDULER_TIMEZONE = "Asia/Kolkata";
 let schedulerRunning = false;
 const runningJobs = new Set<string>();
@@ -73,6 +77,48 @@ const ENABLE_INTRADAY_WATCHLIST_ENRICHMENT =
 const MONITORING_INTERVAL_MS = 300; // Run monitoring cycle every 300ms during market hours
 const MARKET_OPEN_SCAN_WAIT_MS = 60_000;
 const MARKET_OPEN_SCAN_MAX_ATTEMPTS = 20;
+
+// HIGH FIX (Issue #10): Distributed lock helper to prevent duplicate scheduler execution
+const redisLockClient = createRedisClient("scheduler-locks");
+let redisLockConnected = false;
+
+async function acquireDistributedLock(lockKey: string, ttlSeconds: number = 60): Promise<string | null> {
+  try {
+    if (!redisLockConnected) {
+      await redisLockClient.connect();
+      redisLockConnected = true;
+    }
+    
+    const lockValue = crypto.randomUUID();
+    const acquired = await redisLockClient.set(
+      `scheduler:lock:${lockKey}`,
+      lockValue,
+      'EX', ttlSeconds,
+      'NX'
+    );
+    
+    return acquired ? lockValue : null;
+  } catch (err) {
+    logger.warn({ err, lockKey }, "Failed to acquire distributed lock - falling back to local execution");
+    return crypto.randomUUID(); // Fallback to allow execution if Redis unavailable
+  }
+}
+
+async function releaseDistributedLock(lockKey: string, lockValue: string): Promise<void> {
+  try {
+    // Lua script ensures we only delete our own lock
+    const script = `
+      if redis.call("get", KEYS[1]) == ARGV[1] then
+        return redis.call("del", KEYS[1])
+      else
+        return 0
+      end
+    `;
+    await redisLockClient.eval(script, 1, `scheduler:lock:${lockKey}`, lockValue);
+  } catch (err) {
+    logger.warn({ err, lockKey }, "Failed to release distributed lock");
+  }
+}
 async function beginMarketOpenMonitoring(): Promise<void> {
   logger.info(
     "Market open: priming market feed, initializing tick feeder and monitoring",
@@ -132,16 +178,68 @@ export function isSchedulerRunning(): boolean {
   return schedulerRunning;
 }
 
+// ARCHITECTURAL FIX (Issue #38): Add cleanup function for graceful shutdown
+export function stopScheduler(): void {
+  if (!schedulerRunning) {
+    logger.info("Scheduler already stopped");
+    return;
+  }
+  
+  schedulerRunning = false;
+  
+  // Clear all timers
+  if (marketFeedRealtimeTimer) {
+    clearInterval(marketFeedRealtimeTimer);
+    marketFeedRealtimeTimer = null;
+  }
+  
+  if (intradayMonitoringTimer) {
+    clearTimeout(intradayMonitoringTimer);
+    intradayMonitoringTimer = null;
+  }
+  
+  if (marketOpenRetryTimer) {
+    clearInterval(marketOpenRetryTimer);
+    marketOpenRetryTimer = null;
+  }
+  
+  // Close Redis lock client
+  if (redisLockConnected) {
+    redisLockClient.quit().catch(err => 
+      logger.warn({ err }, "Failed to close Redis lock client")
+    );
+    redisLockConnected = false;
+  }
+  
+  logger.info("Scheduler stopped successfully");
+}
+
+// HIGH FIX (Issue #10, #18): Enhanced runExclusive with distributed locking
 async function runExclusive(
   name: string,
   task: () => void | Promise<void>,
+  useDistributedLock: boolean = false
 ): Promise<void> {
+  // Local lock check
   if (runningJobs.has(name)) {
     logger.warn(
       { job: name },
-      "Skipping scheduler job because previous run is still active",
+      "Skipping scheduler job because previous run is still active (local check)",
     );
     return;
+  }
+
+  // Distributed lock for critical jobs
+  let lockValue: string | null = null;
+  if (useDistributedLock) {
+    lockValue = await acquireDistributedLock(name, 300); // 5 min TTL for long-running jobs
+    if (!lockValue) {
+      logger.warn(
+        { job: name },
+        "Skipping scheduler job because another instance is running (distributed lock)",
+      );
+      return;
+    }
   }
 
   runningJobs.add(name);
@@ -165,6 +263,9 @@ async function runExclusive(
     }
   } finally {
     runningJobs.delete(name);
+    if (lockValue && useDistributedLock) {
+      await releaseDistributedLock(name, lockValue);
+    }
   }
 }
 
@@ -517,17 +618,20 @@ export function startScheduler(): void {
   });
 
   // ── MARKET OPEN: 09:15 IST (03:45 UTC) Mon–Fri ───────────────────────────
+  // HIGH FIX (Issue #10): Use distributed lock for critical market-open job
   scheduleJob("market-open", "15 9 * * 1-5", async () => {
-    if (marketOpenRetryTimer) {
-      clearInterval(marketOpenRetryTimer);
-      marketOpenRetryTimer = null;
-    }
+    // Use distributed lock to ensure only one instance handles market open
+    await runExclusive("market-open-handler", async () => {
+      if (marketOpenRetryTimer) {
+        clearInterval(marketOpenRetryTimer);
+        marketOpenRetryTimer = null;
+      }
 
-    const offhoursStatus = getOffHoursScanStatus();
-    if (!offhoursStatus.running) {
-      await beginMarketOpenMonitoring();
-      return;
-    }
+      const offhoursStatus = getOffHoursScanStatus();
+      if (!offhoursStatus.running) {
+        await beginMarketOpenMonitoring();
+        return;
+      }
 
     logger.warn(
       "Market open delayed: pre-market analysis still running; waiting for completion before enabling live monitoring",
@@ -577,6 +681,7 @@ export function startScheduler(): void {
         });
       }
     }, MARKET_OPEN_SCAN_WAIT_MS);
+    }, true); // Use distributed lock
   });
 
   // ── MARKET CLOSE: 15:30 IST (10:00 UTC) Mon–Fri ───────────────────────────

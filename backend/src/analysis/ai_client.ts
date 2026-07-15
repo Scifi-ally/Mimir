@@ -6,7 +6,6 @@ import { getGlobalMacroState } from "./global_macro";
 import { getFiiDiiDivergence } from "./divergence_engine";
 import { computeOFI } from "./order_flow";
 import { fetchFIIDIIData } from "../market_data/fii_dii";
-import { fetchOptionChainData } from "../market_data/option_chain";
 import { buildSnapshot, computeMACD, type OHLCV } from "./technical";
 
 export interface BatchInferenceCandidate {
@@ -89,17 +88,43 @@ class CircuitBreaker {
 }
 
 const aiCircuitBreaker = new CircuitBreaker();
+const AI_HEALTH_CACHE_TTL_MS = 30_000;
+const AI_HEALTH_STALE_OK_MS = 2 * 60_000;
+let cachedAIHealth: { value: HealthResponse; checkedAt: number } | null = null;
+let aiHealthInFlight: Promise<HealthResponse> | null = null;
 
 export async function checkAIHealth(): Promise<HealthResponse> {
+  const now = Date.now();
+  if (cachedAIHealth && now - cachedAIHealth.checkedAt < AI_HEALTH_CACHE_TTL_MS) {
+    return cachedAIHealth.value;
+  }
+  if (aiHealthInFlight) {
+    return aiHealthInFlight;
+  }
+
   const url = `${getAiServiceUrl()}/health`;
-  try {
+  aiHealthInFlight = (async () => {
     if (!aiCircuitBreaker.canRequest()) {
       throw new Error("Circuit breaker open");
     }
-    const res = await axios.get(url, { timeout: 15000 });
+    const res = await axios.get(url, { timeout: 2000 });
     aiCircuitBreaker.recordSuccess();
-    return res.data as HealthResponse;
+    const health = res.data as HealthResponse;
+    cachedAIHealth = { value: health, checkedAt: Date.now() };
+    return health;
+  })();
+
+  try {
+    return await aiHealthInFlight;
   } catch (err) {
+    if (
+      cachedAIHealth?.value.status === "healthy" &&
+      Date.now() - cachedAIHealth.checkedAt < AI_HEALTH_STALE_OK_MS
+    ) {
+      logger.debug({ err: (err as Error).message }, "FastAPI /health check failed; reusing recent healthy AI status");
+      return cachedAIHealth.value;
+    }
+
     aiCircuitBreaker.recordFailure();
     logger.debug({ err: (err as Error).message }, "FastAPI /health check failed, returning fallback health status");
     return {
@@ -114,6 +139,8 @@ export async function checkAIHealth(): Promise<HealthResponse> {
       hardware: { type: "Node.js Fallback" },
       diagnostics: { latency: "0ms", error: "FastAPI unreachable" }
     };
+  } finally {
+    aiHealthInFlight = null;
   }
 }
 
@@ -137,7 +164,7 @@ export async function batchInference(
 
       const url = `${getAiServiceUrl()}/inference/batch`;
       logger.debug({ url, candidates: enrichedCandidates.length }, "Calling Python AI service for batch inference");
-      const response = await axios.post<BatchResponse>(url, { candidates: enrichedCandidates }, { timeout: 15000 });
+      const response = await axios.post<BatchResponse>(url, { candidates: enrichedCandidates }, { timeout: 2000 });
       
       if (response.data && Array.isArray(response.data.results)) {
         aiCircuitBreaker.recordSuccess();
@@ -442,12 +469,19 @@ export async function triggerRLTraining(): Promise<boolean> {
     );
     return response.status === 200;
   } catch (err) {
-    logger.error("Failed to trigger RL training:", err);
+    logger.error({ err }, "Failed to trigger RL training");
     return false;
   }
 }
 
-export async function getRLStatus(): Promise<any> {
+export interface RLStatusResponse {
+  status?: string;
+  episode?: number;
+  reward?: number;
+  [key: string]: unknown;
+}
+
+export async function getRLStatus(): Promise<RLStatusResponse | null> {
   if (!process.env.AI_SERVICE_URL) return null;
   try {
     const response = await axios.get(
@@ -456,7 +490,7 @@ export async function getRLStatus(): Promise<any> {
     );
     return response.data;
   } catch (err) {
-    logger.error("Failed to get RL status:", err);
+    logger.error({ err }, "Failed to get RL status");
     return null;
   }
 }

@@ -14,9 +14,9 @@ interface WatchlistCardProps {
 
 export const WatchlistCard = memo(({ row, selected, onSelect, sparkline }: WatchlistCardProps) => {
   const score = row.compositeScore || 0;
-  let scoreColor = "text-bear font-mono";
-  if (score > 65) scoreColor = "text-bull font-mono";
-  else if (score >= 40) scoreColor = "text-amber-500 font-mono";
+  let scoreBg = "bg-bear/15 text-bear";
+  if (score > 65) scoreBg = "bg-bull/15 text-bull";
+  else if (score >= 40) scoreBg = "bg-amber-500/15 text-amber-500";
 
   const topTag = row.signalTags && row.signalTags.length > 0 ? row.signalTags[0] : null;
 
@@ -27,74 +27,68 @@ export const WatchlistCard = memo(({ row, selected, onSelect, sparkline }: Watch
       aria-selected={selected}
       onClick={() => onSelect(row.symbol)}
       className={cn(
-        "flex flex-col justify-center rounded px-2.5 py-1.5 text-left transition-colors relative overflow-hidden group border h-[52px] w-full min-w-0 border-transparent font-mono",
+        "flex flex-col justify-center rounded-md px-3 py-1.5 text-left transition-all duration-200 relative overflow-hidden group border-0 h-[58px] w-full min-w-0 font-mono shadow-none",
         selected
-          ? "bg-secondary/60 text-foreground"
-          : "text-foreground/70 hover:bg-secondary/30 hover:text-foreground"
+          ? "bg-secondary/50 text-foreground"
+          : "bg-transparent hover:bg-secondary/20 text-foreground/85 hover:text-foreground"
       )}
     >
-      <div className="grid grid-cols-[1fr_auto] gap-1.5 relative z-10 min-w-0 w-full h-full items-center">
-        <div className="flex min-w-0 flex-col gap-0.5 overflow-hidden">
-          <div className="flex items-center gap-1.5 min-w-0">
+      <div className="grid grid-cols-[1fr_auto] gap-2.5 relative z-10 min-w-0 w-full h-full items-center">
+        <div className="flex min-w-0 flex-col justify-center gap-0.5 overflow-hidden">
+          <div className="flex items-center gap-2 min-w-0">
             {row.activeSignalDirection && (
               <span
                 title={`Active ${row.activeSignalDirection} Signal`}
                 className={cn(
-                  "inline-block w-2 h-2 rounded-full shrink-0 animate-pulse shadow-sm",
+                  "inline-block w-2 h-2 rounded-full shrink-0 animate-pulse",
                   row.activeSignalDirection === "BUY"
-                    ? "bg-bull shadow-bull/50"
-                    : "bg-bear shadow-bear/50"
+                    ? "bg-bull"
+                    : "bg-bear"
                 )}
               />
             )}
             <span 
-              className={cn("truncate text-xs font-bold transition-colors", selected ? "text-foreground" : "text-foreground/90")}
+              className={cn("truncate text-sm font-bold tracking-tight transition-colors", selected ? "text-foreground" : "text-foreground group-hover:text-primary")}
             >
               {row.symbol}
             </span>
             {score > 0 && (
-              <span className={cn("text-[10px] font-bold leading-none", scoreColor)}>
+              <span className={cn("px-1.5 py-0.5 rounded text-[10px] font-extrabold leading-none shrink-0", scoreBg)}>
                 {Math.round(score)}
               </span>
             )}
           </div>
-          <div className="flex items-center gap-1 min-w-0 mt-0.5">
+          <div className="flex items-center gap-1.5 min-w-0">
             {topTag ? (
-              <span className="truncate text-[9px] font-semibold text-accent uppercase tracking-wider">
+              <span className="truncate text-[11px] font-bold text-accent uppercase tracking-wider">
                 {topTag}
               </span>
             ) : (
-              <span className="truncate text-[9px] text-foreground/50 capitalize">
-                {row.indicatorStatus}
+              <span className="truncate text-[11px] font-medium text-foreground/65 capitalize">
+                {row.indicatorStatus || row.condition || "Monitored"}
               </span>
             )}
           </div>
         </div>
 
-        <div className="flex flex-col items-end gap-0 flex-shrink-0 whitespace-nowrap z-10">
+        <div className="flex flex-col items-end justify-center gap-0 flex-shrink-0 whitespace-nowrap z-10">
           <LivePrice 
             symbol={row.symbol} 
             decimals={2}
             fallback={row.price}
-            className={cn(
-              "text-xs font-bold tabular-nums font-mono leading-tight transition-colors",
-              selected ? "text-foreground" : "text-foreground/90 group-hover:text-foreground"
-            )}
+            className="text-sm font-bold tabular-nums font-mono leading-tight text-foreground"
           />
           <LiveChangePct
             symbol={row.symbol}
             decimals={2}
             fallback={row.changePct}
-            className={cn(
-              "text-[9px] font-bold tabular-nums font-mono leading-tight transition-colors",
-              selected ? "text-foreground/70" : "text-foreground/50 group-hover:text-foreground/80"
-            )}
+            className="text-[11px] font-bold tabular-nums font-mono leading-tight"
           />
         </div>
       </div>
 
       {sparkline && (
-        <div className="absolute bottom-0 left-0 right-0 h-4 opacity-30 pointer-events-none z-0">
+        <div className="absolute bottom-0 left-0 right-0 h-4 opacity-25 pointer-events-none z-0">
           <Sparkline 
             data={sparkline} 
             color={selected ? "hsl(var(--accent))" : "currentColor"}

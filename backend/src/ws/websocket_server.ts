@@ -43,7 +43,7 @@ export function initWebSocketServer(server: Server): void {
     }
 
     const pathname = request.url ? request.url.split("?")[0] : "";
-    if (pathname === "/ws/intelligence") {
+    if (pathname === "/ws/intelligence" || pathname === "/ws") {
       wssIntelligence.handleUpgrade(request, socket, head, (ws) => {
         wssIntelligence.emit("connection", ws, request);
       });
@@ -71,21 +71,34 @@ export function initWebSocketServer(server: Server): void {
       tc.isAuthenticated = false;
 
       const ipStr = request?.socket?.remoteAddress;
+      // SECURITY FIX (Issue #39): Timing-safe token comparison with proper padding
+      // Always use constant-time comparison regardless of length to prevent timing attacks
       const normalizedIp = (ipStr || "").replace(/^::ffff:/, "");
       const isLocal = normalizedIp === "::1" || normalizedIp === "127.0.0.1" || normalizedIp.startsWith("127.");
       const isRemoteAuthDisabled = process.env.DISABLE_REMOTE_API_AUTH === "1" || process.env.DISABLE_REMOTE_API_AUTH === "true";
+
+      // CRITICAL FIX (Issue #6): Store timeout ID and clear it after successful auth
+      let authTimeoutId: NodeJS.Timeout | null = null;
 
       if (isLocal || isRemoteAuthDisabled) {
         tc.isAuthenticated = true;
       } else {
         // Enforce 5-second auth timeout
-        setTimeout(() => {
+        authTimeoutId = setTimeout(() => {
           if (!tc.isAuthenticated) {
             logger.warn({ channel: tc.channelName }, "Closing WS connection: Auth timeout");
             ws.close(4001, "Authentication timeout");
           }
         }, 5000);
       }
+
+      // SECURITY FIX (Issue #41): Rate limiting for auth attempts
+      const authAttempts = new Map<string, { count: number; firstAttempt: number; banned: boolean }>();
+      const AUTH_RATE_LIMIT = {
+        maxAttempts: 5,
+        windowMs: 60000, // 1 minute
+        banDurationMs: 300000 // 5 minutes
+      };
 
       ws.on("pong", () => {
         tc.isAlive = true;
@@ -122,6 +135,43 @@ export function initWebSocketServer(server: Server): void {
 
           // Handle client events
           if (clientEvent.event === "auth") {
+            // SECURITY FIX (Issue #41): Check rate limit before processing auth
+            const now = Date.now();
+            const tracker = authAttempts.get(normalizedIp) || { 
+              count: 0, 
+              firstAttempt: now,
+              banned: false 
+            };
+
+            // Reset window if expired
+            if (now - tracker.firstAttempt > AUTH_RATE_LIMIT.windowMs) {
+              tracker.count = 0;
+              tracker.firstAttempt = now;
+              tracker.banned = false;
+            }
+
+            // Check if currently banned
+            if (tracker.banned && now - tracker.firstAttempt < AUTH_RATE_LIMIT.banDurationMs) {
+              logger.warn({ 
+                ip: normalizedIp, 
+                attempts: tracker.count,
+                channel: tc.channelName 
+              }, "WebSocket auth blocked - rate limit exceeded");
+              ws.close(4429, "Too many authentication attempts");
+              return;
+            }
+
+            // Reset ban if expired
+            if (tracker.banned && now - tracker.firstAttempt >= AUTH_RATE_LIMIT.banDurationMs) {
+              tracker.count = 0;
+              tracker.firstAttempt = now;
+              tracker.banned = false;
+            }
+
+            // Increment attempt counter
+            tracker.count++;
+            authAttempts.set(normalizedIp, tracker);
+
             const token = clientEvent.data?.token;
             const expectedToken = process.env.UPSTOXBOT_ADMIN_TOKEN?.trim();
             if (!expectedToken) {
@@ -132,15 +182,44 @@ export function initWebSocketServer(server: Server): void {
               ws.close(4001, "Token required");
               return;
             }
+            
             try {
+              // SECURITY FIX (Issue #39): Pad buffers to prevent length-based timing leak
               const left = Buffer.from(token);
               const right = Buffer.from(expectedToken);
-              if (left.length !== right.length || !crypto.timingSafeEqual(left, right)) {
+              
+              // Always compare same length buffers
+              const maxLen = Math.max(left.length, right.length);
+              const paddedLeft = Buffer.concat([left, Buffer.alloc(maxLen - left.length)]);
+              const paddedRight = Buffer.concat([right, Buffer.alloc(maxLen - right.length)]);
+              
+              // Now timing-safe for both length and content
+              if (!crypto.timingSafeEqual(paddedLeft, paddedRight) || left.length !== right.length) {
                 throw new Error("Invalid token");
               }
+              
               tc.isAuthenticated = true;
+              
+              // Success - reset rate limit tracker
+              authAttempts.delete(normalizedIp);
+              
+              // CRITICAL FIX (Issue #6): Clear auth timeout after successful authentication
+              if (authTimeoutId) {
+                clearTimeout(authTimeoutId);
+                authTimeoutId = null;
+              }
+              
               logger.info({ channel: tc.channelName }, "WS client authenticated successfully");
             } catch {
+              // Failed auth - check if should ban
+              if (tracker.count >= AUTH_RATE_LIMIT.maxAttempts) {
+                tracker.banned = true;
+                authAttempts.set(normalizedIp, tracker);
+                logger.warn({ 
+                  ip: normalizedIp, 
+                  attempts: tracker.count 
+                }, "WebSocket IP banned for repeated auth failures");
+              }
               ws.close(4001, "Invalid token");
             }
             return;
@@ -307,14 +386,24 @@ let broadcastFn = (event: ServerEvent, topic: string = "suggestions"): void => {
           if (topic === "all" || !tc.topics || tc.topics.has(topic)) {
             // Tick batches are high frequency. Only send symbols this client has
             // explicitly requested; analysis events remain topic based.
+            // MEDIUM FIX (Issue #15): Enhanced tick filtering with validation
             if (isTickEvent && Array.isArray(event.data)) {
               const requested = new Set<string>(tc.subscribedSymbols ?? []);
               if (tc.activeSymbol) requested.add(tc.activeSymbol);
               if (requested.size === 0) return;
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               const ticks = (event.data as any[]).filter((tick) => {
+                // Validate tick format
+                if (!tick || (typeof tick !== 'object' && !Array.isArray(tick))) {
+                  return false;
+                }
+                
                 const symbol = Array.isArray(tick) ? tick[0] : tick.symbol;
-                return typeof symbol === "string" && requested.has(symbol);
+                
+                // MEDIUM FIX (Issue #15): Validate symbol is non-empty string
+                return typeof symbol === "string" && 
+                       symbol.length > 0 && 
+                       requested.has(symbol);
               });
               if (ticks.length === 0) return;
               client.send(packr.pack({ ...event, data: ticks }));

@@ -6,8 +6,8 @@ import { scanMarket, getEffectiveUniverse, getUniverseDiagnostics } from "./stoc
 import {
   getLastCompletedTradingDayStr,
   getPreviousTradingDayStr,
-  getNextTradingDayStr,
 } from "../lib/ist-time";
+import { getTargetTradingSessionDate } from "../market_data/market_state";
 import { isAuthenticated } from "../upstox/auth";
 import { broadcast } from "../ws/websocket_server";
 import { createServerEvent } from "../ws/events";
@@ -301,10 +301,7 @@ export async function runOvernightScanner(
   let universeDiagnostics: any = { source: "static" };
   let strictDataIntegrity = true;
   const scanStartedAtMs = Date.now();
-  const lastCompletedTradingDay = getLastCompletedTradingDayStr();
-  const tomorrowStr = getNextTradingDayStr(
-    new Date(`${lastCompletedTradingDay}T00:00:00.000+05:30`),
-  );
+  const tomorrowStr = getTargetTradingSessionDate();
 
   const emitScanCompleted = (
     suggestionsGenerated: number,
@@ -509,10 +506,22 @@ export async function runOvernightScanner(
       "Rolling downtime candidates found",
     );
 
-    // Safe swap: delete the old table data for tomorrow and insert the new ones
+    // Safe swap: delete the old table data for tomorrow and insert the new ones in a transaction
     if (candidates.length > 0) {
-      await db.delete(overnightWatchlistTable).where(eq(overnightWatchlistTable.forDate, tomorrowStr));
-      await db.insert(overnightWatchlistTable).values(candidates);
+      try {
+        await db.transaction(async (tx) => {
+          await tx.delete(overnightWatchlistTable).where(eq(overnightWatchlistTable.forDate, tomorrowStr));
+          await tx.insert(overnightWatchlistTable).values(candidates);
+        });
+      } catch (dbErr) {
+        logger.error({ err: dbErr, date: tomorrowStr, candidateCount: candidates.length }, "Failed to save overnight candidates to database");
+        let errorMsg = dbErr instanceof Error ? dbErr.message : "Unknown error";
+        // Truncate long SQL queries in the error message sent to the frontend
+        if (errorMsg.length > 150) {
+          errorMsg = errorMsg.substring(0, 150) + "...";
+        }
+        throw new Error(`Database error: ${errorMsg}`);
+      }
     }
 
     logger.info(
@@ -570,7 +579,7 @@ export async function runOvernightScanner(
     logger.error({ err }, "Overnight scanner failed");
     broadcast(
       createServerEvent.systemAlert({
-        message: "Off-hours scan failed. Check backend logs.",
+        message: `Off-hours scan failed: ${err instanceof Error ? err.message : "Check backend logs"}`,
         severity: "error",
       }),
     );
@@ -608,6 +617,7 @@ export function abortOvernightScanner(): boolean {
   lastScanStatus = "stopped";
   lastScanMessage = "Scan manually stopped";
   lastScanFinishedAt = new Date().toISOString();
+  lastScanStage = "stopped";
   activeScanSessionId = null;
   broadcast(
     createServerEvent.systemAlert({
@@ -615,11 +625,14 @@ export function abortOvernightScanner(): boolean {
       severity: "warning",
     })
   );
+  // Send zero progress to clear scan state
   broadcast(
     createServerEvent.scanProgress({
       total: 0, 
       current: 0,
-      status: "STOPPED"
+      status: "STOPPED",
+      currentStock: "",
+      reason: ""
     })
   );
   if (!terminalScanEventEmitted) {

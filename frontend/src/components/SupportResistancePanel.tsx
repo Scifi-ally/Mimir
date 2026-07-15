@@ -1,12 +1,13 @@
 import React, { useMemo } from "react";
-import { motion, AnimatePresence } from "framer-motion";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { calculateSRLevels } from "@/lib/technicalAnalysis";
+import { calculateSRLevels, type SRLevel } from "@/lib/technicalAnalysis";
 import { useSymbolDataSelector } from "@/providers/MarketDataProvider";
-import { fmtNum, fmtPct } from "@/lib/format";
+import { fmtNum } from "@/lib/format";
 import { Activity } from "lucide-react";
 import { cn } from "@/lib/format";
+import { LivePrice } from "@/components/atoms/LivePrice";
+import { AnimatedNumber } from "@/components/atoms/AnimatedNumber";
 
 interface SupportResistancePanelProps {
   selectedSymbol: string;
@@ -24,7 +25,8 @@ export const SupportResistancePanel = React.memo(function SupportResistancePanel
     refetchInterval: 5 * 60 * 1000, // refresh every 5 mins for new daily highs/lows
   });
 
-  const currentPrice = useSymbolDataSelector(selectedSymbol, d => d.ltp) || 0;
+  const currentPrice = useSymbolDataSelector(selectedSymbol, d => d.ltp) || 
+    (candlesQuery.data?.candles?.length ? candlesQuery.data.candles[candlesQuery.data.candles.length - 1].close : 0);
 
   const baseLevels = useMemo(() => {
     if (!candlesQuery.data?.candles || candlesQuery.data.candles.length === 0) return null;
@@ -32,23 +34,27 @@ export const SupportResistancePanel = React.memo(function SupportResistancePanel
     return calculateSRLevels(candlesQuery.data.candles, lastClose);
   }, [candlesQuery.data?.candles]);
 
-  const { r1, r2, s1, s2, confluenceScore } = useMemo(() => {
-    if (!baseLevels || currentPrice === 0) return { r1: null, r2: null, s1: null, s2: null, confluenceScore: 0 };
-    const resistance = baseLevels.filter((l) => l.price > currentPrice).sort((a, b) => a.price - b.price);
-    const support = baseLevels.filter((l) => l.price <= currentPrice).sort((a, b) => b.price - a.price);
+  // Map levels array or adjust if currentPrice is drastically outside daily candle range
+  const levels = useMemo(() => {
+    if (!baseLevels || !Array.isArray(baseLevels)) return null;
+    
+    const findByLabel = (lbl: string): SRLevel | undefined => baseLevels.find(l => l.label === lbl);
+    const r1 = findByLabel("R1");
+    const r2 = findByLabel("R2");
+    const s1 = findByLabel("S1");
+    const s2 = findByLabel("S2");
 
-    const r1 = resistance[0];
-    const s1 = support[0];
-    const maxSources = 4;
-    const conf = Math.min(100, Math.max(0, (((r1?.sources.length || 1) + (s1?.sources.length || 1)) / (maxSources * 2)) * 100 + 40));
+    if (currentPrice && r2 && s2 && (currentPrice > r2.price * 1.01 || currentPrice < s2.price * 0.99)) {
+      const step = currentPrice * 0.01;
+      return {
+        r1: { price: currentPrice + step, type: "resistance" as const, strength: 7, label: "R1", sources: ["Dynamic R1"] },
+        r2: { price: currentPrice + step * 2, type: "resistance" as const, strength: 8, label: "R2", sources: ["Dynamic R2"] },
+        s1: { price: currentPrice - step, type: "support" as const, strength: 7, label: "S1", sources: ["Dynamic S1"] },
+        s2: { price: currentPrice - step * 2, type: "support" as const, strength: 8, label: "S2", sources: ["Dynamic S2"] },
+      };
+    }
 
-    return {
-      r1,
-      r2: resistance[1],
-      s1,
-      s2: support[1],
-      confluenceScore: conf
-    };
+    return { r1, r2, s1, s2 };
   }, [baseLevels, currentPrice]);
 
   if (!selectedSymbol) {
@@ -59,13 +65,30 @@ export const SupportResistancePanel = React.memo(function SupportResistancePanel
     );
   }
 
-  if (candlesQuery.isPending || !baseLevels) {
+  if (candlesQuery.isPending && !levels) {
     return (
       <div className="h-full bg-transparent flex flex-col items-center justify-center text-neutral-600">
         <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent mb-3" />
       </div>
     );
   }
+
+  if (candlesQuery.isError || !levels || !currentPrice) {
+    return (
+      <div className="h-full bg-transparent flex flex-col items-center justify-center text-muted-foreground/60 p-4 text-center">
+        <span className="text-[11px] font-mono">No support/resistance computed (awaiting market data)</span>
+      </div>
+    );
+  }
+
+  const { r1, r2, s1, s2 } = levels;
+  const confluenceScore = Math.min(
+    100,
+    Math.round(
+      (([r1, r2, s1, s2].filter(Boolean).length * 20) +
+        ([r1?.strength, r2?.strength, s1?.strength, s2?.strength].filter(s => typeof s === "number" ? s >= 8 : s === "Strong").length * 10))
+    )
+  );
 
   const r1Dist = r1 && currentPrice > 0 ? ((r1.price - currentPrice) / currentPrice) * 100 : 0;
   const s1Dist = s1 && currentPrice > 0 ? ((s1.price - currentPrice) / currentPrice) * 100 : 0;
@@ -87,7 +110,9 @@ export const SupportResistancePanel = React.memo(function SupportResistancePanel
           <div className="flex justify-between items-center text-bear/80">
             <div className="flex items-center gap-1.5">
               <span className="font-bold">R2</span>
-              <span className="text-[10px] font-mono opacity-80">{fmtPct(r2Dist)}</span>
+              <span className="text-[10px] font-mono opacity-80">
+                <AnimatedNumber value={r2Dist} decimals={Math.abs(r2Dist) < 0.1 ? 2 : 1} showSign={true} suffix="%" duration={0.3} flashColor={true} />
+              </span>
             </div>
             <span>₹{fmtNum(r2.price, 2)}</span>
           </div>
@@ -96,7 +121,9 @@ export const SupportResistancePanel = React.memo(function SupportResistancePanel
           <div className="flex justify-between items-center text-bear/90">
             <div className="flex items-center gap-1.5">
               <span className="font-bold">R1</span>
-              <span className="text-[10px] font-mono opacity-80">{fmtPct(r1Dist)}</span>
+              <span className="text-[10px] font-mono opacity-80">
+                <AnimatedNumber value={r1Dist} decimals={Math.abs(r1Dist) < 0.1 ? 2 : 1} showSign={true} suffix="%" duration={0.3} flashColor={true} />
+              </span>
             </div>
             <span>₹{fmtNum(r1.price, 2)}</span>
           </div>
@@ -104,17 +131,10 @@ export const SupportResistancePanel = React.memo(function SupportResistancePanel
         
         <div className="w-full h-px bg-border/20 my-0.5" />
         
-        <AnimatePresence mode="popLayout">
-          <motion.div 
-            key={currentPrice}
-            initial={{ opacity: 0.5, scale: 0.98 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="flex justify-between items-center text-foreground font-black py-0.5"
-          >
-            <span>LTP</span>
-            <span>₹{fmtNum(currentPrice, 2)}</span>
-          </motion.div>
-        </AnimatePresence>
+        <div className="flex justify-between items-center text-foreground font-black py-0.5">
+          <span>LTP</span>
+          <LivePrice symbol={selectedSymbol} decimals={2} fallback={currentPrice} className="font-mono text-xs" />
+        </div>
 
         <div className="w-full h-px bg-border/20 my-0.5" />
 
@@ -122,7 +142,9 @@ export const SupportResistancePanel = React.memo(function SupportResistancePanel
           <div className="flex justify-between items-center text-bull/90">
             <div className="flex items-center gap-1.5">
               <span className="font-bold">S1</span>
-              <span className="text-[10px] font-mono opacity-80">{fmtPct(s1Dist)}</span>
+              <span className="text-[10px] font-mono opacity-80">
+                <AnimatedNumber value={s1Dist} decimals={Math.abs(s1Dist) < 0.1 ? 2 : 1} showSign={true} suffix="%" duration={0.3} flashColor={true} />
+              </span>
             </div>
             <span>₹{fmtNum(s1.price, 2)}</span>
           </div>
@@ -131,7 +153,9 @@ export const SupportResistancePanel = React.memo(function SupportResistancePanel
           <div className="flex justify-between items-center text-bull/80">
             <div className="flex items-center gap-1.5">
               <span className="font-bold">S2</span>
-              <span className="text-[10px] font-mono opacity-80">{fmtPct(s2Dist)}</span>
+              <span className="text-[10px] font-mono opacity-80">
+                <AnimatedNumber value={s2Dist} decimals={Math.abs(s2Dist) < 0.1 ? 2 : 1} showSign={true} suffix="%" duration={0.3} flashColor={true} />
+              </span>
             </div>
             <span>₹{fmtNum(s2.price, 2)}</span>
           </div>

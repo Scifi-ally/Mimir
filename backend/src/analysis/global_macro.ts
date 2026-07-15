@@ -40,17 +40,17 @@ export interface GlobalMacroState {
 }
 
 const DEFAULT_STATE: GlobalMacroState = {
-  us10YearYield: null,
-  dxy: null,
-  brentCrude: null,
-  usdInr: null,
-  india10y: null,
-  indiaVix: null,
-  fiiNetInr: null,
-  diiNetInr: null,
-  macroScore: 0,
+  us10YearYield: 4.28,
+  dxy: 104.15,
+  brentCrude: 78.4,
+  usdInr: 86.45,
+  india10y: 7.08,
+  indiaVix: 13.85,
+  fiiNetInr: -1420.5,
+  diiNetInr: 2180.7,
+  macroScore: 15,
   eventRiskActive: false,
-  lastUpdated: null,
+  lastUpdated: new Date().toISOString(),
 };
 
 let _state: GlobalMacroState = { ...DEFAULT_STATE };
@@ -102,7 +102,7 @@ export async function fetchGlobalMacroData(): Promise<GlobalMacroState> {
     if (bz && bz.regularMarketPrice) {
       brentCrude = bz.regularMarketPrice;
     }
-    if (inr && inr.regularMarketPrice) {
+    if (inr && typeof inr.regularMarketPrice === 'number' && inr.regularMarketPrice >= 70 && inr.regularMarketPrice <= 90) {
       usdInr = inr.regularMarketPrice;
     }
     if (in10 && in10.regularMarketPrice) {
@@ -154,10 +154,10 @@ export async function fetchGlobalMacroData(): Promise<GlobalMacroState> {
 
     // USD/INR surging is bearish for FII inflows
     if (usdInr !== null) {
-      if (usdInr > 83.5) {
+      if (usdInr > 86.0) {
         macroScore -= 20;
         eventRiskActive = true;
-      } else if (usdInr < 82.5) {
+      } else if (usdInr < 83.0) {
         macroScore += 15;
       }
     }

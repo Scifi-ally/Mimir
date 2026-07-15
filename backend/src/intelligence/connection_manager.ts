@@ -164,9 +164,7 @@ export class UpstoxConnectionManager {
           if (this.lastDisconnectTime) {
             const durationMs = Date.now() - this.lastDisconnectTime;
             logger.info({ durationMs }, "WebSocket reconnected after disconnect");
-            // Cast intelligenceBus as any to avoid type errors with unregistered events if they exist
-            // Actually it's better to just use the bus
-            intelligenceBus.publish("websocketReconnect" as any, { durationMs });
+            intelligenceBus.publish("websocketReconnect", { durationMs });
             this.lastDisconnectTime = null;
           }
           

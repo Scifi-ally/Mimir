@@ -1,11 +1,13 @@
-import { KeyRound, Moon, Sun, Play, BarChart2, Wallet, Plus, Loader2, FileText } from "lucide-react";
-import { useState, useEffect, useRef, memo } from "react";
+import { KeyRound, Moon, Sun, Play, BarChart2, Wallet, Plus, Loader2, FileText, Bell, Settings } from "lucide-react";
+import { useState, useEffect, memo } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { flushSync } from "react-dom";
-import { cn, fmtNum, fmtPct } from "@/lib/format";
+import { cn, toFixed } from "@/lib/format";
 import { Button } from "@/components/mimir/button";
 import type { DashboardIndices, SystemStatus } from "@/types/api";
 import { useStore } from "@/store/useStore";
+import AnimatedNumber from "@/components/atoms/AnimatedNumber";
 
 interface TopBarProps {
   indices: DashboardIndices | null;
@@ -13,14 +15,15 @@ interface TopBarProps {
   wsConnected: boolean;
   onAuthorize: () => void;
   authorizing: boolean;
-  watchlistDate?: string | null;
-
   activeSignals: number;
+  activeSignalCount?: number;
   scanning?: boolean;
   scanProgress?: number;
   onOpenSuggestions: () => void;
   onOpenPaperTrading: () => void;
   onOpenReports: () => void;
+  onOpenEventFeed: () => void;
+  onOpenSettings: () => void;
   onSelectSymbol?: (symbol: string) => void;
 }
 
@@ -32,21 +35,25 @@ export const TopBar = memo(function TopBar({
   wsConnected,
   onAuthorize,
   authorizing,
-  watchlistDate,
   activeSignals,
+  activeSignalCount = 0,
   scanning,
   scanProgress,
   onOpenSuggestions,
   onOpenPaperTrading,
   onOpenReports,
+  onOpenEventFeed,
+  onOpenSettings,
   onSelectSymbol,
 }: TopBarProps) {
 
   const [isLight, setIsLight] = useState(false);
   const [startingScan, setStartingScan] = useState(false);
   const [stoppingScan, setStoppingScan] = useState(false);
+  const queryClient = useQueryClient();
 
   const showIsland = useStore((s) => s.showIsland);
+  const unreadCount = useStore(s => s.events.length);
 
   useEffect(() => {
     setIsLight(document.documentElement.classList.contains("light"));
@@ -62,8 +69,12 @@ export const TopBar = memo(function TopBar({
     setStartingScan(true);
     try {
       await api.triggerScan();
+      useStore.getState().setScanState({ scanning: true, phase: "running", current: 0, total: 100 });
+      queryClient.setQueryData(["session"], (old: any) => old ? { ...old, scanRunning: true } : old);
     } catch (err) {
       setStartingScan(false);
+      useStore.getState().setScanState({ scanning: false, phase: "completed", current: 0, total: 0 });
+      queryClient.setQueryData(["session"], (old: any) => old ? { ...old, scanRunning: false } : old);
       if (err instanceof Error) {
         showIsland({ isNotification: true, title: "Scan Failed", subtitle: err.message, showSuccessOnly: false });
       } else {
@@ -84,6 +95,8 @@ export const TopBar = memo(function TopBar({
             setStoppingScan(true);
           try {
             await api.stopScan();
+            useStore.getState().setScanState({ scanning: false, phase: "completed", current: 0, total: 0 });
+            queryClient.setQueryData(["session"], (old: any) => old ? { ...old, scanRunning: false } : old);
           } catch (err) {
             showIsland({ isNotification: true, title: "Failed to stop scan", subtitle: err instanceof Error ? err.message : "Unknown error", showSuccessOnly: false });
           } finally {
@@ -99,10 +112,8 @@ export const TopBar = memo(function TopBar({
   const toggleTheme = (e: React.MouseEvent) => {
     const x = e.clientX;
     const y = e.clientY;
-
     const willBeLight = !isLight;
     
-
     if (!document.startViewTransition) {
       flushSync(() => {
         document.documentElement.classList.toggle("light", willBeLight);
@@ -111,7 +122,6 @@ export const TopBar = memo(function TopBar({
       window.dispatchEvent(new Event("themechange"));
       return;
     }
-
 
     const transition = document.startViewTransition(() => {
       flushSync(() => {
@@ -135,8 +145,8 @@ export const TopBar = memo(function TopBar({
       document.documentElement.animate(
         { clipPath },
         {
-          duration: 600,
-          easing: "ease-in-out",
+          duration: 450,
+          easing: "cubic-bezier(0.87, 0, 0.13, 1)",
           pseudoElement: "::view-transition-new(root)",
           fill: "both",
         }
@@ -146,17 +156,18 @@ export const TopBar = memo(function TopBar({
 
   return (
     <>
+      <div className="h-[52px] w-full shrink-0" />
       <header 
         className={cn(
-          "sticky top-0 z-50 flex shrink-0 flex-col justify-center bg-background/90 backdrop-blur-md border-0 px-4 sm:px-6 py-2"
+          "fixed top-0 left-0 right-0 z-50 flex w-full shrink-0 flex-col justify-center bg-background/95 backdrop-blur-md border-b border-border/10 px-4 sm:px-6 py-2 h-[52px]"
         )}
       >
         <div className="flex flex-col w-full gap-2">
           {/* Top Row: Core Indices & Actions */}
-          <div className="flex w-full items-center justify-between gap-4 sm:gap-6 whitespace-nowrap pb-1">
-            <div className="flex shrink-0 items-center gap-x-4 pr-2 py-1 relative">
+          <div className="flex w-full min-w-0 items-center justify-between gap-2 sm:gap-4 whitespace-nowrap">
+            <div className="flex min-w-0 flex-1 items-center gap-x-4 pr-2 relative">
 
-          <div className="hidden sm:flex shrink-0 items-center gap-4 text-[11px] font-medium text-foreground/70">
+          <div className="hidden sm:flex min-w-0 shrink items-center gap-4 text-[11px] font-medium text-foreground/70 overflow-x-auto [&::-webkit-scrollbar]:hidden">
             <IndexMetric label="NIFTY 50" ltp={indices?.nifty50.ltp} changePct={indices?.nifty50.changePct} storeKey="nifty" onSelect={() => onSelectSymbol?.("NIFTY 50")} />
             <IndexMetric label="SENSEX" ltp={indices?.sensex.ltp} changePct={indices?.sensex.changePct} storeKey="sensex" onSelect={() => onSelectSymbol?.("SENSEX")} />
             <IndexMetric label="BANK NIFTY" ltp={indices?.bankNifty.ltp} changePct={indices?.bankNifty.changePct} storeKey="banknifty" onSelect={() => onSelectSymbol?.("BANKNIFTY")} />
@@ -165,48 +176,37 @@ export const TopBar = memo(function TopBar({
           </div>
         </div>
 
-        <div className="flex shrink-0 items-center gap-4">
+        <div className="flex min-w-0 shrink-0 items-center gap-2 sm:gap-3">
           <div className="flex shrink-0 items-center gap-3 text-[11px] text-foreground/70">
-            {indices?.fiiDiiDivergence && indices.fiiDiiDivergence.isDiverging && (
-              <span 
-                className={cn(
-                  "px-2 py-0.5 rounded-full font-bold uppercase tracking-wider text-[9px] border",
-                  indices.fiiDiiDivergence.divergenceType === "BULLISH" 
-                    ? "bg-bull/10 text-bull border-bull/20" 
-                    : "bg-bear/10 text-bear border-bear/20"
-                )}
-                title={`5D Net Flow: ₹${Math.round(indices.fiiDiiDivergence.totalFlow5d)}Cr | Nifty: ${indices.fiiDiiDivergence.niftyReturn5d.toFixed(1)}%`}
+            {!scanning && (activeSignalCount > 0 || activeSignals > 0) && (
+              <button
+                type="button"
+                onClick={onOpenSuggestions}
+                className="font-semibold text-bull whitespace-nowrap hover:underline flex items-center gap-1.5 transition-all cursor-pointer"
+                title="Click to view all active signals"
               >
-                {indices.fiiDiiDivergence.divergenceType === "BULLISH" ? "Inst. Buy Divergence" : "Inst. Sell Divergence"}
-              </span>
-            )}
-            <span className="truncate">
-              <span className="hidden sm:inline">{watchlistDate}</span>
-            </span>
-            {activeSignals > 0 && !scanning && (
-              <span className="font-semibold text-bull whitespace-nowrap">
-                {activeSignals} active signals
-              </span>
-            )}
-            {scanning && (
-              <span className="font-semibold text-accent animate-pulse whitespace-nowrap">
-                Scanning market...
-              </span>
+                <span className="w-2 h-2 rounded-full bg-bull animate-pulse inline-block shrink-0" />
+                <span>
+                  {activeSignalCount > 0 
+                    ? `${activeSignalCount} active signal${activeSignalCount > 1 ? 's' : ''}` 
+                    : `${activeSignals} active setups`}
+                </span>
+              </button>
             )}
           </div>
 
           <div className="flex shrink-0 items-center gap-1.5">
             <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
             <Button
-              variant="outline"
+              variant="ghost"
               size="sm"
               onClick={handleScanButtonClick}
               disabled={startingScan || stoppingScan}
               className={cn(
-                "apple-hover relative overflow-hidden h-6 text-[10px] px-2.5 font-medium border-foreground/20 bg-transparent transition-all duration-300",
+                "apple-hover relative overflow-hidden h-7 text-[10px] px-3 font-medium bg-transparent border border-border/50 transition-all duration-300 rounded-lg",
                 scanning 
-                  ? "text-foreground hover:bg-red-500/10 hover:border-red-500/50 hover:text-red-500" 
-                  : "text-foreground/80 hover:bg-foreground hover:text-background"
+                  ? "text-foreground hover:bg-red-500/10 hover:text-red-500" 
+                  : "text-foreground/80 hover:bg-foreground/10 hover:text-foreground"
               )}
               title={scanning ? "Stop the active scanner" : "Manually restart the full market scanner"}
             >
@@ -219,7 +219,7 @@ export const TopBar = memo(function TopBar({
               <span className="relative z-10 flex items-center justify-center min-w-[32px]">
                 {scanning && scanProgress !== undefined ? (
                   <span className="text-[10px] font-mono font-bold text-foreground px-1">
-                    {scanProgress > 0 && scanProgress < 100 ? scanProgress.toFixed(1) : Math.round(scanProgress || 0)}%
+                    {scanProgress > 0 && scanProgress < 100 ? toFixed(scanProgress, 1) : Math.round(scanProgress || 0)}%
                   </span>
                 ) : (
                   <Play className={cn("h-4 w-4", startingScan && "animate-pulse text-bull")} />
@@ -230,23 +230,23 @@ export const TopBar = memo(function TopBar({
 
             <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
             <Button
-              variant="outline"
+              variant="ghost"
               size="sm"
               onClick={onOpenSuggestions}
-              className="apple-hover h-6 flex items-center gap-1 text-[10px] px-2.5 font-medium border-foreground/20 bg-transparent text-foreground/80 hover:bg-foreground hover:text-background transition-all duration-300"
-              title="View Performance Suggestions"
+              className="apple-hover h-7 flex items-center gap-1.5 text-[11px] px-3 font-medium bg-transparent border border-border/50 text-foreground/80 hover:bg-foreground/10 hover:text-foreground transition-all duration-300 rounded-lg"
+              title="View Signals Generated"
             >
               <BarChart2 className="h-4 w-4 sm:mr-1" />
-              <span className="hidden sm:inline">Performance</span>
+              <span className="hidden sm:inline">Signals</span>
             </Button>
             </motion.div>
 
             <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
             <Button
-              variant="outline"
+              variant="ghost"
               size="icon"
               onClick={() => useStore.getState().setCommandPaletteOpen(true, "scan ")}
-              className="apple-hover h-6 w-6 p-0 flex items-center justify-center border-foreground/20 bg-transparent text-foreground/80 hover:bg-foreground hover:text-background transition-all duration-300 rounded-md"
+              className="apple-hover h-7 w-7 p-0 flex items-center justify-center bg-transparent text-foreground/80 hover:bg-foreground/10 hover:text-foreground transition-all duration-300 rounded-lg"
               title="Add Custom Screener Condition"
             >
               <Plus className="h-4 w-4" />
@@ -255,10 +255,10 @@ export const TopBar = memo(function TopBar({
 
             <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
             <Button
-              variant="outline"
+              variant="ghost"
               size="icon"
               onClick={onOpenReports}
-              className="apple-hover h-6 w-6 p-0 flex items-center justify-center border-foreground/20 bg-transparent text-foreground/80 hover:bg-foreground hover:text-background transition-all duration-300 rounded-md"
+              className="apple-hover h-7 w-7 p-0 flex items-center justify-center bg-transparent text-foreground/80 hover:bg-foreground/10 hover:text-foreground transition-all duration-300 rounded-lg"
               title="Open Daily Reports"
             >
               <FileText className="h-4 w-4" />
@@ -267,10 +267,10 @@ export const TopBar = memo(function TopBar({
 
             <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
             <Button
-              variant="outline"
+              variant="ghost"
               size="icon"
               onClick={onOpenPaperTrading}
-              className="apple-hover h-6 w-6 p-0 flex items-center justify-center border-foreground/20 bg-transparent text-foreground/80 hover:bg-foreground hover:text-background transition-all duration-300 rounded-md"
+              className="apple-hover h-7 w-7 p-0 flex items-center justify-center bg-transparent text-foreground/80 hover:bg-foreground/10 hover:text-foreground transition-all duration-300 rounded-lg"
               title="Open Paper Trading"
             >
               <Wallet className="h-4 w-4" />
@@ -279,15 +279,44 @@ export const TopBar = memo(function TopBar({
 
             <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
             <Button
-              variant="outline"
+              variant="ghost"
+              size="icon"
+              onClick={onOpenEventFeed}
+              className="relative apple-hover h-7 w-7 p-0 flex items-center justify-center bg-transparent text-foreground/80 hover:bg-foreground/10 hover:text-foreground transition-all duration-300 rounded-lg"
+              title="Activity Feed"
+            >
+              <Bell className="h-4 w-4" />
+              {unreadCount > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-destructive px-0.5 text-[8px] font-bold text-white shadow-sm">
+                  {unreadCount > 9 ? "9+" : unreadCount}
+                </span>
+              )}
+            </Button>
+            </motion.div>
+
+            <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onOpenSettings}
+              className="apple-hover h-7 w-7 p-0 flex items-center justify-center bg-transparent text-foreground/80 hover:bg-foreground/10 hover:text-foreground transition-all duration-300 rounded-lg"
+              title="System Configuration & Settings"
+            >
+              <Settings className="h-4 w-4" />
+            </Button>
+            </motion.div>
+
+            <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
+            <Button
+              variant="ghost"
               size="sm"
               onClick={onAuthorize}
               disabled={authorizing || status?.upstoxAuthenticated}
               className={cn(
-                "apple-hover h-6 flex items-center gap-1.5 text-[10px] px-2.5 font-medium transition-all",
+                "apple-hover h-7 flex items-center gap-1.5 text-[11px] px-3 font-medium transition-all rounded-lg",
                 !status?.upstoxAuthenticated
-                  ? "border-red-500 text-red-500 hover:bg-red-500 hover:text-white"
-                  : "border-foreground/20 bg-transparent text-foreground/80 hover:bg-foreground hover:text-background"
+                  ? "text-red-500 hover:bg-red-500/10"
+                  : "bg-transparent text-foreground/80 hover:bg-foreground/10 hover:text-foreground"
               )}
               title="Authorize Upstox"
             >
@@ -322,7 +351,10 @@ export const TopBar = memo(function TopBar({
           </motion.div>
           
           <span className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-foreground/70 px-1">
-            <span className={cn("h-1.5 w-1.5 rounded-full", wsConnected ? "bg-bull animate-pulse-dot" : "bg-bear")} />
+            <span className={cn(
+              "h-1.5 w-1.5 rounded-full", 
+              wsConnected ? "bg-[#34C759] shadow-[0_0_8px_rgba(52,199,89,0.6)] animate-[pulse-bloom_4s_ease-in-out_infinite]" : "bg-red-500/80"
+            )} />
             <span className="hidden sm:inline">{wsConnected ? "Live" : "Offline"}</span>
           </span>
         </div>
@@ -348,37 +380,49 @@ function IndexMetric({
   storeKey?: string;
   onSelect?: () => void;
 }) {
-  const priceRef = useRef<HTMLElement>(null);
-  const pctRef = useRef<HTMLElement>(null);
+  const [liveLtp, setLiveLtp] = useState(ltp);
+  const [livePct, setLivePct] = useState(changePct);
 
   useEffect(() => {
+    if (!storeKey) return;
     let prevTick: unknown = null;
     const unsub = useStore.subscribe((state) => {
-      const tick = state.indices[storeKey!];
+      const tick = state.indices[storeKey];
       if (!tick || tick === prevTick) return;
       prevTick = tick;
-        if (priceRef.current && tick.ltp != null) {
-          priceRef.current.textContent = fmtNum(tick.ltp, 2);
-        }
-        if (pctRef.current && !isVix && tick.changePct != null) {
-          pctRef.current.textContent = fmtPct(tick.changePct);
-          pctRef.current.className = cn("tabular-nums", tick.changePct >= 0 ? "text-bull" : "text-bear");
-        }
-      }
-    );
+      if (tick.ltp != null) setLiveLtp(tick.ltp);
+      if (!isVix && tick.changePct != null) setLivePct(tick.changePct);
+    });
     return unsub;
   }, [storeKey, isVix]);
 
-  const tone = changePct == null ? "text-foreground/70" : changePct >= 0 ? "text-bull" : "text-bear";
+  const tone = livePct == null ? "text-foreground/70" : livePct >= 0 ? "text-bull" : "text-bear";
+  
   return (
-    <button type="button" onClick={onSelect} className="flex shrink-0 items-baseline gap-1.5 whitespace-nowrap cursor-pointer hover:bg-foreground/5 px-1.5 py-0.5 rounded transition-colors">
+    <button 
+      type="button" 
+      onClick={onSelect} 
+      className="flex shrink-0 items-baseline gap-1.5 whitespace-nowrap cursor-pointer hover:bg-foreground/5 px-1.5 py-0.5 rounded transition-colors"
+    >
       <span className="text-foreground/70">{label}</span>
-      <strong ref={priceRef} className="text-foreground tabular-nums">
-        {ltp != null ? fmtNum(ltp, 2) : "—"}
+      <strong className="text-foreground">
+        <AnimatedNumber 
+          value={liveLtp ?? ltp} 
+          decimals={2} 
+          duration={0.3}
+          flashColor={true}
+        />
       </strong>
-      {!isVix && (
-        <strong ref={pctRef} className={cn(tone, "tabular-nums")}>
-          {changePct != null ? fmtPct(changePct) : ""}
+      {!isVix && livePct != null && (
+        <strong className={cn(tone)}>
+          <AnimatedNumber 
+            value={livePct} 
+            decimals={1} 
+            showSign={true}
+            suffix="%"
+            duration={0.3}
+            flashColor={true}
+          />
         </strong>
       )}
     </button>

@@ -1,5 +1,5 @@
 import { db, suggestionsTable } from "../../db/src";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { intelligenceBus } from "../intelligence/event_bus";
 import { getConfig } from "../config";
 import { broadcast } from "../ws/websocket_server";
@@ -7,12 +7,17 @@ import { createServerEvent } from "../ws/events";
 import { logger } from "../lib/logger";
 import type { Suggestion } from "../../db/src/schema/suggestions";
 
-let activePositions: Suggestion[] = [];
+// CRITICAL FIX (Issue #2): Use immutable snapshot pattern to prevent concurrent modification
+// The activePositions array is refreshed every 5 seconds, but tick processing can happen
+// simultaneously. Instead of mutating the global array, we fetch fresh data per symbol.
 const processingLocks = new Map<string, Promise<void>>();
+
+// Background refresh for monitoring, but processing uses fresh DB queries
+let activePositionsCache: Suggestion[] = [];
 
 async function refreshActivePositions() {
   try {
-    activePositions = await db
+    activePositionsCache = await db
       .select()
       .from(suggestionsTable)
       .where(eq(suggestionsTable.status, "ACTIVE"));
@@ -36,14 +41,25 @@ export async function initPositionTracker() {
 
     const nextLock = lock.then(async () => {
       try {
-        const positionsForSymbol = activePositions.filter(
-          (p) => p.symbol === symbol
-        );
+        // Fast in-memory check to prevent excessive DB queries for symbols without active positions
+        if (!activePositionsCache.some((pos) => pos.symbol === symbol)) return;
+
+        // CRITICAL FIX (Issue #2): Fetch positions from DB directly instead of using
+        // potentially stale activePositions array that gets replaced mid-processing
+        const positionsForSymbol = await db
+          .select()
+          .from(suggestionsTable)
+          .where(
+            and(
+              eq(suggestionsTable.symbol, symbol),
+              eq(suggestionsTable.status, "ACTIVE")
+            )
+          );
+        
         if (positionsForSymbol.length === 0) return;
 
-      const stopLossMode = getConfig().stopLossMode;
-      
       for (const pos of positionsForSymbol) {
+        const stopLossMode = pos.stopLossMode || getConfig().stopLossMode;
         const ltp = tick.ltp;
         const entryPrice = parseFloat(pos.entryPrice);
         const currentStop = parseFloat(pos.stopLoss);
@@ -65,6 +81,7 @@ export async function initPositionTracker() {
         if (stopLossMode === "FIXED") {
           // Under FIXED mode, just track the high/low
           if (highLowChanged) {
+            // CRITICAL FIX (Issue #2): Only update database, don't mutate cache
             await db
               .update(suggestionsTable)
               .set({
@@ -72,12 +89,6 @@ export async function initPositionTracker() {
                 lowestPrice: lowestPrice.toFixed(2),
               })
               .where(eq(suggestionsTable.id, pos.id));
-
-            const currentPos = activePositions.find(p => p.id === pos.id);
-            if (currentPos) {
-              currentPos.highestPrice = highestPrice.toFixed(2);
-              currentPos.lowestPrice = lowestPrice.toFixed(2);
-            }
           }
           continue;
         }
@@ -102,15 +113,39 @@ export async function initPositionTracker() {
             }
           }
         } else if (stopLossMode === "BREAKEVEN") {
+          // HIGH FIX (Issue #12): After setting breakeven, switch to TRAILING mode
+          // Previously, stop stayed at breakeven forever - now it trails after breakeven is set
           if (pos.direction === "BUY") {
             const profitTarget = entryPrice + (entryPrice - originalStopLoss);
             if (ltp >= profitTarget && currentStop < entryPrice) {
               newStop = entryPrice;
+              
+              // Switch to TRAILING mode after breakeven is set
+              await db
+                .update(suggestionsTable)
+                .set({ stopLossMode: "TRAILING" })
+                .where(eq(suggestionsTable.id, pos.id));
+              
+              logger.info(
+                { symbol: pos.symbol, newStop },
+                "PositionTracker: Moved to breakeven, switching to TRAILING mode"
+              );
             }
           } else if (pos.direction === "SELL") {
             const profitTarget = entryPrice - (originalStopLoss - entryPrice);
             if (ltp <= profitTarget && currentStop > entryPrice) {
               newStop = entryPrice;
+              
+              // Switch to TRAILING mode after breakeven is set
+              await db
+                .update(suggestionsTable)
+                .set({ stopLossMode: "TRAILING" })
+                .where(eq(suggestionsTable.id, pos.id));
+              
+              logger.info(
+                { symbol: pos.symbol, newStop },
+                "PositionTracker: Moved to breakeven, switching to TRAILING mode"
+              );
             }
           }
         }
@@ -118,6 +153,8 @@ export async function initPositionTracker() {
         const stopChanged = newStop !== currentStop;
 
         if (stopChanged || highLowChanged) {
+          // CRITICAL FIX (Issue #2): Only update database, don't mutate in-memory array
+          // Next refresh cycle will pick up the changes from DB
           await db
             .update(suggestionsTable)
             .set({
@@ -126,14 +163,6 @@ export async function initPositionTracker() {
               lowestPrice: lowestPrice.toFixed(2),
             })
             .where(eq(suggestionsTable.id, pos.id));
-
-          // Update local memory representation safely
-          const currentPos = activePositions.find(p => p.id === pos.id);
-          if (currentPos) {
-            currentPos.stopLoss = newStop.toFixed(2);
-            currentPos.highestPrice = highestPrice.toFixed(2);
-            currentPos.lowestPrice = lowestPrice.toFixed(2);
-          }
 
           logger.info(
             {
