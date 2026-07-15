@@ -26,7 +26,7 @@ export const LivePrice = memo(({ symbol, className, decimals = 2, fallback }: Li
   const ltpRaw = useSymbolDataSelector(symbol, (d) => d.ltp);
   const ltp = ltpRaw ?? indexLtp;
   const prevLtp = useRef(ltp);
-  const [flash, setFlash] = useState<'up' | 'down' | null>(null);
+  const spanRef = useRef<HTMLSpanElement>(null);
   const flashTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   useEffect(() => {
@@ -34,11 +34,20 @@ export const LivePrice = memo(({ symbol, className, decimals = 2, fallback }: Li
       marketDataStore.updateFromRest(symbol, { ltp: fallback });
     }
 
-    if (!ltp || ltp === prevLtp.current) return;
+    if (!ltp || ltp === prevLtp.current || !spanRef.current) return;
     if (prevLtp.current) {
-      setFlash(ltp > prevLtp.current ? 'up' : 'down');
+      const el = spanRef.current;
+      const isUp = ltp > prevLtp.current;
+      
+      el.classList.remove('flash-up', 'flash-down');
+      void el.offsetWidth; // Force reflow
+      el.classList.add(isUp ? 'flash-up' : 'flash-down');
+      
       if (flashTimeout.current) clearTimeout(flashTimeout.current);
-      flashTimeout.current = setTimeout(() => setFlash(null), 600);
+      flashTimeout.current = setTimeout(() => {
+        el.classList.remove('flash-up', 'flash-down');
+      }, 600);
+      
       prevLtp.current = ltp;
       return () => { if (flashTimeout.current) clearTimeout(flashTimeout.current); };
     }
@@ -56,10 +65,8 @@ export const LivePrice = memo(({ symbol, className, decimals = 2, fallback }: Li
     return <span className={cn("text-muted-foreground", className)}>—</span>;
   }
 
-  const flashClass = flash === 'up' ? 'flash-up' : flash === 'down' ? 'flash-down' : '';
-
   return (
-    <span className={cn("inline-block tabular-nums font-mono transition-colors duration-200", flashClass, className)}>
+    <span ref={spanRef} className={cn("inline-block tabular-nums font-mono", className)}>
       {formattedPrice}
     </span>
   );

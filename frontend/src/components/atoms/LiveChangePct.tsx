@@ -26,7 +26,7 @@ export const LiveChangePct = memo(({ symbol, className, decimals = 2, fallback }
   const changePctRaw = useSymbolDataSelector(symbol, (d) => d.change_pct);
   const changePct = changePctRaw ?? indexChange;
   const prevChange = useRef(changePct);
-  const [flash, setFlash] = useState<'up' | 'down' | null>(null);
+  const spanRef = useRef<HTMLSpanElement>(null);
   const flashTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   useEffect(() => {
@@ -34,11 +34,20 @@ export const LiveChangePct = memo(({ symbol, className, decimals = 2, fallback }
       marketDataStore.updateFromRest(symbol, { change_pct: fallback });
     }
 
-    if (!changePct || changePct === prevChange.current) return;
+    if (!changePct || changePct === prevChange.current || !spanRef.current) return;
     if (prevChange.current) {
-      setFlash(changePct > prevChange.current ? 'up' : 'down');
+      const el = spanRef.current;
+      const isUp = changePct > prevChange.current;
+      
+      el.classList.remove('flash-up', 'flash-down');
+      void el.offsetWidth; // Force reflow
+      el.classList.add(isUp ? 'flash-up' : 'flash-down');
+      
       if (flashTimeout.current) clearTimeout(flashTimeout.current);
-      flashTimeout.current = setTimeout(() => setFlash(null), 300);
+      flashTimeout.current = setTimeout(() => {
+        el.classList.remove('flash-up', 'flash-down');
+      }, 600);
+      
       prevChange.current = changePct;
       return () => { if (flashTimeout.current) clearTimeout(flashTimeout.current); };
     }
@@ -60,10 +69,8 @@ export const LiveChangePct = memo(({ symbol, className, decimals = 2, fallback }
   const isPositive = displayChange > 0;
   const isNegative = displayChange < 0;
   const baseColor = isPositive ? 'text-bull' : isNegative ? 'text-bear' : 'text-muted-foreground';
-  const flashClass = flash === 'up' ? 'flash-up' : flash === 'down' ? 'flash-down' : '';
-  
   return (
-    <span className={cn("inline-block tabular-nums font-mono transition-colors duration-200", baseColor, flashClass, className)}>
+    <span ref={spanRef} className={cn("inline-block tabular-nums font-mono", baseColor, className)}>
       {formattedChange}
     </span>
   );

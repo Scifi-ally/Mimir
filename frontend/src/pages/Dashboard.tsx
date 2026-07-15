@@ -9,10 +9,10 @@ import { ScreenerTargetsStack } from "@/components/ScreenerTargetsStack";
 import { DetailPanel } from "@/components/DetailPanel";
 import { ScanClockPanel } from "@/components/ScanClockPanel";
 import { StatusBar } from "@/components/StatusBar";
-const SuggestionsSlider = lazy(() => import("@/components/SuggestionsSlider").then(m => ({ default: m.SuggestionsSlider })));
-const PaperTradingPanel = lazy(() => import("@/components/PaperTradingPanel").then(m => ({ default: m.PaperTradingPanel })));
-const ReportsLibrary = lazy(() => import("@/components/ReportsLibrary").then(m => ({ default: m.ReportsLibrary })));
-const SettingsDialog = lazy(() => import("@/components/SettingsDialog").then(m => ({ default: m.SettingsDialog })));
+import { SuggestionsSlider } from "@/components/SuggestionsSlider";
+import { PaperTradingPanel } from "@/components/PaperTradingPanel";
+import { ReportsLibrary } from "@/components/ReportsLibrary";
+import { SettingsDialog } from "@/components/SettingsDialog";
 
 import { useWebSocket, subscribeWsSymbols } from "@/hooks/useWebSocket";
 import { useStore } from "@/store/useStore";
@@ -211,14 +211,14 @@ export default function Dashboard() {
 
   useEffect(() => {
     if ((!selectedSymbol || !isSelectedValid) && watchlistItems.length > 0) {
-      startTransition(() => setSelectedSymbol(watchlistItems[0]!.symbol));
+      setSelectedSymbol(watchlistItems[0]!.symbol);
     } else if (!isSelectedValid && watchlistItems.length === 0 && selectedSymbol !== "NIFTY 50") {
-      startTransition(() => setSelectedSymbol("NIFTY 50"));
+      setSelectedSymbol("NIFTY 50");
     }
   }, [watchlistItems, selectedSymbol, isSelectedValid, setSelectedSymbol]);
 
   useEffect(() => {
-    if (wsConnected && (watchlistSymbols.length > 0 || activeSymbols.size > 0)) {
+    if (watchlistSymbols.length > 0 || activeSymbols.size > 0) {
       const combined = Array.from(new Set([...watchlistSymbols, ...Array.from(activeSymbols)]));
       subscribeWsSymbols(combined);
     }
@@ -266,7 +266,7 @@ export default function Dashboard() {
   // Global Keyboard Navigation
   useHotkeys("p", (e) => {
     e.preventDefault();
-    startTransition(() => setIsSuggestionsOpen(prev => !prev));
+    setIsSuggestionsOpen(prev => !prev);
   }, { preventDefault: true });
 
   const commandPaletteOpen = useStore((s) => s.commandPaletteOpen);
@@ -289,7 +289,7 @@ export default function Dashboard() {
     }
     
     const newSymbol = watchlistItems[newIndex]?.symbol;
-    if (newSymbol) startTransition(() => setSelectedSymbol(newSymbol));
+    if (newSymbol) setSelectedSymbol(newSymbol);
   }, [watchlistItems, activeSymbol, setSelectedSymbol, commandPaletteOpen]);
 
   // Token Expiry Alert Logic
@@ -318,11 +318,11 @@ export default function Dashboard() {
     }
   }, [status?.upstoxAuthenticated, showIsland]);
 
-  const authorizeUpstox = async () => {
+  const authorizeUpstox = async (type: "trading" | "data" = "trading") => {
     setAuthorizing(true);
     setAuthError(null);
     try {
-      const data = await api.authUrl();
+      const data = await api.authUrl(type);
       if (data.alreadyAuthenticated) {
         setAuthorizing(false);
         showIsland({
@@ -370,12 +370,12 @@ export default function Dashboard() {
                   ? (sessionQuery.data.scanProgress.current / Math.max(sessionQuery.data.scanProgress.total, 1)) * 100 
                   : undefined
             }
-            onOpenSuggestions={() => startTransition(() => setIsSuggestionsOpen(true))}
-            onOpenPaperTrading={() => startTransition(() => setIsPaperTradingOpen(true))}
-            onOpenReports={() => startTransition(() => setIsReportsOpen(true))}
-            onOpenSettings={() => startTransition(() => setIsSettingsOpen(true))}
+            onOpenSuggestions={() => setIsSuggestionsOpen(true)}
+            onOpenPaperTrading={() => setIsPaperTradingOpen(true)}
+            onOpenReports={() => setIsReportsOpen(true)}
+            onOpenSettings={() => setIsSettingsOpen(true)}
             onOpenEventFeed={() => useStore.getState().setEventFeedOpen(true)}
-            onSelectSymbol={(s: string) => startTransition(() => setSelectedSymbol(s))}
+            onSelectSymbol={(s: string) => setSelectedSymbol(s)}
           />
         </motion.div>
 
@@ -428,7 +428,7 @@ export default function Dashboard() {
                         <PriceChart 
                           symbol={activeSymbol} 
                           chartMode={chartMode} 
-                          onChartModeChange={(m) => startTransition(() => setChartMode(m))} 
+                          onChartModeChange={(m) => setChartMode(m)} 
                           isMarketOpen={session?.isMarketOpen} 
                           suggestion={suggestions.find(s => s.symbol === activeSymbol)} 
                           position={positions.find((p: import("@/types/api").PaperPosition) => p.symbol === activeSymbol && p.status === "OPEN")}
@@ -473,7 +473,7 @@ export default function Dashboard() {
                           selectedSymbol={activeSymbol} 
                           sparklines={sparklinesQuery.data}
                           watchlistMetadata={watchlistMetadata}
-                          onSelect={(s) => startTransition(() => setSelectedSymbol(s))} 
+                          onSelect={(s) => setSelectedSymbol(s)} 
                         />
                       ) : (
                         <ScreenerTargetsStack 
@@ -498,7 +498,7 @@ export default function Dashboard() {
                           }
                           selectedSymbol={activeSymbol} 
                           sparklines={sparklinesQuery.data} 
-                          onSelect={(s) => startTransition(() => setSelectedSymbol(s))} 
+                          onSelect={(s) => setSelectedSymbol(s)} 
                         />
                       )}
                     </div>
@@ -555,7 +555,7 @@ export default function Dashboard() {
                     <PriceChart 
                       symbol={activeSymbol} 
                       chartMode={chartMode} 
-                      onChartModeChange={(m) => startTransition(() => setChartMode(m))} 
+                      onChartModeChange={(m) => setChartMode(m)} 
                       isMarketOpen={session?.isMarketOpen} 
                       suggestion={suggestions.find(s => s.symbol === activeSymbol)} 
                       position={positions.find((p: import("@/types/api").PaperPosition) => p.symbol === activeSymbol && p.status === "OPEN")}
@@ -588,7 +588,7 @@ export default function Dashboard() {
                         </button>
                       </div>
                     }
-                    items={watchlistItems} monitored={monitoring?.monitoredStocks} suggestions={suggestions} selectedSymbol={activeSymbol} sparklines={sparklinesQuery.data} watchlistMetadata={watchlistMetadata} onSelect={(s) => startTransition(() => setSelectedSymbol(s))} 
+                    items={watchlistItems} monitored={monitoring?.monitoredStocks} suggestions={suggestions} selectedSymbol={activeSymbol} sparklines={sparklinesQuery.data} watchlistMetadata={watchlistMetadata} onSelect={(s) => setSelectedSymbol(s)} 
                   />
                 ) : (
                   <ScreenerTargetsStack 
@@ -611,7 +611,7 @@ export default function Dashboard() {
                         </button>
                       </div>
                     }
-                    selectedSymbol={activeSymbol} sparklines={sparklinesQuery.data} onSelect={(s) => startTransition(() => setSelectedSymbol(s))} 
+                    selectedSymbol={activeSymbol} sparklines={sparklinesQuery.data} onSelect={(s) => setSelectedSymbol(s)} 
                   />
                 )}
               </div>
@@ -630,18 +630,10 @@ export default function Dashboard() {
         />
       </div>
       
-      <Suspense fallback={null}>
-        <SuggestionsSlider isOpen={isSuggestionsOpen} onClose={() => startTransition(() => setIsSuggestionsOpen(false))} onSelectSymbol={(s) => startTransition(() => setSelectedSymbol(s))} activeSuggestions={suggestions} />
-      </Suspense>
-      <Suspense fallback={null}>
-        <PaperTradingPanel isOpen={isPaperTradingOpen} onClose={() => startTransition(() => setIsPaperTradingOpen(false))} />
-      </Suspense>
-      <Suspense fallback={null}>
-        <ReportsLibrary isOpen={isReportsOpen} onClose={() => startTransition(() => setIsReportsOpen(false))} />
-      </Suspense>
-      <Suspense fallback={null}>
-        <SettingsDialog isOpen={isSettingsOpen} onClose={() => startTransition(() => setIsSettingsOpen(false))} />
-      </Suspense>
+      <SuggestionsSlider isOpen={isSuggestionsOpen} onClose={() => setIsSuggestionsOpen(false)} onSelectSymbol={(s) => setSelectedSymbol(s)} activeSuggestions={suggestions} />
+      <PaperTradingPanel isOpen={isPaperTradingOpen} onClose={() => setIsPaperTradingOpen(false)} />
+      <ReportsLibrary isOpen={isReportsOpen} onClose={() => setIsReportsOpen(false)} />
+      <SettingsDialog isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
     </div>
     );
   }

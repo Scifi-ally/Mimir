@@ -8,17 +8,17 @@ import { ScrollArea } from "@/components/mimir/scroll-area";
 import type { StockRow } from "@/lib/watchlist";
 import { buildStockRows } from "@/lib/watchlist";
 import { useStore } from "@/store/useStore";
+import { marketDataStore } from "@/providers/MarketDataProvider";
 import { WatchlistCard } from "@/components/WatchlistCard";
 import { LivePrice } from "@/components/atoms/LivePrice";
 import { LiveChangePct } from "@/components/atoms/LiveChangePct";
-import { Sparkline } from "@/components/Sparkline";
 import type { WatchlistItem, MonitoredStock, Suggestion } from "@/types/api";
 
 interface WatchlistStackProps {
   items: WatchlistItem[];
   monitored: MonitoredStock[] | undefined;
   suggestions: Suggestion[];
-  selectedSymbol: string;
+  selectedSymbol: string | null;
   sparklines?: Record<string, number[]>;
   onSelect: (symbol: string) => void;
   headerLeft?: React.ReactNode;
@@ -30,25 +30,12 @@ interface WatchlistStackProps {
 }
 
 export const WatchlistStack = memo(function WatchlistStack({ items, monitored, suggestions, selectedSymbol, sparklines, onSelect, headerLeft, watchlistMetadata }: WatchlistStackProps) {
+  const safeOnSelect = onSelect || (() => {});
   const watchlistCounts = useStore((s) => s.watchlistCounts);
-  
-  // Separate sparklines-independent rows calculation
-  const baseRows = useMemo(
-    () => buildStockRows(items, monitored ?? [], suggestions, {}, undefined),
-    [items, monitored, suggestions]
+  const rows = useMemo(
+    () => buildStockRows(items, monitored ?? [], suggestions, {}, sparklines),
+    [items, monitored, suggestions, sparklines]
   );
-
-  // Only merge sparklines data if available, without recalculating entire rows
-  const rows = useMemo(() => {
-    if (!sparklines) return baseRows;
-    return baseRows.map(row => {
-      const sparkline = sparklines[row.symbol];
-      if (sparkline) {
-        return { ...row, sparkline };
-      }
-      return row;
-    });
-  }, [baseRows, sparklines]);
 
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [searchText] = useState("");
@@ -143,7 +130,7 @@ export const WatchlistStack = memo(function WatchlistStack({ items, monitored, s
     }
 
     if (newFiltered.length > 0) {
-      onSelect(newFiltered[0].symbol);
+      safeOnSelect(newFiltered[0].symbol);
     }
   };
 
@@ -340,8 +327,7 @@ export const WatchlistStack = memo(function WatchlistStack({ items, monitored, s
                           key={row.symbol}
                           row={row as unknown as React.ComponentProps<typeof WatchlistCard>["row"]}
                           selected={selectedSymbol === row.symbol}
-                          onSelect={onSelect}
-                          sparkline={sparklines?.[row.symbol]}
+                          onSelect={safeOnSelect}
                         />
                       ))}
                     </div>
@@ -372,7 +358,7 @@ export const WatchlistStack = memo(function WatchlistStack({ items, monitored, s
                   >
                     <button
                       id={`watchlist-item-mobile-${row.symbol}`}
-                      onClick={() => onSelect(row.symbol)}
+                      onClick={() => safeOnSelect(row.symbol)}
                       className={cn(
                         "flex items-center justify-between rounded-xl px-4 py-3 w-full h-full text-left transition-all relative overflow-hidden group border will-change-transform",
                         selected
@@ -404,11 +390,6 @@ export const WatchlistStack = memo(function WatchlistStack({ items, monitored, s
                         />
                       </div>
 
-                      {sparklines?.[row.symbol] && (
-                        <div className="absolute bottom-0 left-0 right-0 h-4 opacity-20 pointer-events-none z-0">
-                          <Sparkline data={sparklines[row.symbol]} color={selected ? "currentColor" : undefined} />
-                        </div>
-                      )}
                     </button>
                   </div>
                 );
