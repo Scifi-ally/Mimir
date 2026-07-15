@@ -96,4 +96,58 @@ if (!(Test-Path $PgsqlDir)) {
     Write-Host "PostgreSQL portable already exists."
 }
 
-Write-Host "Setup complete! You can now use bot.bat to start the bot on any laptop."
+# --- Redis Portable Setup ---
+$RedisDir = Join-Path $PortableDir "redis"
+if (!(Test-Path $RedisDir)) {
+    Write-Host "Downloading Redis 5.0.14 Portable for Windows..."
+    $RedisZip = Join-Path $PortableDir "redis.zip"
+    # Using tporadowski's Redis port for Windows
+    curl.exe -fL "https://github.com/tporadowski/redis/releases/download/v5.0.14.1/Redis-x64-5.0.14.1.zip" -o $RedisZip
+    if (!(Test-Path $RedisZip) -or (Get-Item $RedisZip).Length -eq 0) {
+        Write-Host "Error: Download failed, Redis zip is empty or missing." -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "Extracting Redis..."
+    New-Item -ItemType Directory -Path $RedisDir | Out-Null
+    Expand-Archive -Path $RedisZip -DestinationPath $RedisDir -Force
+    Remove-Item -Path $RedisZip -Force
+    Write-Host "Redis portable ready."
+} else {
+    Write-Host "Redis portable already exists."
+}
+
+# --- ENV Initialization ---
+Write-Host "Checking .env files..."
+$EnvFile = Join-Path $ProjectRoot ".env"
+$EnvLocalFile = Join-Path $ProjectRoot ".env.local"
+$EnvExampleFile = Join-Path $ProjectRoot ".env.example"
+
+if (!(Test-Path $EnvExampleFile)) {
+    Write-Host "Warning: .env.example not found. Creating a basic .env file..."
+    "UPSTOXBOT_ADMIN_TOKEN=your_secure_token_here" | Out-File -FilePath $EnvFile -Encoding ASCII
+} else {
+    if (!(Test-Path $EnvFile)) {
+        Write-Host "Creating .env from .env.example..."
+        Copy-Item -Path $EnvExampleFile -Destination $EnvFile
+    }
+    if (!(Test-Path $EnvLocalFile)) {
+        Write-Host "Creating .env.local from .env.example..."
+        Copy-Item -Path $EnvExampleFile -Destination $EnvLocalFile
+    }
+}
+
+# --- NPM Install ---
+Write-Host "Installing NPM dependencies for the project..."
+$NpmExe = Join-Path $NodeDir "npm.cmd"
+if (!(Test-Path $NpmExe)) {
+    # Fallback to global npm if portable npm isn't found (though it should be there)
+    $NpmExe = "npm"
+}
+Write-Host "Running npm install in $ProjectRoot..."
+Set-Location -Path $ProjectRoot
+& $NpmExe install
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Warning: npm install encountered issues. You might need to run it manually." -ForegroundColor Yellow
+}
+
+Write-Host "Setup complete! You can now use bot.bat (or setup.bat) to start the bot on any laptop."

@@ -115,7 +115,25 @@ Mimir is designed to execute locally. If deployment requires exposure to the pub
 
 ---
 
-## Getting Started
+## Hardware Requirements
+
+* **Minimum Requirements**: 4GB RAM, Dual-Core CPU (Intel i3 / AMD Ryzen 3 or equivalent), Windows 10/11 (for the portable setup).
+* **AI Service (Optional but Recommended)**: The AI service runs heavily on the CPU if a dedicated GPU is not present. For laptops with low hardware specs, startup might take 1-2 minutes longer as models load into memory. The system is configured to gracefully run offline without pinging HuggingFace (`HF_HUB_OFFLINE=1`), making it perfectly fine for standard laptops.
+
+---
+
+## 🚀 Portable Windows Setup (1-Click Quickstart)
+
+If you are on Windows, you **do not** need to install Node.js, Python, PostgreSQL, or Redis manually! You can use our zero-dependency portable installer:
+
+1. Clone or download this repository.
+2. Double-click the **`setup.bat`** file in the root folder.
+3. The script will automatically download and configure all necessary dependencies (`.portable` folder), initialize the database, and install npm packages.
+4. Once finished, run **`bot.bat start`** to boot the entire system!
+
+---
+
+## Developer Manual Setup
 
 ### Prerequisites
 * **Node.js** (v22.0 or higher)
