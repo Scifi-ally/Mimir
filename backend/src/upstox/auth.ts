@@ -35,8 +35,8 @@ export async function initAccessTokenFromDb(): Promise<void> {
       }, type);
     }
 
-    if (!getAccessToken("trading")) await clearPersistedAccessToken("trading");
-    if (!getAccessToken("data")) await clearPersistedAccessToken("data");
+    if (!isDirectlyAuthenticated("trading")) await clearPersistedAccessToken("trading");
+    if (!isDirectlyAuthenticated("data")) await clearPersistedAccessToken("data");
   } catch (err) {
     logger.warn({ err }, "Failed to load persisted Upstox tokens");
   }
@@ -77,40 +77,53 @@ async function clearPersistedAccessToken(type: "trading" | "data" = "trading"): 
   }
 }
 
-export function getAccessToken(type: "trading" | "data" = "trading"): string | null {
+function getDirectToken(type: "trading" | "data"): UpstoxToken | null {
   const token = type === "trading" ? _tradingToken : _dataToken;
-  
-  if (!token) {
-    // Fallback: if data token is requested but not available, use trading token
-    if (type === "data" && _tradingToken) {
-       // Validate trading token before returning
-       return getAccessToken("trading");
-    }
-    return null;
-  }
-  
+  if (!token) return null;
   const now = Date.now();
   const expiresAt = token.obtained_at + token.expires_in * 1000;
-  
   if (now >= expiresAt - 60000) {
     logger.warn(`Upstox ${type} access token expired or about to expire`);
     if (type === "trading") _tradingToken = null;
     else _dataToken = null;
-    
-    if (type === "data" && _tradingToken) {
-       return getAccessToken("trading");
-    }
     return null;
   }
-  return token.access_token;
+  return token;
 }
 
-export function isAuthenticated(): boolean {
-  return getAccessToken("trading") !== null;
+export function isDirectlyAuthenticated(type: "trading" | "data" = "trading"): boolean {
+  return getDirectToken(type) !== null;
+}
+
+export function getDirectTokenExpiryInfo(type: "trading" | "data" = "trading"): number | null {
+  const token = getDirectToken(type);
+  if (!token) return null;
+  return token.obtained_at + token.expires_in * 1000;
+}
+
+export function getAccessToken(type: "trading" | "data" = "trading"): string | null {
+  const direct = getDirectToken(type);
+  if (direct) return direct.access_token;
+
+  // Seamless two-way fallback: if requested token is not available/expired, check the other key
+  const fallbackType = type === "trading" ? "data" : "trading";
+  const fallback = getDirectToken(fallbackType);
+  if (fallback) {
+    return fallback.access_token;
+  }
+  return null;
+}
+
+export function isAuthenticated(type?: "trading" | "data"): boolean {
+  if (type) {
+    return getAccessToken(type) !== null;
+  }
+  // If no type specified, true if either token is valid
+  return getAccessToken("trading") !== null || getAccessToken("data") !== null;
 }
 
 export function getTokenExpiryInfo(type: "trading" | "data" = "trading"): number | null {
-  const token = type === "trading" ? _tradingToken : _dataToken;
+  const token = getDirectToken(type) ?? getDirectToken(type === "trading" ? "data" : "trading");
   if (!token) return null;
   return token.obtained_at + token.expires_in * 1000;
 }
@@ -125,8 +138,8 @@ export async function invalidateAccessToken(reason?: string, type: "trading" | "
 export function getAuthorizationUrl(state: string, type: "trading" | "data" = "trading"): string {
   const cfg = getConfig();
   
-  // Use data keys if data type requested and they exist, otherwise fallback to trading keys
-  const useDataKeys = type === "data" && cfg.upstoxDataApiKey && cfg.upstoxDataApiSecret;
+  // Use data keys if dual keys are enabled, data type requested, and they exist
+  const useDataKeys = Boolean(cfg.useDualApiKeys && type === "data" && cfg.upstoxDataApiKey && cfg.upstoxDataApiSecret);
   const client_id = useDataKeys ? cfg.upstoxDataApiKey : cfg.upstoxApiKey;
   
   const params = new URLSearchParams({
@@ -141,7 +154,7 @@ export function getAuthorizationUrl(state: string, type: "trading" | "data" = "t
 export async function exchangeCodeForToken(code: string, type: "trading" | "data" = "trading"): Promise<void> {
   const cfg = getConfig();
   
-  const useDataKeys = type === "data" && cfg.upstoxDataApiKey && cfg.upstoxDataApiSecret;
+  const useDataKeys = Boolean(cfg.useDualApiKeys && type === "data" && cfg.upstoxDataApiKey && cfg.upstoxDataApiSecret);
   const client_id = useDataKeys ? cfg.upstoxDataApiKey : cfg.upstoxApiKey;
   const client_secret = useDataKeys ? cfg.upstoxDataApiSecret : cfg.upstoxApiSecret;
 

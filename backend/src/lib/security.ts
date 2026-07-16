@@ -26,13 +26,18 @@ function normalizeIp(value: string | undefined): string {
 }
 
 function isPrivateOrLocalIp(ip: string): boolean {
+  // Loopback and directly-attached LAN ranges only. Deliberately EXCLUDES
+  // 172.16/12: that's the Docker bridge range — a dockerized reverse proxy
+  // makes ALL internet traffic arrive from a 172.x gateway address, which
+  // would silently grant remote clients local-admin access. Docker/remote
+  // deployments must authenticate (UPSTOXBOT_ADMIN_TOKEN) or opt in via
+  // ALLOW_REMOTE_ADMIN=true.
   return (
     ip === "::1" ||
     ip === "127.0.0.1" ||
     ip.startsWith("127.") ||
     /^10\./.test(ip) ||
-    /^192\.168\./.test(ip) ||
-    /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(ip)
+    /^192\.168\./.test(ip)
   );
 }
 
@@ -49,7 +54,7 @@ export function isLocalRequest(req: Request): boolean {
     return true;
   }
   // If request arrived over a tunnel or reverse proxy with an allowed Origin/Host, allow it
-  const origin = req.headers.origin || (req.headers.host ? `http://${req.headers.host}` : undefined);
+  const origin = req.headers?.origin || (req.headers?.host ? `http://${req.headers.host}` : undefined);
   if (origin && isAllowedOrigin(origin)) {
     return true;
   }

@@ -69,7 +69,7 @@ export default function Dashboard() {
   const scanLogs = useStore((s) => s.scanLogs);
   const activeSymbols = useMemo(() => {
     const symbols = new Set<string>();
-    (suggestionsQuery.data ?? []).filter(s => s.status === "ACTIVE").forEach(s => symbols.add(s.symbol));
+    (suggestionsQuery.data ?? []).filter(s => s.status === "ACTIVE" || s.status === "PENDING").forEach(s => symbols.add(s.symbol));
     (monitoringQuery.data?.monitoredStocks ?? []).forEach(s => symbols.add(s.symbol));
     return symbols;
   }, [suggestionsQuery.data, monitoringQuery.data]);
@@ -94,7 +94,7 @@ export default function Dashboard() {
     }
 
     // Ensure any active trade suggestions or monitored stocks appear directly inside Watchlist
-    (suggestionsQuery.data ?? []).filter(s => s.status === "ACTIVE").forEach(s => {
+    (suggestionsQuery.data ?? []).filter(s => s.status === "ACTIVE" || s.status === "PENDING").forEach(s => {
       if (!existingSymbols.has(s.symbol)) {
         items.unshift({
           symbol: s.symbol,
@@ -188,10 +188,8 @@ export default function Dashboard() {
   const positions = positionsQuery.data ?? [];
   const regime = regimeQuery.data;
   const monitoring = monitoringQuery.data;
-  const indianContext = indianContextQuery.data ?? {
-    fiiDii: { fiiNetInr: -1420.5, diiNetInr: 2180.7, date: "2026-07-14" },
-    niftyOptionChain: { pcr: 0.94, maxPain: 24500, topCallStrike: 25000, topPutStrike: 24000 }
-  };
+  // Null fields render "N/A" — never show fabricated macro numbers as real
+  const indianContext = indianContextQuery.data ?? { fiiDii: null, niftyOptionChain: null };
 
   const isIndex = ["NIFTY 50", "BANKNIFTY", "FINNIFTY", "INDIA VIX", "SENSEX"].includes(selectedSymbol);
   const isSelectedValid = isIndex || watchlistItems.some(i => i.symbol === selectedSymbol) || activeSymbols.has(selectedSymbol);
@@ -361,7 +359,7 @@ export default function Dashboard() {
             onAuthorize={authorizeUpstox}
             authorizing={authorizing}
             activeSignals={activeSymbols.size}
-            activeSignalCount={(suggestionsQuery.data ?? []).filter(s => s.status === "ACTIVE").length}
+            activeSignalCount={(suggestionsQuery.data ?? []).filter(s => s.status === "ACTIVE" || s.status === "PENDING").length}
             scanning={scanning}
             scanProgress={
               scanState.total > 0 

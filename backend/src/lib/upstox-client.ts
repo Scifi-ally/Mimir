@@ -579,7 +579,13 @@ export function createUpstoxClient(options?: {
             return v2Resp.data?.data?.candles ?? [];
           };
 
-          let preferV3 = interval === "240minute" || interval === "week";
+          const isV3OnlyInterval =
+            interval === "5minute" ||
+            interval === "15minute" ||
+            interval === "60minute" ||
+            interval === "240minute";
+
+          let preferV3 = isV3OnlyInterval || interval === "week";
           
           if (!preferV3 && !isMarketOpen()) {
             v3RoundRobin = !v3RoundRobin;
@@ -593,26 +599,26 @@ export function createUpstoxClient(options?: {
             candles = preferV3 ? await fetchV3() : await fetchV2();
           } catch (primaryErr) {
             lastError = primaryErr;
+            const status = (primaryErr as AxiosError).response?.status;
+            const data = (primaryErr as AxiosError).response?.data;
             logger.warn(
-              { err: primaryErr, instrumentKey, interval, fromDate, toDate, preferV3 },
-              "Primary candle endpoint failed; trying fallback endpoint",
+              { err: primaryErr, status, data, instrumentKey, interval, fromDate, toDate, preferV3 },
+              "Primary candle endpoint failed; trying fallback endpoint if compatible",
             );
           }
 
-          // Only try the fallback endpoint if the primary endpoint actually failed.
-          // Zero candles from a successful response is legitimate (holiday, new listing,
-          // illiquid instrument) and should not trigger a redundant API call.
-          if (candles.length === 0 && lastError) {
+          // Only try the fallback endpoint if the primary endpoint actually failed and fallback supports this interval.
+          if (candles.length === 0 && lastError && !isV3OnlyInterval) {
             try {
-              // IMPORTANT: If we are falling back after a failure, we MUST go back 
-              // in the rate limit queue to respect the global limit!
               await apiRateLimiter.wait(priority); 
               candles = preferV3 ? await fetchV2() : await fetchV3();
               lastError = null; // Clear primary error if fallback succeeded
             } catch (fallbackErr) {
               lastError = fallbackErr;
+              const status = (fallbackErr as AxiosError).response?.status;
+              const data = (fallbackErr as AxiosError).response?.data;
               logger.warn(
-                { err: fallbackErr, instrumentKey, interval, fromDate, toDate },
+                { err: fallbackErr, status, data, instrumentKey, interval, fromDate, toDate },
                 "Fallback candle endpoint failed",
               );
             }

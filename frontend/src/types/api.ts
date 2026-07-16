@@ -8,7 +8,12 @@ export interface SystemStatus {
   dbConnected: boolean;
   schedulerRunning: boolean;
   upstoxAuthenticated: boolean;
+  upstoxFeedAuthenticated?: boolean;
+  upstoxDataAuthenticated?: boolean;
   upstoxConfigured: boolean;
+  upstoxFeedConfigured?: boolean;
+  upstoxDataConfigured?: boolean;
+  useDualApiKeys?: boolean;
   isMarketOpen: boolean;
   signalsGenerated: number;
   aiMode: string;
@@ -19,6 +24,8 @@ export interface SystemStatus {
   avgRr: number | null;
   opportunityQualityGrade: string;
   upstoxTokenExpiry?: number | null;
+  upstoxFeedTokenExpiry?: number | null;
+  upstoxDataTokenExpiry?: number | null;
 }
 
 export interface WatchlistItem {
@@ -259,10 +266,12 @@ export interface SystemConfig {
   weeklyLossLimitPct: number;
   rollingDrawdownPct: number;
   paperTradingEnabled: boolean;
+  tradingMode?: "PAPER" | "LIVE";
   upstoxApiKey?: string;
   upstoxApiSecret?: string;
   upstoxDataApiKey?: string;
   upstoxDataApiSecret?: string;
+  useDualApiKeys?: boolean;
   upstoxRedirectUri?: string;
   stopLossMode: "FIXED" | "TRAILING" | "BREAKEVEN";
   maxDeployedCapitalPct?: number;

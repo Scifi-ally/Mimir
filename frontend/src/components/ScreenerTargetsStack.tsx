@@ -8,7 +8,6 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { X, Target, ChevronRight, ArrowLeft, Plus, Trash2, Play, Activity, Clock, Sparkles, ListTree, Settings2, Loader2 } from "lucide-react";
 import { LivePrice } from "@/components/atoms/LivePrice";
 import { LiveChangePct } from "@/components/atoms/LiveChangePct";
-import { Sparkline } from "@/components/Sparkline";
 
 interface ScreenerTargetsStackProps {
   selectedSymbol: string;
@@ -98,7 +97,7 @@ function splitBadges(notes?: string | null) {
   return notes.split(",").map((item) => item.trim()).filter(Boolean).slice(0, 3);
 }
 
-export function ScreenerTargetsStack({ selectedSymbol, sparklines, onSelect, headerLeft }: ScreenerTargetsStackProps) {
+export function ScreenerTargetsStack({ selectedSymbol, onSelect, headerLeft }: ScreenerTargetsStackProps) {
   const queryClient = useQueryClient();
   const showIsland = useStore((s) => s.showIsland);
   const setCommandPaletteOpen = useStore((s) => s.setCommandPaletteOpen);
@@ -304,11 +303,6 @@ export function ScreenerTargetsStack({ selectedSymbol, sparklines, onSelect, hea
           </button>
         </div>
 
-        {sparklines?.[row.symbol] && (
-          <div className="absolute bottom-0 left-0 right-0 h-6 opacity-30 pointer-events-none z-0">
-            <Sparkline data={sparklines[row.symbol]} color={selected ? "currentColor" : undefined} />
-          </div>
-        )}
       </motion.div>
     );
   };

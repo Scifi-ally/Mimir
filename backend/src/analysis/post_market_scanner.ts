@@ -18,7 +18,6 @@ import { overnightWatchlistTable } from "../../db/src";
 import { eq } from "drizzle-orm";
 import { broadcast } from "../ws/websocket_server";
 import { createServerEvent } from "../ws/events";
-import { getISTDateStr } from "../lib/ist-time";
 import { getTargetTradingSessionDate } from "../market_data/market_state";
 import { getEffectiveUniverse } from "./stock_scanner";
 import { analyzeMultiTimeframe } from "./multi_timeframe";
@@ -391,22 +390,23 @@ async function saveWatchlistCandidates(
       .where(eq(overnightWatchlistTable.forDate, forDate));
 
     // Insert new candidates
-    const rows = candidates.map((c) => ({
-      forDate,
-      symbol: c.symbol,
-      name: c.name,
-      category: c.category,
-      condition: c.reasoning,
-      priority: Math.round(c.probability),
-      direction: c.direction,
-      metadata: JSON.stringify({
-        setupType: c.setupType,
-        confluenceScore: c.confluenceScore,
-        dailyTrend: c.dailyTrend,
-        hourlyTrend: c.hourlyTrend,
-        probability: c.probability,
-      }),
-    }));
+    const rows = candidates.map((c) => {
+      let condition = c.reasoning.replace(/₹/g, 'Rs.').replace(/…/g, '...');
+      condition = condition.replace(/[^\x00-\x7F]/g, '');
+      const maxLength = 250;
+      if (condition.length > maxLength && !(condition.startsWith('{') && condition.endsWith('}'))) {
+        condition = `${condition.slice(0, maxLength - 3).trimEnd()}...`;
+      }
+      
+      return {
+        forDate,
+        symbol: c.symbol,
+        name: c.name ? c.name.substring(0, 95) : "",
+        category: c.category ? c.category.substring(0, 29) : "",
+        condition,
+        priority: Math.round(c.probability),
+      };
+    });
 
     await db.insert(overnightWatchlistTable).values(rows);
 

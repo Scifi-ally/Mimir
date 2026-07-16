@@ -93,7 +93,7 @@ export class ScanWorkerPool {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async enqueue<T>(payload: any): Promise<T> {
     if (process.env.NODE_ENV === "test" || process.env.VITEST) {
-      const { dailyCandles } = payload;
+      const { dailyCandles, minRR } = payload;
       const tech = await import("../analysis/technical");
       const mr = await import("../analysis/mean_reversion_scanner");
       const rg = await import("../analysis/range_scanner");
@@ -114,7 +114,7 @@ export class ScanWorkerPool {
         mr.detectMeanReversionShort(dailyCandles, snap),
         rg.detectRangeLong(dailyCandles, snap),
         rg.detectRangeShort(dailyCandles, snap),
-      ].filter((c): c is NonNullable<typeof c> => c !== null);
+      ].filter((c): c is NonNullable<typeof c> => c !== null && (minRR == null || c.riskReward >= minRR));
       return { snap, allCandidates } as unknown as T;
     }
     return new Promise<T>((resolve, reject) => {

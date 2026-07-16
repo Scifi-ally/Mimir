@@ -46,7 +46,7 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
   const activeTf = chartMode === "forecast" ? PROJECTION_LOOKBACK : timeframe;
   const currentChartKey = `${symbol}-${activeTf.label}-${chartMode}`;
 
-  const { data: candleData, isLoading: isCandlesLoading, isError: isCandlesError, isFetching: isCandlesFetching } = useQuery<{ candles: Candle[] }>({
+  const { data: candleData, isLoading: isCandlesLoading, isError: isCandlesError } = useQuery<{ candles: Candle[] }>({
     queryKey: ['candles', symbol, activeTf.interval, activeTf.days],
     queryFn: () => api.candles(symbol, activeTf.interval, activeTf.days),
     enabled: Boolean(symbol),
@@ -87,7 +87,7 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
   
   // Only consider it 'loaded' for the current key if we are no longer fetching it.
   // This prevents the chart from fitting bounds to old stale data while new data is fetching.
-  const loadedChartKey = isCandlesFetching ? "" : currentChartKey;
+  // const loadedChartKey = isCandlesFetching ? "" : currentChartKey;
 
   // tick removed to avoid rerenders
 
@@ -152,6 +152,16 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
         shiftVisibleRangeOnNewBar: true,
         allowShiftVisibleRangeOnWhitespaceReplacement: true,
         minimumHeight: 0,
+        tickMarkFormatter: (time: number) => {
+          const date = new Date(time * 1000);
+          return date.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' });
+        },
+      },
+      localization: {
+        timeFormatter: (time: number) => {
+          const date = new Date(time * 1000);
+          return date.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' });
+        }
       },
       handleScale: {
         axisPressedMouseMove: {
@@ -251,9 +261,19 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
     });
     chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.7, bottom: 0 } });
 
+    let initialHeight = containerRef.current ? containerRef.current.clientHeight : 0;
     const resize = new ResizeObserver(([entry]) => {
       if (entry && chartRef.current) {
-        chartRef.current.applyOptions({ width: entry.contentRect.width, height: entry.contentRect.height });
+        const w = entry.contentRect.width;
+        const h = entry.contentRect.height;
+        if (w > 0 && h > 0) {
+          chartRef.current.applyOptions({ width: w, height: h });
+          if (initialHeight <= 20 && h > 20) {
+            initialHeight = h;
+            const timeScale = chartRef.current.timeScale();
+            timeScale.fitContent();
+          }
+        }
       }
     });
     resize.observe(containerRef.current);
@@ -301,22 +321,35 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
 
   // Handle dynamic theme changes without remounting the chart
   useEffect(() => {
+    const clrLine = getComputedStyle(document.documentElement)
+      .getPropertyValue("--primary")
+      .trim();
+    if (clrLine && emaRef.current) {
+      emaRef.current.applyOptions({ color: clrLine });
+      vwapRef.current?.applyOptions({ color: "#f59e0b" });
+      lowerRef.current?.applyOptions({ color: clrLine + " 0.25)" });
+      upper90Ref.current?.applyOptions({ color: clrLine + " 0.1)" });
+      lower10Ref.current?.applyOptions({ color: clrLine + " 0.1)" });
+      medianRef.current?.applyOptions({ color: clrLine + " 0.9)" });
+    }
+
     const handleThemeChange = () => {
-      if (!chartRef.current) return;
-      const isLight = document.documentElement.classList.contains("light");
-      const textColor = isLight ? "#1c1917" : "#f5f5f5";
-      const crosshairBg = isLight ? "#1c1917" : "#18181b";
-      
+      if (!chartRef.current || !emaRef.current) return;
+      const clr = getComputedStyle(document.documentElement)
+        .getPropertyValue("--foreground")
+        .trim();
+      const clrLine = getComputedStyle(document.documentElement)
+        .getPropertyValue("--primary")
+        .trim();
       chartRef.current.applyOptions({
-        layout: { textColor },
-        crosshair: {
-          vertLine: { labelBackgroundColor: crosshairBg },
-          horzLine: { labelBackgroundColor: crosshairBg },
-        }
+        layout: { textColor: clr || "#a3a3a3" },
+        grid: {
+          vertLines: { color: clr ? `${clr}08` : "rgba(255, 255, 255, 0.04)" },
+          horzLines: { color: clr ? `${clr}08` : "rgba(255, 255, 255, 0.04)" },
+        },
       });
-      
-      const clrLine = isLight ? "rgba(0, 0, 0," : "rgba(255, 255, 255,";
-      upperRef.current?.applyOptions({ color: clrLine + " 0.25)" });
+      emaRef.current.applyOptions({ color: clrLine });
+      vwapRef.current?.applyOptions({ color: "#f59e0b" });
       lowerRef.current?.applyOptions({ color: clrLine + " 0.25)" });
       upper90Ref.current?.applyOptions({ color: clrLine + " 0.1)" });
       lower10Ref.current?.applyOptions({ color: clrLine + " 0.1)" });
@@ -324,8 +357,26 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
     };
 
     window.addEventListener("themechange", handleThemeChange);
-    return () => window.removeEventListener("themechange", handleThemeChange);
+    return () => {
+      window.removeEventListener("themechange", handleThemeChange);
+    };
   }, []);
+
+  // 0. Immediate Cleanup on Symbol or Chart Mode Change
+  useEffect(() => {
+    if (lastFitKey.current !== currentChartKey) {
+      if (candleRef.current) candleRef.current.setData([]);
+      if (volumeRef.current) volumeRef.current.setData([]);
+      if (emaRef.current) emaRef.current.setData([]);
+      if (vwapRef.current) vwapRef.current.setData([]);
+      if (medianRef.current) medianRef.current.setData([]);
+      if (upperRef.current) upperRef.current.setData([]);
+      if (lowerRef.current) lowerRef.current.setData([]);
+      if (upper90Ref.current) upper90Ref.current.setData([]);
+      if (lower10Ref.current) lower10Ref.current.setData([]);
+      liveBarRef.current = null;
+    }
+  }, [currentChartKey]);
 
   // 1. Candles Effect - Only runs when actual historical data changes
   useEffect(() => {
@@ -367,56 +418,53 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
       value: c.close,
     }));
 
-    // Clear old forecast series when switching symbols to prevent price scale corruption across different price levels
-    if (lastFitKey.current !== currentChartKey) {
-      medianRef.current?.setData([]);
-      upperRef.current?.setData([]);
-      lowerRef.current?.setData([]);
-      upper90Ref.current?.setData([]);
-      lower10Ref.current?.setData([]);
-      liveBarRef.current = null;
+    if (showEma && chartMode === "actual") {
+      emaRef.current.setData(calcEma(closes, 20));
     }
+
+    if (showVwap && chartMode === "actual" && uniqueLiveCandles.length > 0) {
+      const vwapInput = liveBarRef.current && (liveBarRef.current.time as number) > lastTime
+        ? [...uniqueLiveCandles, {
+            ts: new Date((liveBarRef.current.time as number) * 1000).toISOString(),
+            open: liveBarRef.current.open,
+            high: liveBarRef.current.high,
+            low: liveBarRef.current.low,
+            close: liveBarRef.current.close,
+            volume: 1
+          }]
+        : uniqueLiveCandles;
+      vwapRef.current.setData(calcVwap(vwapInput as Candle[]));
+    }
+
+    const loadedChartKey = `${symbol}-${activeTf.label}-${chartMode}`;
 
     candleRef.current.setData(formatted);
-    emaRef.current.setData(calcEma(closes, 20));
+
+    const volumes = uniqueLiveCandles.map((c, i) => {
+      const prevClose = i > 0 ? uniqueLiveCandles[i - 1].close : c.open;
+      return {
+        time: c.parsedTime,
+        value: Number.isFinite(c.volume) ? c.volume : 0,
+        color:
+          c.close >= prevClose
+            ? "rgba(34, 197, 94, 0.3)"
+            : "rgba(239, 68, 68, 0.3)",
+      };
+    });
     
-    // For VWAP, we need Candle[] format, we can approximate the live bar for vwap calculation
-    const vwapCandles = [...uniqueLiveCandles];
     if (liveBarRef.current && (liveBarRef.current.time as number) > lastTime) {
-      vwapCandles.push({
-        ts: new Date((liveBarRef.current.time as number) * 1000).toISOString(),
-        open: liveBarRef.current.open,
-        high: liveBarRef.current.high,
-        low: liveBarRef.current.low,
-        close: liveBarRef.current.close,
-        volume: 0, // Fallback volume
-        parsedTime: liveBarRef.current.time
+      volumes.push({
+        time: liveBarRef.current.time,
+        value: 1,
+        color: liveBarRef.current.close >= liveBarRef.current.open ? "rgba(34, 197, 94, 0.3)" : "rgba(239, 68, 68, 0.3)",
       });
     }
-    vwapRef.current.setData(calcVwap(vwapCandles as Candle[]));
-    
-    const volSma = calcEma(vwapCandles.map(c => ({ time: 0 as Time, value: Number.isFinite(c.volume) ? c.volume : 0 })), 20);
-    volumeRef.current.setData(
-      vwapCandles.map((c, i) => {
-        const isBull = c.close >= c.open;
-        const safeVol = Number.isFinite(c.volume) ? c.volume : 0;
-        const avgVol = volSma[i]?.value || safeVol;
-        const ratio = safeVol / (avgVol || 1);
-        let opacity = 0.3;
-        if (ratio > 1.5) opacity = 0.7;
-        else if (ratio > 1.0) opacity = 0.5;
-        else if (ratio < 0.5) opacity = 0.1;
 
-        return {
-          time: c.parsedTime,
-          value: safeVol,
-          color: isBull ? `rgba(34,197,94,${opacity})` : `rgba(239,68,68,${opacity})`,
-        };
-      })
-    );
+    volumeRef.current.setData(volumes);
 
     // Clean initial chart zoom when switching symbols or timeframes
-    if (lastFitKey.current !== loadedChartKey && loadedChartKey === currentChartKey && formatted.length > 0) {
+    const containerReady = (containerRef.current?.clientHeight ?? 0) > 20;
+    if (lastFitKey.current !== loadedChartKey && loadedChartKey === currentChartKey && formatted.length > 0 && containerReady) {
       const timeScale = chartRef.current?.timeScale();
       if (timeScale) {
         const totalBars = formatted.length;
@@ -432,7 +480,7 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
       }
       lastFitKey.current = currentChartKey;
     }
-  }, [candles, currentChartKey, loadedChartKey]);
+  }, [candles, chartMode, showEma, showVwap, symbol, activeTf.label, currentChartKey]);
 
   // 2. Forecast & Projection Effect
   useEffect(() => {
@@ -584,16 +632,14 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
       const targetPrice = basePrice * (1 + (forecast.forecastReturnPct || 0) / 100);
       const fReturn = forecast.forecastReturnPct || 0;
       
-      if (isInRange(targetPrice)) {
         aiTargetLineRef.current = candleRef.current.createPriceLine({
           price: targetPrice,
-          color: fReturn > 0 ? 'rgba(34, 197, 94, 0.5)' : fReturn < 0 ? 'rgba(239, 68, 68, 0.5)' : 'rgba(163, 163, 163, 0.5)',
-          lineWidth: 1,
-          lineStyle: 2,
+          color: fReturn > 0 ? 'rgba(34, 197, 94, 0.8)' : fReturn < 0 ? 'rgba(239, 68, 68, 0.8)' : 'rgba(163, 163, 163, 0.8)',
+          lineWidth: 2,
+          lineStyle: 1, // Solid line to distinguish from dashed current price line
           axisLabelVisible: true,
           title: `AI TGT (${fReturn > 0 ? '+' : ''}${fReturn.toFixed(1)}%)`,
         });
-      }
     }
   }, [candles, suggestion, position, forecast, symbol, chartMode]);
 
@@ -639,17 +685,24 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
       const lastCandle = candles[candles.length - 1];
       if (!lastCandle || lastCandle.close <= 0) return;
 
-      // Ignore bad exchange ticks or spikes (>25% move in 1 tick) that distort chart scaling
-      if (tickLtp < lastCandle.close * 0.75 || tickLtp > lastCandle.close * 1.35) return;
+      // Ignore bad exchange ticks, spikes (>10% move in 1 tick), or ticks during symbol transition that distort chart scaling
+      if (Math.abs(tickLtp - lastCandle.close) / lastCandle.close > 0.10) return;
       prevLtp = tickLtp;
 
       const lastCandleSec = Math.floor(Date.parse(lastCandle.ts) / 1000);
       const nowSec = Math.floor(Date.now() / 1000);
       const intervalSec = activeTf.interval === "1minute" ? 60 : activeTf.interval === "15minute" ? 900 : activeTf.interval === "60minute" ? 3600 : 86400;
       
-      // If now is in a new bar period beyond lastCandle, advance the timestamp so we append rather than corrupt historical bars
       let targetTime = lastCandleSec;
-      if (nowSec - lastCandleSec >= intervalSec) {
+      if (activeTf.interval === "day") {
+        const lastDate = new Date(lastCandleSec * 1000).toDateString();
+        const nowDate = new Date().toDateString();
+        if (lastDate !== nowDate) {
+          const d = new Date();
+          d.setHours(0, 0, 0, 0);
+          targetTime = Math.floor(d.getTime() / 1000);
+        }
+      } else if (nowSec - lastCandleSec >= intervalSec) {
         targetTime = lastCandleSec + Math.floor((nowSec - lastCandleSec) / intervalSec) * intervalSec;
       }
       const time = targetTime as Time;

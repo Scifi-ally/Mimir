@@ -48,7 +48,7 @@ export function SuggestionsSlider({ isOpen, onClose, onSelectSymbol, activeSugge
 
 
   const historySuggestions = suggestionsData?.data || [];
-  const activeTrades = (activeSuggestions || []).filter(s => s.status === 'ACTIVE');
+  const activeTrades = (activeSuggestions || []).filter(s => s.status === 'ACTIVE' || s.status === 'PENDING');
   const expiredTrades = historySuggestions.filter((s: import("@/types/api").Suggestion) => s.status === 'EXPIRED');
   const completedTrades = historySuggestions.filter((s: import("@/types/api").Suggestion) => s.status !== 'ACTIVE' && s.status !== 'EXPIRED');
 
@@ -152,7 +152,8 @@ function SuggestionCard({ s, onSelectSymbol, onClose }: {
 }) {
   const isWin = s.status.includes('TARGET');
   const isLoss = s.status === 'STOP_HIT';
-  const isActive = s.status === 'ACTIVE';
+  const isPending = s.status === 'PENDING'; // signal generated, entry not yet touched
+  const isActive = s.status === 'ACTIVE' || isPending;
   
   const ltp = useSymbolDataSelector(isActive ? s.symbol : '', d => d.ltp);
   const currentPrice = isActive && ltp ? ltp : (s.currentPrice || s.outcomePrice);
@@ -249,7 +250,7 @@ function SuggestionCard({ s, onSelectSymbol, onClose }: {
         {/* Current Price / Outcome */}
         <div className="flex flex-col items-start sm:items-end">
           <span className="text-[10px] font-bold tracking-widest uppercase text-muted-foreground mb-1">
-            {isActive ? "Current" : "Outcome"}
+            {isPending ? "Awaiting Entry" : isActive ? "Current" : "Outcome"}
           </span>
           <span className="font-mono font-bold text-sm">
             {isActive ? (

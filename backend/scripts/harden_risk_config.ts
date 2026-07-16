@@ -29,7 +29,7 @@ async function run() {
 
     // 2. Clear out any existing suggestions that were generated under relaxed criteria
     const result = await db.update(suggestionsTable)
-      .set({ status: "REJECTED", aiReasoning: "[SYSTEM] Rejected due to stricter risk gates being enabled." })
+      .set({ status: "REJECTED", reasoning: "[SYSTEM] Rejected due to stricter risk gates being enabled." })
       .where(inArray(suggestionsTable.status, ["ACTIVE", "PENDING"]));
     
     logger.info(`Cleared active/pending suggestions from the database.`);

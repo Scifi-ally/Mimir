@@ -1,7 +1,6 @@
 import { memo } from "react";
 import { cn } from "@/lib/format";
 import type { StockRow } from "@/lib/watchlist";
-import { Sparkline } from "@/components/Sparkline";
 import { LivePrice } from "@/components/atoms/LivePrice";
 import { LiveChangePct } from "@/components/atoms/LiveChangePct";
 
@@ -9,16 +8,18 @@ interface WatchlistCardProps {
   row: StockRow;
   selected: boolean;
   onSelect: (symbol: string) => void;
-  sparkline?: number[];
 }
 
-export const WatchlistCard = memo(({ row, selected, onSelect, sparkline }: WatchlistCardProps) => {
+export const WatchlistCard = memo(({ row, selected, onSelect }: WatchlistCardProps) => {
   const score = row.compositeScore || 0;
-  let scoreBg = "bg-bear/15 text-bear";
-  if (score > 65) scoreBg = "bg-bull/15 text-bull";
-  else if (score >= 40) scoreBg = "bg-amber-500/15 text-amber-500";
+  let scoreColor = "text-bear";
+  if (score > 65) scoreColor = "text-bull";
+  else if (score >= 40) scoreColor = "text-amber-500";
 
   const topTag = row.signalTags && row.signalTags.length > 0 ? row.signalTags[0] : null;
+  // Strip scanner-internal prefixes like "REPEAT [100/100]:" — machine noise, not signal
+  const statusText = (row.indicatorStatus || row.condition || "Monitored")
+    .replace(/^(REPEAT|PERSISTENT)\s*\[\d+\/\d+\]:\s*/i, "");
 
   return (
     <button
@@ -53,7 +54,7 @@ export const WatchlistCard = memo(({ row, selected, onSelect, sparkline }: Watch
               {row.symbol}
             </span>
             {score > 0 && (
-              <span className={cn("px-1.5 py-0.5 rounded text-[10px] font-extrabold leading-none shrink-0", scoreBg)}>
+              <span className={cn("text-[10px] font-extrabold leading-none shrink-0 tabular-nums", scoreColor)}>
                 {Math.round(score)}
               </span>
             )}
@@ -64,8 +65,8 @@ export const WatchlistCard = memo(({ row, selected, onSelect, sparkline }: Watch
                 {topTag}
               </span>
             ) : (
-              <span className="truncate text-[11px] font-medium text-foreground/65 capitalize">
-                {row.indicatorStatus || row.condition || "Monitored"}
+              <span className="truncate text-[11px] font-medium text-foreground/50 capitalize">
+                {statusText}
               </span>
             )}
           </div>
@@ -87,19 +88,10 @@ export const WatchlistCard = memo(({ row, selected, onSelect, sparkline }: Watch
         </div>
       </div>
 
-      {sparkline && (
-        <div className="absolute bottom-0 left-0 right-0 h-4 opacity-25 pointer-events-none z-0">
-          <Sparkline 
-            data={sparkline} 
-            color={selected ? "hsl(var(--accent))" : "currentColor"}
-          />
-        </div>
-      )}
     </button>
   );
 }, (prev, next) => {
   return prev.row === next.row &&
-    prev.selected === next.selected &&
-    prev.sparkline === next.sparkline;
+    prev.selected === next.selected;
 });
 WatchlistCard.displayName = "WatchlistCard";

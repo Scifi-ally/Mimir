@@ -186,6 +186,12 @@ async function rankAiOpportunities(
     const results = Array.isArray(response.data.results) ? response.data.results : [];
     const scoreMap = new Map<string, AiRankResult>();
     for (const res of results) {
+       // Python side returns composite_score=50 with source="error" when
+       // inference fails — that is not a neutral opinion. Skip so the symbol
+       // ranks via deterministicFallback instead of a fake AI score.
+       // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       const ranking = res.technicalRanking ?? (res as any).kronos;
+       if (ranking?.source === "error" || res.chronos?.source === "error") continue;
        scoreMap.set(res.symbol, res);
     }
     
@@ -260,9 +266,11 @@ interface AiRankResult {
   components?: Record<string, number>;
   technicalRanking: {
     bullish_probability: number;
+    source?: string;
   };
   chronos?: {
     trend: string;
+    source?: string;
   };
 }
 

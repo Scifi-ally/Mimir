@@ -22,7 +22,7 @@ interface Tick {
 const tickBatch = new Map<string, Tick>();
 let batchTimer: ReturnType<typeof setInterval> | null = null;
 let telemetryTimer: ReturnType<typeof setInterval> | null = null;
-const WORKER_TICK_FLUSH_MS = 10;
+const WORKER_TICK_FLUSH_MS = 150;
 
 let totalTicksReceived = 0;
 let ticksThisSecond = 0;
@@ -138,13 +138,16 @@ function processTick(inputTick: unknown): void {
   const prevLtp = existing?.ltp ?? ltp;
   const direction = ltp > prevLtp ? "up" : ltp < prevLtp ? "down" : existing?.direction ?? "none";
 
+  const incomingChangePct = tick.change_pct ?? tick.changePct;
+  const change_pct = incomingChangePct != null ? incomingChangePct : (existing?.change_pct ?? null);
+
   const merged: Tick = {
     ...existing,
     ...tick,
     symbol: cleanSymbol,
     ltp,
     price: ltp,
-    change_pct: tick.change_pct ?? tick.changePct ?? existing?.change_pct ?? null,
+    change_pct,
     direction,
     timestamp: tick.timestamp ?? Date.now(),
   };

@@ -26,6 +26,27 @@ const wssInstances: WebSocketServer[] = [];
 let connectedCount = 0;
 let lastTickLog = 0;
 
+// SECURITY FIX (Issue #41): Rate limiting for auth attempts.
+// Module-scoped so bans persist across reconnects — a per-connection map
+// would reset on every new socket, letting attackers bypass the ban.
+const authAttempts = new Map<string, { count: number; firstAttempt: number; banned: boolean; bannedAt: number }>();
+const AUTH_RATE_LIMIT = {
+  maxAttempts: 5,
+  windowMs: 60000, // 1 minute
+  banDurationMs: 300000 // 5 minutes
+};
+
+// Prune expired entries so the map cannot grow unbounded from one-off IPs
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, t] of authAttempts) {
+    const expired = t.banned
+      ? now - t.bannedAt > AUTH_RATE_LIMIT.banDurationMs
+      : now - t.firstAttempt > AUTH_RATE_LIMIT.windowMs;
+    if (expired) authAttempts.delete(ip);
+  }
+}, 60000).unref();
+
 export function initWebSocketServer(server: Server): void {
   const wssIntelligence = new WebSocketServer({ noServer: true });
   const wssMarketData = new WebSocketServer({ noServer: true });
@@ -92,14 +113,6 @@ export function initWebSocketServer(server: Server): void {
         }, 5000);
       }
 
-      // SECURITY FIX (Issue #41): Rate limiting for auth attempts
-      const authAttempts = new Map<string, { count: number; firstAttempt: number; banned: boolean }>();
-      const AUTH_RATE_LIMIT = {
-        maxAttempts: 5,
-        windowMs: 60000, // 1 minute
-        banDurationMs: 300000 // 5 minutes
-      };
-
       ws.on("pong", () => {
         tc.isAlive = true;
       });
@@ -137,35 +150,35 @@ export function initWebSocketServer(server: Server): void {
           if (clientEvent.event === "auth") {
             // SECURITY FIX (Issue #41): Check rate limit before processing auth
             const now = Date.now();
-            const tracker = authAttempts.get(normalizedIp) || { 
-              count: 0, 
+            const tracker = authAttempts.get(normalizedIp) || {
+              count: 0,
               firstAttempt: now,
-              banned: false 
+              banned: false,
+              bannedAt: 0,
             };
 
-            // Reset window if expired
-            if (now - tracker.firstAttempt > AUTH_RATE_LIMIT.windowMs) {
+            // Ban duration is tracked from bannedAt, NOT firstAttempt — the
+            // old code reset `banned` on window expiry (60s), silently
+            // shortening the 5-minute ban to one minute.
+            if (tracker.banned) {
+              if (now - tracker.bannedAt < AUTH_RATE_LIMIT.banDurationMs) {
+                logger.warn({
+                  ip: normalizedIp,
+                  attempts: tracker.count,
+                  channel: tc.channelName
+                }, "WebSocket auth blocked - rate limit exceeded");
+                ws.close(4429, "Too many authentication attempts");
+                return;
+              }
+              // Ban expired — clean slate
               tracker.count = 0;
               tracker.firstAttempt = now;
               tracker.banned = false;
-            }
-
-            // Check if currently banned
-            if (tracker.banned && now - tracker.firstAttempt < AUTH_RATE_LIMIT.banDurationMs) {
-              logger.warn({ 
-                ip: normalizedIp, 
-                attempts: tracker.count,
-                channel: tc.channelName 
-              }, "WebSocket auth blocked - rate limit exceeded");
-              ws.close(4429, "Too many authentication attempts");
-              return;
-            }
-
-            // Reset ban if expired
-            if (tracker.banned && now - tracker.firstAttempt >= AUTH_RATE_LIMIT.banDurationMs) {
+              tracker.bannedAt = 0;
+            } else if (now - tracker.firstAttempt > AUTH_RATE_LIMIT.windowMs) {
+              // Attempt window expired (not banned)
               tracker.count = 0;
               tracker.firstAttempt = now;
-              tracker.banned = false;
             }
 
             // Increment attempt counter
@@ -214,6 +227,7 @@ export function initWebSocketServer(server: Server): void {
               // Failed auth - check if should ban
               if (tracker.count >= AUTH_RATE_LIMIT.maxAttempts) {
                 tracker.banned = true;
+                tracker.bannedAt = Date.now();
                 authAttempts.set(normalizedIp, tracker);
                 logger.warn({ 
                   ip: normalizedIp, 
@@ -307,6 +321,10 @@ export function initWebSocketServer(server: Server): void {
       });
 
       ws.on("close", () => {
+        if (authTimeoutId) {
+          clearTimeout(authTimeoutId);
+          authTimeoutId = null;
+        }
         connectedCount--;
         logger.info({ connectedClients: connectedCount, channel: tc.channelName }, "WebSocket client disconnected");
         

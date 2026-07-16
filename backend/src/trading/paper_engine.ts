@@ -10,6 +10,9 @@ import {
 } from "../../db/src/schema/paper_trading";
 import type { SuggestionGeneratedEvent, MarketTickEvent } from "../intelligence/types";
 import { todayStartUTC } from "../lib/ist-time";
+import { broadcast } from "../ws/websocket_server";
+import { createServerEvent } from "../ws/events";
+import { isLiveModeActive, placeLiveOrder } from "./broker_orders";
 import { stateStore } from "../lib/redis_state";
 import Decimal from "decimal.js";
 
@@ -41,12 +44,15 @@ async function getAccount() {
 export async function initPaperEngine() {
   if (engineActive) return;
   engineActive = true;
-  
+
   const config = getConfig();
-  if (!config.paperTradingEnabled) {
+  // The engine runs in BOTH modes. PAPER: simulated fills only. LIVE: the same
+  // simulated book is kept (position tracking + PnL), and every fill is
+  // mirrored to the broker as a real order via broker_orders.ts.
+  if (!config.paperTradingEnabled && config.tradingMode !== "LIVE") {
     throw new Error(
-      'Live trading is not implemented. Set paperTradingEnabled=true in config, ' +
-      'or implement real order placement + broker reconciliation before disabling paper trading.'
+      'Inconsistent trading config: paperTradingEnabled=false requires tradingMode="LIVE". ' +
+      'Enable paper trading or arm LIVE mode from Settings.'
     );
   }
   
@@ -55,8 +61,8 @@ export async function initPaperEngine() {
   intelligenceBus.subscribe("suggestionGenerated", async (event: SuggestionGeneratedEvent) => {
     try {
       const config = getConfig();
-      if (!config.paperTradingEnabled) {
-        logger.debug("PaperEngine: Received suggestion but paperTradingEnabled is false");
+      if (!config.paperTradingEnabled && config.tradingMode !== "LIVE") {
+        logger.debug("TradingEngine: suggestion received but engine is disabled");
         return;
       }
       logger.info({ symbol: event.suggestion.symbol, confidence: event.suggestion.confidence }, "PaperEngine: Processing suggestionGenerated event");
@@ -189,34 +195,34 @@ export async function initPaperEngine() {
         }
       }
 
-      // Duplicate position guard: skip if already have an OPEN position on same symbol
-      const existingPosition = await db.select({ id: paperPositionsTable.id })
-        .from(paperPositionsTable)
-        .where(and(
-          eq(paperPositionsTable.symbol, suggestion.symbol),
-          eq(paperPositionsTable.status, 'OPEN')
-        ))
-        .limit(1);
-
-      if (existingPosition.length > 0) {
-        logger.info({ symbol: suggestion.symbol }, "PaperEngine: Skipping — already have an OPEN position on this symbol");
-        return;
-      }
-
       // CRITICAL FIX (Issue #3): Use serializable isolation and row locking to prevent margin race condition
       // Two simultaneous suggestions could both see available margin and over-allocate
       await db.transaction(async (tx) => {
         // 1. Lock the account row with FOR UPDATE to prevent concurrent modifications
         const lockRes = await tx.execute(sql`
-          SELECT id, balance, allocated_margin 
-          FROM ${paperAccountsTable} 
-          WHERE id = ${account.id} 
+          SELECT id, balance, allocated_margin
+          FROM ${paperAccountsTable}
+          WHERE id = ${account.id}
           FOR UPDATE
         `);
         const lockedAccount = lockRes.rows[0];
-        
+
         if (!lockedAccount) {
           throw new Error("PaperEngine: Failed to lock account for update");
+        }
+
+        // Duplicate guard must live inside the lock: two suggestions for the
+        // same symbol arriving together both pass a pre-transaction check.
+        const dup = await tx.select({ id: paperPositionsTable.id })
+          .from(paperPositionsTable)
+          .where(and(
+            eq(paperPositionsTable.symbol, suggestion.symbol),
+            eq(paperPositionsTable.status, 'OPEN')
+          ))
+          .limit(1);
+        if (dup.length > 0) {
+          logger.info({ symbol: suggestion.symbol }, "PaperEngine: Skipping — already have an OPEN position on this symbol");
+          return;
         }
 
         // 2. Re-check available margin with locked values
@@ -270,6 +276,26 @@ export async function initPaperEngine() {
 
       logger.info({ symbol: suggestion.symbol, quantity, requiredMargin }, "PaperEngine: Entered Position");
 
+      // LIVE mode: mirror the entry to the broker. The internal book is the
+      // strategy's source of truth; the broker order is the real-money mirror.
+      if (isLiveModeActive()) {
+        const orderResult = await placeLiveOrder({
+          suggestionId: suggestion.id,
+          symbol: suggestion.symbol,
+          direction: suggestion.direction as "BUY" | "SELL",
+          quantity,
+          orderType: "ENTRY",
+          tradeType: "INTRADAY",
+          referencePrice: entry.toNumber(),
+        });
+        broadcast(createServerEvent.systemAlert({
+          message: orderResult.ok
+            ? `LIVE order placed: ${suggestion.direction} ${quantity} ${suggestion.symbol}`
+            : `LIVE order FAILED: ${suggestion.symbol} — ${orderResult.error}`,
+          severity: orderResult.ok ? "info" : "error",
+        }), "system");
+      }
+
     } catch (err) {
       logger.error({ err }, "PaperEngine: Failed to process suggestion");
     }
@@ -278,7 +304,7 @@ export async function initPaperEngine() {
   intelligenceBus.subscribe("marketTick", async (tick: MarketTickEvent) => {
     try {
       const config = getConfig();
-      if (!config.paperTradingEnabled) return;
+      if (!config.paperTradingEnabled && config.tradingMode !== "LIVE") return;
 
       const positionsForSymbol = await db.select().from(paperPositionsTable)
         .where(and(
@@ -396,14 +422,21 @@ export async function initPaperEngine() {
               // Create exit with circuit limit flag
               const account = await getAccount();
               await db.transaction(async (tx) => {
-                await tx.update(paperPositionsTable)
+                // Same status='OPEN' guard as normal exit — prevents double-close
+                // (and double margin release) if two ticks race here.
+                const updateRes = await tx.update(paperPositionsTable)
                   .set({
                     status: "CLOSED",
                     realizedPnl: realizedPnl.toFixed(2),
                     unrealizedPnl: "0.00",
                     closedAt: sql`now()`
                   })
-                  .where(eq(paperPositionsTable.id, pos.id));
+                  .where(sql`${paperPositionsTable.id} = ${pos.id} AND ${paperPositionsTable.status} = 'OPEN'`)
+                  .returning();
+
+                if (updateRes.length === 0) {
+                  throw new Error("PaperEngine: Race condition - position already closed (circuit exit)");
+                }
 
                 await tx.insert(paperOrdersTable).values({
                   suggestionId: pos.suggestionId,
@@ -426,6 +459,18 @@ export async function initPaperEngine() {
               
               circuitLimitTracker.delete(pos.symbol);
               logger.warn({ symbol: pos.symbol, realizedPnl: realizedPnl.toNumber() }, "PaperEngine: Forced exit during circuit limit");
+
+              if (isLiveModeActive()) {
+                await placeLiveOrder({
+                  suggestionId: pos.suggestionId,
+                  symbol: pos.symbol,
+                  direction: isBuy ? "SELL" : "BUY",
+                  quantity: qty.toNumber(),
+                  orderType: "CIRCUIT_LIMIT_EXIT",
+                  tradeType: "INTRADAY",
+                  referencePrice: slippedLtp.toNumber(),
+                });
+              }
               continue;
             }
             
@@ -500,6 +545,24 @@ export async function initPaperEngine() {
           });
 
           logger.info({ symbol: pos.symbol, exitReason, realizedPnl: realizedPnl.toNumber() }, "PaperEngine: Exited Position");
+
+          if (isLiveModeActive()) {
+            const exitOrder = await placeLiveOrder({
+              suggestionId: pos.suggestionId,
+              symbol: pos.symbol,
+              direction: isBuy ? "SELL" : "BUY",
+              quantity: qty.toNumber(),
+              orderType: exitReason,
+              tradeType: "INTRADAY",
+              referencePrice: slippedLtp.toNumber(),
+            });
+            broadcast(createServerEvent.systemAlert({
+              message: exitOrder.ok
+                ? `LIVE exit placed: ${isBuy ? "SELL" : "BUY"} ${qty.toNumber()} ${pos.symbol} (${exitReason})`
+                : `LIVE exit FAILED: ${pos.symbol} — ${exitOrder.error}. Close manually at your broker!`,
+              severity: exitOrder.ok ? "info" : "error",
+            }), "system");
+          }
         } else {
           if (!newTrailingStop.equals(currentStop) || unrealized.toFixed(2) !== pos.unrealizedPnl) {
             await db.update(paperPositionsTable)

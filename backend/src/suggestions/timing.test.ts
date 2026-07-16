@@ -15,7 +15,7 @@ describe("calculateSuggestionTiming", () => {
     expect(result.expiresAt.toISOString()).toBe("2026-07-13T09:40:00.000Z");
   });
 
-  it("keeps swing horizons within three trading-day equivalents", () => {
+  it("caps swing horizons at ten trading days / fourteen calendar days", () => {
     const result = calculateSuggestionTiming({
       tradeType: "SWING",
       entryPrice: 100,
@@ -24,7 +24,9 @@ describe("calculateSuggestionTiming", () => {
       generatedAt: new Date("2026-07-13T04:00:00.000Z"),
     });
 
-    expect(result.expectedHoldMinutes).toBe(1170);
-    expect(result.expiresAt.getTime() - Date.parse("2026-07-13T04:00:00.000Z")).toBe(1755 * 60_000);
+    // 40/2 = 20 ATR multiple → capped at 10 trading days (3900 trading minutes)
+    expect(result.expectedHoldMinutes).toBe(3900);
+    // 10 trading days ≈ 14 calendar days (weekend conversion + buffer, capped)
+    expect(result.expiresAt.getTime() - Date.parse("2026-07-13T04:00:00.000Z")).toBe(14 * 24 * 60 * 60_000);
   });
 });

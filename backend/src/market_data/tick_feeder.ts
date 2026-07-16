@@ -131,6 +131,15 @@ export async function initTickFeeder(stocks: Array<{ symbol: string; key: string
       ask,
     };
 
+    // Maintain in-memory tick history for getTickData consumers
+    sub.ticks.push(tick);
+    if (sub.ticks.length > MAX_TICKS_PER_STOCK) {
+      sub.ticks.splice(0, sub.ticks.length - MAX_TICKS_PER_STOCK);
+    }
+    if (sub.openPrice === null) sub.openPrice = lastPrice;
+    if (sub.highPrice === null || lastPrice > sub.highPrice) sub.highPrice = lastPrice;
+    if (sub.lowPrice === null || lastPrice < sub.lowPrice) sub.lowPrice = lastPrice;
+
     // 1. Ingest into Institutional Tick Distribution Server (handles cache, workers, batched UI streaming)
     tickDistribution.ingestTick({
       symbol: sub.symbol,
@@ -175,11 +184,9 @@ export async function initTickFeeder(stocks: Array<{ symbol: string; key: string
   reconnectUnsubscribe = intelligenceBus.subscribe("websocketReconnect" as any, async (event: any) => {
       const durationMs = event.durationMs;
       if (durationMs > 60000) {
-          logger.info({ gap: Math.round(durationMs/1000) + "s" }, "WebSocket was offline for >1m. Triggering historical backfill for Nifty and top stocks...");
-          // We would trigger a call to upstox API to fetch missing 1m candles here
-          // For now we just log it as the gap will be filled in the nightly archive, but 
-          // real-time technicals may be slightly skewed until next restart.
-          // TODO: Implement actual historical candle fetch and inject into tickDistribution
+          // No live backfill implemented — gap is filled by the nightly archive.
+          // Log honestly so operators don't assume ticks were recovered.
+          logger.warn({ gap: Math.round(durationMs/1000) + "s" }, "WebSocket was offline for >1m. Tick gap NOT backfilled; intraday technicals may be skewed until nightly archive or restart.");
       }
   });
 
@@ -198,7 +205,7 @@ function startVolumePoller(): void {
     if (subscriptions.size === 0) return;
 
     try {
-      const token = getAccessToken();
+      const token = getAccessToken("trading");
       if (!token) return;
 
       const keysToFetch = Array.from(subscriptions.values())

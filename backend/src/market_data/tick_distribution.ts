@@ -142,15 +142,8 @@ class TickDistributionServer {
 
     // Throttled mode during live market scans: filter micro-ticks only from
     // UI streaming. Analysis still receives every valid tick below.
-    if (mode === "throttled" && existing) {
-      const priceDiff = Math.abs(ltp - existing.ltp);
-      const diffPercent = priceDiff / existing.ltp;
-      
-      // If the price changed by less than 0.05%, skip the UI flush to save CPU.
-      if (diffPercent < 0.0005) {
-        shouldStreamToUI = false;
-      }
-    }
+    // NOTE: Aggressive throttling removed because requestAnimationFrame and Worker batching
+    // already handle UI performance efficiently without dropping visual ticks.
     // ----------------------------------
 
     this.totalTicks++;

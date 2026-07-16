@@ -7,7 +7,7 @@
  */
 import { db } from "../../db/src";
 import { suggestionsTable, overnightWatchlistTable } from "../../db/src";
-import { eq, and, desc, gte, or } from "drizzle-orm";
+import { eq, and, desc, gte, or, inArray } from "drizzle-orm";
 import { getAccessToken } from "../upstox/auth";
 import { getConfig } from "../config";
 import { getMarketState } from "../market_data/market_state";
@@ -23,6 +23,10 @@ import {
 import { runIntelligencePipeline, type IntelligenceSignal } from "../analysis/signal_generator";
 import { checkSuggestionOutcomes, expireOldSuggestions } from "./accuracy_tracker";
 import { fetchCorporateActionBlacklist } from "../market_data/corporate_actions";
+import { isSymbolBanned, getDeliveryPct, getBulkDealSignal, refreshNSEFreeData } from "../market_data/nse_free_data";
+import { calibrateConfidence, isSetupDemoted } from "../analysis/calibration_engine";
+import { checkMarketInternals } from "../analysis/market_internals";
+import { getGapRisk } from "../analysis/gap_risk";
 import { broadcast } from "../ws/websocket_server";
 import { createServerEvent } from "../ws/events";
 import { logger } from "../lib/logger";
@@ -249,7 +253,7 @@ export async function runOutcomeCheck(): Promise<void> {
     const active = await db
       .select({ symbol: suggestionsTable.symbol })
       .from(suggestionsTable)
-      .where(eq(suggestionsTable.status, "ACTIVE"));
+      .where(inArray(suggestionsTable.status, ["ACTIVE", "PENDING"]));
 
     if (!active.length) return;
 
@@ -269,7 +273,7 @@ async function getOpenSectorCounts(): Promise<Record<string, number>> {
   const open = await db
     .select({ symbol: suggestionsTable.symbol })
     .from(suggestionsTable)
-    .where(eq(suggestionsTable.status, "ACTIVE"));
+    .where(inArray(suggestionsTable.status, ["ACTIVE", "PENDING"]));
 
   const counts: Record<string, number> = {};
   for (const row of open) {
@@ -354,7 +358,7 @@ export async function generateSuggestionsFromWatchlist(options?: {
     const openSuggestions = await db
       .select()
       .from(suggestionsTable)
-      .where(eq(suggestionsTable.status, "ACTIVE"));
+      .where(inArray(suggestionsTable.status, ["ACTIVE", "PENDING"]));
 
     if (openSuggestions.length >= cfg.maxOpenPositions) {
       logger.info(
@@ -393,6 +397,9 @@ export async function generateSuggestionsFromWatchlist(options?: {
         fetchCorporateActionBlacklist(),
         getOpenSectorCounts(),
         fetchNiftyDailyCandles(70),
+        // Warm NSE free-data caches (delivery %, F&O ban list, bulk deals)
+        // so per-signal gates in ingestSignal read fresh data synchronously.
+        refreshNSEFreeData(),
       ]);
     
     let candidates = todayCandidates.length > 0 ? todayCandidates : nextDayCandidates;
@@ -699,6 +706,57 @@ export async function ingestSignal(
   const ltp = livePrice;
   const minRequiredRR = options?.minRequiredRR ?? 1.3;
 
+  // ── NSE free-data gates ─────────────────────────────────────────────
+  // Walk-forward demotion: rolling 90d expectancy for this setup is negative.
+  if (isSetupDemoted(signal.setupType)) {
+    logger.warn({ symbol: signal.symbol, setupType: signal.setupType }, "Discarding suggestion: setup demoted by walk-forward expectancy check");
+    return false;
+  }
+
+  // F&O ban period: OI limits make these erratic — hard reject.
+  if (isSymbolBanned(signal.symbol)) {
+    logger.warn({ symbol: signal.symbol }, "Discarding suggestion: symbol in F&O ban period");
+    return false;
+  }
+
+  // Earnings/corp-action blackout: no binary event risk on open positions.
+  if (getMarketState().corporateActionSymbols.has(signal.symbol)) {
+    logger.warn({ symbol: signal.symbol }, "Discarding suggestion: corporate event within 3 days");
+    return false;
+  }
+
+  // Market internals: VIX spike halt, breadth + sector-RS gates for momentum.
+  const internals = checkMarketInternals(signal.symbol, signal.signal as "BUY" | "SELL", signal.setupType);
+  if (!internals.allowed) {
+    logger.warn({ symbol: signal.symbol, setupType: signal.setupType, reason: internals.reason }, "Discarding suggestion: market internals gate");
+    return false;
+  }
+
+  // Delivery % gate for long momentum: low delivery = intraday churn, the
+  // classic fake-breakout signature the backtest showed loses money.
+  if (signal.signal === "BUY" && signal.setupType === "MOMENTUM_CONTINUATION") {
+    const deliveryPct = getDeliveryPct(signal.symbol);
+    if (deliveryPct !== null && deliveryPct < 25) {
+      logger.warn(
+        { symbol: signal.symbol, deliveryPct },
+        "Discarding momentum BUY: delivery % below 25 (speculative churn, not accumulation)",
+      );
+      return false;
+    }
+  }
+
+  // Bulk-deal confluence: institutional net flow aligned with direction is a
+  // confidence boost; heavy flow against it is a small penalty. Never a gate.
+  const bulkDeal = getBulkDealSignal(signal.symbol);
+  if (bulkDeal && bulkDeal.netBuyQty !== 0) {
+    const aligned = signal.signal === "BUY" ? bulkDeal.netBuyQty > 0 : bulkDeal.netBuyQty < 0;
+    signal.confidence = Math.max(0, Math.min(100, signal.confidence + (aligned ? 5 : -5)));
+    signal.confluence = [
+      ...(signal.confluence ?? []),
+      aligned ? "Institutional bulk-deal flow aligned" : "Bulk-deal flow against direction",
+    ];
+  }
+
   if (ltp && ltp > 0) {
     if (signal.signal === "BUY") {
       if (ltp > signal.entryPrice * 1.002) {
@@ -739,7 +797,7 @@ export async function ingestSignal(
         eq(suggestionsTable.symbol, signal.symbol),
         or(
           gte(suggestionsTable.generatedAt, todayStart),
-          eq(suggestionsTable.status, "ACTIVE")
+          inArray(suggestionsTable.status, ["ACTIVE", "PENDING"])
         )
       )
     )
@@ -749,6 +807,42 @@ export async function ingestSignal(
 
   const isIntraday = options?.isIntraday ?? false;
   const tradeType = isIntraday ? "INTRADAY" : "SWING";
+
+  // Overnight gap risk: don't open new swing positions into a HIGH-risk
+  // overnight setup (big implied gap or INR shock) — the stop math is void
+  // when the open gaps through it.
+  if (tradeType === "SWING") {
+    const gapRisk = getGapRisk();
+    if (gapRisk?.riskLevel === "HIGH") {
+      logger.warn(
+        { symbol: signal.symbol, impliedGapPct: gapRisk.impliedGapPct },
+        "Discarding SWING suggestion: HIGH overnight gap risk",
+      );
+      return false;
+    }
+  }
+
+  // Replace uncalibrated model confidence with the outcome-blended score:
+  // empirical win rate for this setup×tradeType, weighted by sample count.
+  const { confidence: calibratedConfidence, empirical } = await calibrateConfidence(
+    signal.confidence,
+    signal.setupType,
+    tradeType,
+  );
+  if (calibratedConfidence !== signal.confidence) {
+    logger.info(
+      {
+        symbol: signal.symbol,
+        setupType: signal.setupType,
+        modelConfidence: signal.confidence,
+        calibratedConfidence,
+        samples: empirical?.samples,
+        winRate: empirical?.winRate,
+      },
+      "Confidence calibrated against realized outcomes",
+    );
+    signal.confidence = calibratedConfidence;
+  }
   
   const timing = calculateSuggestionTiming({
     tradeType,
@@ -756,6 +850,16 @@ export async function ingestSignal(
     target1: signal.target1,
     atr: signal.featureVector?.atr14,
   });
+
+  // Honest fill model: only mark ACTIVE if the market is already at/past the
+  // planned entry. Otherwise PENDING — accuracy_tracker promotes it when price
+  // actually touches entry, so stats never count trades that never filled.
+  const entryTouched =
+    ltp && ltp > 0
+      ? signal.signal === "BUY"
+        ? ltp >= signal.entryPrice
+        : ltp <= signal.entryPrice
+      : false;
 
   const [inserted] = await db
     .insert(suggestionsTable)
@@ -786,7 +890,7 @@ export async function ingestSignal(
       validityTill: timing.validityTill,
       expectedHoldMinutes: timing.expectedHoldMinutes,
       expiresAt: timing.expiresAt,
-      status: "ACTIVE",
+      status: entryTouched ? "ACTIVE" : "PENDING",
       atr: signal.featureVector?.atr14?.toString() || "0",
       highestPrice: signal.entryPrice.toString(),
       lowestPrice: signal.entryPrice.toString(),

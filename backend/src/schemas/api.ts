@@ -405,6 +405,7 @@ export const UpdateConfigBody = zod.object({
   upstoxApiSecret: zod.string().trim().max(500).optional(),
   upstoxDataApiKey: zod.string().trim().max(200).optional(),
   upstoxDataApiSecret: zod.string().trim().max(500).optional(),
+  useDualApiKeys: zod.boolean().optional(),
   upstoxRedirectUri: zod.string().trim().url().or(zod.literal("")).optional(),
   stopLossMode: zod.enum(["FIXED", "TRAILING", "BREAKEVEN"]).optional(),
   maxDeployedCapitalPct: zod.number().min(1).max(100).optional(),

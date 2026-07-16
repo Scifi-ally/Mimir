@@ -1,4 +1,5 @@
 import type { MonitoredStock, WatchlistItem } from "@/types/api";
+import { marketDataStore } from "@/providers/MarketDataProvider";
 
 export interface StockRow {
   symbol: string;
@@ -14,6 +15,7 @@ export interface StockRow {
   components?: Record<string, number>;
   signalTags?: string[];
   activeSignalDirection?: "BUY" | "SELL" | null;
+  sparkline?: number[];
 }
 
 export function buildStockRows(
@@ -28,7 +30,7 @@ export function buildStockRows(
   const activeSuggestionsMap = new Map<string, "BUY" | "SELL">(
     Array.isArray(_suggestions)
       ? _suggestions
-          .filter((s) => s && s.status === "ACTIVE" && s.symbol)
+          .filter((s) => s && (s.status === "ACTIVE" || s.status === "PENDING") && s.symbol)
           .map((s) => [s.symbol, s.direction === "SELL" ? "SELL" : "BUY"])
       : []
   );
@@ -36,18 +38,19 @@ export function buildStockRows(
   const rows = items.map((item) => {
     const mon = monitoredMap.get(item.symbol);
     const tick = ticks[item.symbol];
+    const liveData = marketDataStore.get(item.symbol);
     
     const sparkline = sparklines?.[item.symbol];
     const fallbackPrice = sparkline && sparkline.length > 0 ? sparkline[sparkline.length - 1] : null;
     const fallbackFirstPrice = sparkline && sparkline.length > 0 ? sparkline[0] : null;
 
-    const price = tick?.price ?? mon?.currentPrice ?? item.ltp ?? fallbackPrice ?? null;
+    const price = tick?.price ?? liveData?.ltp ?? mon?.currentPrice ?? item.ltp ?? fallbackPrice ?? null;
     const refPrice = item.prevClose ?? mon?.entryPrice ?? null;
     
-    let changePct = null;
-    if (price != null && refPrice != null && refPrice > 0) {
+    let changePct = liveData?.change_pct ?? null;
+    if (changePct == null && price != null && refPrice != null && refPrice > 0) {
       changePct = ((price - refPrice) / refPrice) * 100;
-    } else if (price != null && fallbackFirstPrice != null && fallbackFirstPrice > 0) {
+    } else if (changePct == null && price != null && fallbackFirstPrice != null && fallbackFirstPrice > 0) {
       changePct = ((price - fallbackFirstPrice) / fallbackFirstPrice) * 100;
     }
 
@@ -71,6 +74,7 @@ export function buildStockRows(
       components: item.components,
       signalTags: item.signalTags,
       activeSignalDirection,
+      sparkline,
     };
   });
 

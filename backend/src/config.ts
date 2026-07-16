@@ -29,10 +29,15 @@ export interface TradingConfig {
   rollingDrawdownPct: number;
   maxDeployedCapitalPct: number;
   paperTradingEnabled: boolean;
+  // "PAPER" (default) — fills simulated only. "LIVE" — every engine fill is
+  // mirrored to the broker as a real order. Both flags must agree for live:
+  // tradingMode === "LIVE" AND paperTradingEnabled === false.
+  tradingMode: "PAPER" | "LIVE";
   upstoxApiKey: string;
   upstoxApiSecret: string;
   upstoxDataApiKey: string;
   upstoxDataApiSecret: string;
+  useDualApiKeys: boolean;
   upstoxRedirectUri: string;
   discordWebhookUrl: string;
   telegramBotToken: string;
@@ -63,10 +68,12 @@ export const defaultConfig: TradingConfig = {
   rollingDrawdownPct: 8,
   maxDeployedCapitalPct: 90,
   paperTradingEnabled: true,
+  tradingMode: "PAPER",
   upstoxApiKey: process.env["UPSTOX_API_KEY"] ?? "",
   upstoxApiSecret: process.env["UPSTOX_API_SECRET"] ?? "",
   upstoxDataApiKey: process.env["UPSTOX_DATA_API_KEY"] ?? "",
   upstoxDataApiSecret: process.env["UPSTOX_DATA_API_SECRET"] ?? "",
+  useDualApiKeys: false,
   upstoxRedirectUri: (() => {
     if (process.env["UPSTOX_REDIRECT_URI"]) return process.env["UPSTOX_REDIRECT_URI"];
     // Auto-derive from Replit dev domain when running in Replit
@@ -129,11 +136,13 @@ function rowToConfig(row: typeof tradingConfigTable.$inferSelect): TradingConfig
     rollingDrawdownPct: numberOrDefault(row.rollingDrawdownPct, defaultConfig.rollingDrawdownPct),
     maxDeployedCapitalPct: numberOrDefault(row.maxDeployedCapitalPct, defaultConfig.maxDeployedCapitalPct),
     paperTradingEnabled: row.paperTradingEnabled ?? defaultConfig.paperTradingEnabled,
+    tradingMode: row.tradingMode === "LIVE" ? "LIVE" : "PAPER",
     upstoxApiKey: row.upstoxApiKey ?? defaultConfig.upstoxApiKey,
     // MEDIUM FIX (Issue #23): Handle empty strings properly when revealing secrets
     upstoxApiSecret: row.upstoxApiSecret && row.upstoxApiSecret.length > 0 ? revealSecret(row.upstoxApiSecret) : defaultConfig.upstoxApiSecret,
     upstoxDataApiKey: row.upstoxDataApiKey ?? defaultConfig.upstoxDataApiKey,
     upstoxDataApiSecret: row.upstoxDataApiSecret && row.upstoxDataApiSecret.length > 0 ? revealSecret(row.upstoxDataApiSecret) : defaultConfig.upstoxDataApiSecret,
+    useDualApiKeys: row.useDualApiKeys ?? defaultConfig.useDualApiKeys,
     upstoxRedirectUri: row.upstoxRedirectUri ?? defaultConfig.upstoxRedirectUri,
     discordWebhookUrl: row.discordWebhookUrl ?? defaultConfig.discordWebhookUrl,
     telegramBotToken: row.telegramBotToken && row.telegramBotToken.length > 0 ? revealSecret(row.telegramBotToken) : defaultConfig.telegramBotToken,
@@ -167,10 +176,12 @@ function toDbValues(cfg: TradingConfig): typeof tradingConfigTable.$inferInsert 
     rollingDrawdownPct: cfg.rollingDrawdownPct.toString(),
     maxDeployedCapitalPct: cfg.maxDeployedCapitalPct.toString(),
     paperTradingEnabled: cfg.paperTradingEnabled,
+    tradingMode: cfg.tradingMode,
     upstoxApiKey: cfg.upstoxApiKey,
     upstoxApiSecret: protectSecret(cfg.upstoxApiSecret),
     upstoxDataApiKey: cfg.upstoxDataApiKey,
     upstoxDataApiSecret: protectSecret(cfg.upstoxDataApiSecret),
+    useDualApiKeys: cfg.useDualApiKeys,
     upstoxRedirectUri: cfg.upstoxRedirectUri,
     discordWebhookUrl: cfg.discordWebhookUrl,
     telegramBotToken: protectSecret(cfg.telegramBotToken),

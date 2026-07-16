@@ -147,14 +147,23 @@ export async function enrichWatchlistWithIntradayOpportunities(): Promise<void> 
   const newCandidates = intradayOps
     .filter((c) => !existingSymbols.has(c.symbol))
     .slice(0, 12) // Limit to keep the watchlist focused even though we scan the full universe
-    .map((c) => ({
-      forDate: todayIST,
-      symbol: c.symbol,
-      name: c.name,
-      category: c.direction === "BUY" ? "INTRADAY_BUY" : "INTRADAY_SELL",
-      condition: `[${c.confluenceScore}% MTF] ${c.reason}`,
-      priority: c.confluenceScore > 75 ? 10 : c.confluenceScore > 60 ? 8 : 6,
-    }));
+    .map((c) => {
+      let rawCondition = `[${c.confluenceScore}% MTF] ${c.reason}`;
+      let condition = rawCondition.replace(/₹/g, 'Rs.').replace(/…/g, '...');
+      condition = condition.replace(/[^\x00-\x7F]/g, '');
+      const maxLength = 250;
+      if (condition.length > maxLength && !(condition.startsWith('{') && condition.endsWith('}'))) {
+        condition = `${condition.slice(0, maxLength - 3).trimEnd()}...`;
+      }
+      return {
+        forDate: todayIST,
+        symbol: c.symbol,
+        name: c.name ? c.name.substring(0, 95) : "",
+        category: c.direction === "BUY" ? "INTRADAY_BUY" : "INTRADAY_SELL",
+        condition,
+        priority: c.confluenceScore > 75 ? 10 : c.confluenceScore > 60 ? 8 : 6,
+      };
+    });
 
   if (!newCandidates.length) {
     logger.info("All intraday opportunities already in watchlist");

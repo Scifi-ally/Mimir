@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { assessRisk } from "../../src/analysis/risk_engine";
+import { getConfig } from "../../src/config";
 
 describe("Risk Engine Regression", () => {
   it("should assess risk correctly for a simple mock setup", async () => {
@@ -15,7 +16,7 @@ describe("Risk Engine Regression", () => {
       riskReward: 2.0,
       score: 85,
     };
-    
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const mockSnapshot: any = {
       close: 100,
@@ -26,23 +27,26 @@ describe("Risk Engine Regression", () => {
       atr14: 5,
       avgDailyVolume: 1000000,
     };
-    
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const mockStock = { symbol: "TEST" } as any;
 
     const result = await assessRisk(mockSetup, mockSnapshot, "TECH", mockStock);
-    
-    // As per default config in risk_engine.ts, capital might be 100000, 
-    // RR > 1.5 is required (here it is (120-100)/(100-90) = 2.0)
-    // Risk limit = 2% per trade (2000 INR)
-    // Risk per share = 10 INR
-    // Quantity = 2000 / 10 = 200
-    
+
+    // Derive expectations from live config instead of hardcoding capital:
+    // risk per share = entry - stop = 2 INR; max risk = capital * riskPct;
+    // position value is additionally capped at 20% of capital (risk_engine.ts).
+    const cfg = getConfig();
+    const riskPerShare = 2;
+    const maxRiskInr = cfg.tradingCapital * ((cfg.maxRiskPerTradePct ?? 2) / 100);
+    const baseQty = Math.floor(maxRiskInr / riskPerShare);
+    const positionCapQty = Math.floor((cfg.tradingCapital * 0.20) / mockSetup.entryPrice);
+    const expectedQty = Math.min(baseQty, positionCapQty);
+
     console.log("Risk Assessment Rejections:", result.rejectionReasons);
     console.log("Risk Assessment Warnings:", result.warningReasons);
-    // expect(result.passed).toBe(true);
-    expect(result.positionSize).toBe(1000);
-    expect(result.investmentAmount).toBe(100000);
+    expect(result.positionSize).toBe(expectedQty);
+    expect(result.investmentAmount).toBe(expectedQty * mockSetup.entryPrice);
     expect(result.riskReward).toBeCloseTo(2.0, 1);
   });
 });

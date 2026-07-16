@@ -65,7 +65,10 @@ export async function computeAdaptiveConfidence(
     (rawWinRate * sampleSize + priorsWinRate * smoothK) / (sampleSize + smoothK);
 
   const totalPnl = rows.reduce((acc, r) => acc + (r.pnlInr ? parseFloat(r.pnlInr) : 0), 0);
-  const expectedValue = sampleSize > 0 ? totalPnl / sampleSize : 0;
+  // Only decided trades (win/loss) carry pnl; EXPIRED rows have null pnl and
+  // would dilute EV toward zero if counted in the divisor.
+  const decided = wins + losses;
+  const expectedValue = decided > 0 ? totalPnl / decided : 0;
 
   const notes: string[] = [];
   if (sampleSize < 25) notes.push("low historical sample");

@@ -1,5 +1,6 @@
 import { logger } from "../lib/logger";
 import { fetchFIIDIIData } from "../market_data/fii_dii";
+import { isEconomicEventDay, getTodayEconomicEvent } from "./gap_risk";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let yahooFinance: any = null;
@@ -40,17 +41,19 @@ export interface GlobalMacroState {
 }
 
 const DEFAULT_STATE: GlobalMacroState = {
-  us10YearYield: 4.28,
-  dxy: 104.15,
-  brentCrude: 78.4,
-  usdInr: 86.45,
-  india10y: 7.08,
-  indiaVix: 13.85,
-  fiiNetInr: -1420.5,
-  diiNetInr: 2180.7,
-  macroScore: 15,
+  // All null until first successful fetch — consumers must handle missing data.
+  // Fabricated defaults previously leaked into regime scoring as if real.
+  us10YearYield: null,
+  dxy: null,
+  brentCrude: null,
+  usdInr: null,
+  india10y: null,
+  indiaVix: null,
+  fiiNetInr: null,
+  diiNetInr: null,
+  macroScore: 0,
   eventRiskActive: false,
-  lastUpdated: new Date().toISOString(),
+  lastUpdated: null,
 };
 
 let _state: GlobalMacroState = { ...DEFAULT_STATE };
@@ -102,14 +105,19 @@ export async function fetchGlobalMacroData(): Promise<GlobalMacroState> {
     if (bz && bz.regularMarketPrice) {
       brentCrude = bz.regularMarketPrice;
     }
-    if (inr && typeof inr.regularMarketPrice === 'number' && inr.regularMarketPrice >= 70 && inr.regularMarketPrice <= 90) {
+    // Sanity band only rejects data-corruption values (Yahoo occasionally
+    // returns paise or reciprocal quotes). Band must cover realistic INR
+    // depreciation — the old [70,90] silently froze usdInr past 90.
+    if (inr && typeof inr.regularMarketPrice === 'number' && inr.regularMarketPrice >= 60 && inr.regularMarketPrice <= 120) {
       usdInr = inr.regularMarketPrice;
+    } else if (inr?.regularMarketPrice != null) {
+      logger.warn({ value: inr.regularMarketPrice }, "USD/INR quote outside sanity band [60,120] — keeping previous value");
     }
     if (in10 && in10.regularMarketPrice) {
       india10y = in10.regularMarketPrice;
-    } else {
-      india10y = 7.08; // Fallback since Yahoo Finance ^IN10Y is dead
     }
+    // else: keep previous value (possibly null → UI shows N/A). Yahoo ^IN10Y
+    // is unreliable; never substitute a fabricated yield.
     if (vix && vix.regularMarketPrice) {
       indiaVix = vix.regularMarketPrice;
     }
@@ -120,6 +128,13 @@ export async function fetchGlobalMacroData(): Promise<GlobalMacroState> {
 
     let macroScore = 0;
     let eventRiskActive = false;
+
+    // Scheduled binary events (RBI/Fed/CPI) activate event risk regardless of
+    // market readings — the risk engine halves position sizes on these days.
+    if (isEconomicEventDay()) {
+      eventRiskActive = true;
+      logger.info({ event: getTodayEconomicEvent() }, "Economic event day — event risk active");
+    }
 
     // Calculate basic heuristic macro score
     // Higher yields and higher DXY are generally bearish for Emerging Markets (India)

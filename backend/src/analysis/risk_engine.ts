@@ -59,7 +59,7 @@ export interface RiskAssessment {
 
 import { db } from "../../db/src";
 import { suggestionsTable } from "../../db/src/schema/suggestions";
-import { eq, and, gte, sql } from "drizzle-orm";
+import { and, gte, sql, inArray } from "drizzle-orm";
 import { todayStartUTC } from "../lib/ist-time";
 import { STOCK_SECTOR_MAP } from "./stock_scanner";
 
@@ -107,7 +107,7 @@ export async function syncRiskEngineState(): Promise<void> {
     const active = await db
       .select()
       .from(suggestionsTable)
-      .where(eq(suggestionsTable.status, "ACTIVE"));
+      .where(inArray(suggestionsTable.status, ["ACTIVE", "PENDING"]));
 
     const mapped: OpenPosition[] = active.map(p => ({
       symbol: p.symbol,

@@ -2,8 +2,10 @@ import { Router } from "express";
 import crypto from "crypto";
 import {
   isAuthenticated,
+  isDirectlyAuthenticated,
   getAuthorizationUrl,
   getTokenExpiryInfo,
+  getDirectTokenExpiryInfo,
   getAccessToken,
   exchangeCodeForToken,
 } from "../upstox/auth";
@@ -37,7 +39,7 @@ import { getMonitoringStatus, MONITORING_MAX_STOCKS } from "../analysis/intraday
 import { HandleAuthCallbackQueryParams } from "../schemas";
 import { db } from "../../db/src";
 import { suggestionsTable } from "../../db/src";
-import { and, eq, gte, sql } from "drizzle-orm";
+import { and, eq, gte, sql, inArray } from "drizzle-orm";
 import { logger } from "../lib/logger";
 import { todayStartUTC } from "../lib/ist-time";
 import { getWorkflowStatus, resetActiveWorkflow } from "../workflow/coordinator";
@@ -54,6 +56,7 @@ import {
   getManualSymbols,
   getMonitoredSubscriptionStocks,
 } from "../market_data/monitored_symbols";
+import { getAllCalibrations, getDemotedSetups } from "../analysis/calibration_engine";
 
 const router = Router();
 const AUTH_STATE_COOKIE = "upstox_auth_state";
@@ -178,7 +181,12 @@ router.get("/system/status", async (req, res) => {
     dbConnected,
     schedulerRunning: isSchedulerRunning(),
     upstoxAuthenticated: isAuthenticated(),
-    upstoxConfigured: Boolean(cfg.upstoxApiKey && cfg.upstoxApiSecret),
+    upstoxFeedAuthenticated: isDirectlyAuthenticated("trading"),
+    upstoxDataAuthenticated: isDirectlyAuthenticated("data"),
+    upstoxConfigured: Boolean((cfg.upstoxApiKey && cfg.upstoxApiSecret) || (cfg.upstoxDataApiKey && cfg.upstoxDataApiSecret)),
+    upstoxFeedConfigured: Boolean(cfg.upstoxApiKey && cfg.upstoxApiSecret),
+    upstoxDataConfigured: Boolean(cfg.upstoxDataApiKey && cfg.upstoxDataApiSecret),
+    useDualApiKeys: cfg.useDualApiKeys,
     isMarketOpen: isMarketOpen(), // Dynamically compute instead of relying on decoupled local state
     symbolsCached: effectiveUniverse.length, // Renamed from instrumentsLoaded (Issue #9)
     activeSubscriptions:
@@ -208,6 +216,8 @@ router.get("/system/status", async (req, res) => {
     currentMarketRegime: state.regime,
     opportunityQualityGrade,
     upstoxTokenExpiry: getTokenExpiryInfo(),
+    upstoxFeedTokenExpiry: getDirectTokenExpiryInfo("trading"),
+    upstoxDataTokenExpiry: getDirectTokenExpiryInfo("data"),
   });
 });
 
@@ -241,6 +251,64 @@ router.get("/system/session-state", (_req, res) => {
 // GET /api/system/intraday-monitoring
 router.get("/system/intraday-monitoring", (_req, res) => {
   res.json(getMonitoringStatus());
+});
+
+// GET /api/system/calibration — predicted confidence vs realized win rate per setup.
+// Shows which setups are over-confident (predicted >> realized) and should be cut.
+router.get("/system/calibration", async (req, res) => {
+  try {
+    const lookbackDays = Math.min(Number(req.query.days) || 90, 365);
+    const since = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000);
+
+    const rows = await db
+      .select({
+        setupType: suggestionsTable.setupType,
+        direction: suggestionsTable.direction,
+        trades: sql<number>`count(*)::int`,
+        wins: sql<number>`count(*) filter (where ${suggestionsTable.status} in ('TARGET_1_HIT','TARGET_2_HIT'))::int`,
+        losses: sql<number>`count(*) filter (where ${suggestionsTable.status} = 'STOP_HIT')::int`,
+        expired: sql<number>`count(*) filter (where ${suggestionsTable.status} = 'EXPIRED')::int`,
+        avgConfidence: sql<number>`round(avg(${suggestionsTable.confidence}))::int`,
+        totalPnlInr: sql<number>`round(coalesce(sum(${suggestionsTable.pnlInr}), 0)::numeric, 2)::float`,
+      })
+      .from(suggestionsTable)
+      .where(
+        and(
+          gte(suggestionsTable.generatedAt, since),
+          sql`${suggestionsTable.status} in ('TARGET_1_HIT','TARGET_2_HIT','STOP_HIT','EXPIRED')`,
+        ),
+      )
+      .groupBy(suggestionsTable.setupType, suggestionsTable.direction)
+      .orderBy(sql`count(*) desc`);
+
+    const setups = rows.map((r) => {
+      const decided = r.wins + r.losses;
+      const realizedWinRate = decided > 0 ? Math.round((r.wins / decided) * 100) : null;
+      return {
+        ...r,
+        realizedWinRate,
+        // confidence is a 0-100 predicted-quality proxy; gap > ~15 means the
+        // engine systematically overrates this setup
+        calibrationGap:
+          realizedWinRate != null && r.avgConfidence != null
+            ? r.avgConfidence - realizedWinRate
+            : null,
+        expectancyPerTrade: decided > 0 ? Math.round((r.totalPnlInr / decided) * 100) / 100 : null,
+      };
+    });
+
+    res.json({
+      lookbackDays,
+      setups,
+      // Live blend table used by the generator (setup×tradeType win rates + MFE/MAE)
+      activeCalibrations: getAllCalibrations(),
+      demotedSetups: getDemotedSetups(),
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    logger.error({ err }, "Calibration report failed");
+    res.status(500).json({ error: "Calibration report failed" });
+  }
 });
 
 // GET /api/system/monitored-symbols
@@ -566,7 +634,7 @@ router.post("/system/offhours-scan", async (req, res) => {
 
     if (forceReset) {
       try {
-        await db.delete(suggestionsTable).where(eq(suggestionsTable.status, "ACTIVE"));
+        await db.delete(suggestionsTable).where(inArray(suggestionsTable.status, ["ACTIVE", "PENDING"]));
       } catch (err) {
         req.log.error({ err }, "Failed to clear active suggestions before forced scan");
       }

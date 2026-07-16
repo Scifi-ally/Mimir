@@ -24,6 +24,8 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
   const ltp = useSymbolDataSelector(selectedSymbol, (d) => d.ltp);
   const tech_edge = useSymbolDataSelector(selectedSymbol, (d) => d.tech_edge);
   const regime_align = useSymbolDataSelector(selectedSymbol, (d) => d.regime_align);
+  const mtf_score = useSymbolDataSelector(selectedSymbol, (d) => d.mtf_score);
+  const mtf_total = useSymbolDataSelector(selectedSymbol, (d) => d.mtf_total);
   const data = { ltp, tech_edge, regime_align };
   const [selectedMetric, setSelectedMetric] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -39,7 +41,7 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const activeSignals = suggestions.filter((s) => s.status === "ACTIVE");
+  const activeSignals = suggestions.filter((s) => s.status === "ACTIVE" || s.status === "PENDING");
   const sorted = [...activeSignals].sort((a, b) => (b.riskReward ?? 0) - (a.riskReward ?? 0));
   const selectedSignal = sorted.find((s) => s.symbol === selectedSymbol) ?? null;
 
@@ -82,7 +84,6 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
   if (isScanActive) {
     return (
       <div className="h-full bg-transparent border-0 flex flex-col items-center justify-center text-neutral-600">
-        <p className="text-sm tracking-tight font-medium animate-pulse">Waiting for scan to finish...</p>
       </div>
     );
   }
@@ -161,7 +162,7 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
                  return <span key="trend" className={cn("uppercase whitespace-nowrap", color)}>{label} TREND</span>;
                })(),
                (session?.isMarketOpen || forecast || selectedSymbol?.includes("NIFTY") || selectedSymbol === "SENSEX") ? (
-                 <LiveChangePct key="changepct" symbol={selectedSymbol} decimals={2} className="text-xs font-bold" />
+                 <LiveChangePct key="changepct" symbol={selectedSymbol} decimals={2} className="text-sm font-bold" />
                ) : null,
              ].filter(Boolean).map((item, index) => (
                <div key={index} className="flex items-center gap-2">
@@ -227,7 +228,7 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
       >
         
         {/* ROW 2: Primary Signal Details */}
-      <motion.div variants={{ hidden: { opacity: 0, y: 10, scale: 0.99 }, visible: { opacity: 1, y: 0, scale: 1, transition: { type: "spring", stiffness: 380, damping: 28 } } }} className="grid grid-cols-3 gap-x-3 gap-y-2.5 py-2 border-y border-border shrink-0">
+      <motion.div variants={{ hidden: { opacity: 0, y: 10, scale: 0.99 }, visible: { opacity: 1, y: 0, scale: 1, transition: { type: "spring", stiffness: 380, damping: 28 } } }} className="grid grid-cols-3 gap-x-3 gap-y-2.5 py-2 border-y border-border/30 shrink-0">
           <TerminalStat label="LTP" value={<LivePrice symbol={selectedSymbol} decimals={2} fallback={insights?.indicators?.close} />} xl />
           
           <TerminalStat 
@@ -320,11 +321,11 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
               </motion.div>
             ) : (
               <motion.div layout transition={{ type: "spring", stiffness: 350, damping: 28 }} key="grid" initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 8 }} className="flex flex-col gap-1.5 w-full">
-                 <div className="grid grid-cols-2 gap-x-3 gap-y-1 w-full">
+                 <div className="grid grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)] gap-x-2 gap-y-1 w-full">
                    {/* Column A: Technicals */}
                    <div className="flex flex-col gap-1 min-w-0">
-                      <div className="text-[10px] font-bold uppercase tracking-widest text-neutral-500 mb-0.5 flex items-center gap-1.5"><BarChart3 className="h-3 w-3 shrink-0" /> Technical Matrix</div>
-                       <ul className="flex flex-col gap-1 text-xs font-mono min-w-0">
+                      <div className="text-[10px] font-bold uppercase tracking-widest text-neutral-500 mb-0.5 flex items-center gap-1.5"><BarChart3 className="h-3.5 w-3.5 shrink-0" /> Technical Matrix</div>
+                       <ul className="flex flex-col gap-1 text-[10.5px] font-mono min-w-0">
                          <MatrixRow onClick={() => setSelectedMetric("primaryTrend")} label="Primary Trend" tooltip="The overarching higher timeframe trend of the asset." value={(() => {
                             const unifiedTrend = (forecast?.trend || indicators?.trend || selectedSignal?.direction || "NEUTRAL").toString().toLowerCase();
                             if (unifiedTrend.includes("bull") || unifiedTrend === "up" || unifiedTrend === "buy") return "BULLISH";
@@ -336,7 +337,7 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
                             if (unifiedTrend.includes("bear") || unifiedTrend === "down" || unifiedTrend === "sell") return "text-bear";
                             return "text-yellow-500";
                           })()} />
-                         <MatrixRow onClick={() => setSelectedMetric("liquidityStatus")} label="Liquidity Status" tooltip="Detects if a major stop-hunt or liquidity sweep has just occurred." value={selectedSignal?.setupType === "LIQUIDITY_SWEEP" ? <span className="bg-purple-500/10 text-purple-400 px-1.5 py-0.5 rounded text-[10px]">SWEEP RECOVERY</span> : "STANDARD"} color={selectedSignal?.setupType === "LIQUIDITY_SWEEP" ? "text-purple-400 font-bold" : "text-neutral-400"} />
+                         <MatrixRow onClick={() => setSelectedMetric("liquidityStatus")} label="Liquidity Status" tooltip="Detects if a major stop-hunt or liquidity sweep has just occurred." value={selectedSignal?.setupType === "LIQUIDITY_SWEEP" ? <span className="text-purple-400 font-bold text-[10px]">SWEEP RECOVERY</span> : "STANDARD"} color={selectedSignal?.setupType === "LIQUIDITY_SWEEP" ? "text-purple-400 font-bold" : "text-neutral-400"} />
                          <MatrixRow onClick={() => setSelectedMetric("rsiMomentum")} label="RSI Momentum" tooltip="Relative Strength Index showing overbought/oversold conditions." value={
                            <div className="flex items-center">
                              {(() => {
@@ -394,8 +395,8 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
                    
                    {/* Column B: AI Factors */}
                    <div className="flex flex-col gap-1 min-w-0">
-                      <div className="text-[10px] font-bold uppercase tracking-widest text-neutral-500 mb-0.5 flex items-center gap-1.5"><Cpu className="h-3 w-3 shrink-0" /> AI Alpha Factors</div>
-                      <ul className="flex flex-col gap-1 text-xs font-mono min-w-0">
+                      <div className="text-[10px] font-bold uppercase tracking-widest text-neutral-500 mb-0.5 flex items-center gap-1.5"><Cpu className="h-3.5 w-3.5 shrink-0" /> AI Alpha Factors</div>
+                      <ul className="flex flex-col gap-1 text-[10.5px] font-mono min-w-0">
                          <MatrixRow onClick={() => setSelectedMetric("techEdge")} label="Tech Edge" tooltip="Algorithmic scoring of technical momentum and indicator alignment." value={
                            <div className="flex items-center">
                              {(() => {
@@ -427,40 +428,42 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
                            return fReturn !== 0 ? fmtPct(fReturn) : "—";
                          })()} color={forecast?.forecastReturnPct && forecast.forecastReturnPct > 0 ? "text-bull" : forecast?.forecastReturnPct && forecast.forecastReturnPct < 0 ? "text-bear" : "text-neutral-500"} />
                       </ul>
-                   </div>
+                    </div>
                  </div>
 
                  {/* Full-Width Rows for Long Metrics (MTF Confluence & Price Pattern) */}
-                 <div className="flex flex-col gap-1 pt-1 border-t border-border/15 w-full text-xs font-mono">
-                   <MatrixRow onClick={() => setSelectedMetric("mtfConfluence")} label="MTF Confluence" tooltip="Multi-timeframe score assessing alignment across multiple charts (15m, 1h, 1d)." value={
+                  <div className="flex flex-col gap-1 pt-1 border-t border-border/15 w-full text-[10.5px] font-mono">
+                    <MatrixRow onClick={() => setSelectedMetric("mtfConfluence")} label="MTF Confluence" tooltip="Multi-timeframe score assessing alignment across multiple charts (15m, 1h, 1d)." value={
                      (() => {
-                        const s = scan?.mtfScore ?? 0;
-                        const t = scan?.mtfTotal ?? 3;
-                        const conf = scan?.mtfConfluenceScore ?? (s === 0 ? -1 : 1);
-                        const isNoData = t === 0 || (s === 0 && t === 0);
+                        const rawS = scan?.mtfScore ?? (selectedSignal as any)?.mtfScore ?? mtf_score ?? 0;
+                        const rawT = scan?.mtfTotal ?? (selectedSignal as any)?.mtfTotal ?? mtf_total ?? 0;
+                        const s = rawS;
+                        const t = rawT > 0 ? rawT : (rawS > 0 ? 3 : (scan ? (scan.mtfTotal || 3) : 3));
+                        const conf = scan?.mtfConfluenceScore ?? (selectedSignal as any)?.mtfConfluenceScore ?? (s === 0 ? -1 : 1);
+                        const isNoData = (t === 0 && s === 0) || (scan === null && !selectedSignal && !mtf_score);
                         const isZeroConf = !isNoData && s === 0;
                         const isPartial = !isNoData && s > 0 && s < t;
                         const isStrong = !isNoData && s === t && t > 0;
 
                         let label = "DIVERGING TIMEFRAMES";
-                        let style = "bg-bear/10 text-bear";
+                        let style = "text-bear";
 
                         if (isNoData) {
                           label = "NO MTF DATA AVAILABLE";
-                          style = "bg-neutral-500/10 text-neutral-400";
+                          style = "text-neutral-400";
                         } else if (isZeroConf || conf < 0) {
-                          label = "NO ALIGNMENT (0/3)";
-                          style = "bg-bear/10 text-bear";
+                          label = `NO ALIGNMENT (${s}/${t})`;
+                          style = "text-bear";
                         } else if (isPartial || conf === 0) {
                           label = "PARTIAL ALIGNMENT";
-                          style = "bg-yellow-500/10 text-yellow-500";
+                          style = "text-yellow-500";
                         } else if (isStrong || conf > 0) {
                           label = "STRONG ALIGNMENT (15M, 1H, 1D)";
-                          style = "bg-bull/10 text-bull";
+                          style = "text-bull";
                         }
 
                         return (
-                          <span className={cn("px-2 py-0.5 rounded flex items-center gap-1.5 min-w-0 text-[10px] break-words", style)}>
+                          <span className={cn("flex items-center gap-1.5 min-w-0 text-[10px] font-bold break-words", style)}>
                             <span>{isNoData ? "—" : `${s}/${t}`} {label}</span>
                           </span>
                         );
@@ -468,12 +471,12 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
                    } color="text-foreground" />
                    <MatrixRow onClick={() => setSelectedMetric("pricePattern")} label="Price Pattern" tooltip="Specific candlestick or structural patterns identified on the chart." value={
                      forecast?.technicalPatterns && forecast.technicalPatterns.length > 0 ? (
-                       <span className="flex items-center gap-1.5 bg-orange-500/10 text-orange-500 px-2 py-0.5 rounded min-w-0 text-[10px] break-words">
+                       <span className="flex items-center gap-1.5 text-orange-500 min-w-0 text-[10px] font-bold break-words">
                          <Flame className="h-3 w-3 shrink-0" />
                          <span>{forecast.technicalPatterns[0].replace(/_/g, " ")}</span>
                        </span>
                      ) : (selectedSignal?.setupType || scan?.setupType) && (selectedSignal?.setupType || scan?.setupType) !== "LIQUIDITY_SWEEP" ? (
-                       <span className="flex items-center gap-1.5 bg-orange-500/10 text-orange-500 px-2 py-0.5 rounded min-w-0 text-[10px] break-words">
+                       <span className="flex items-center gap-1.5 text-orange-500 min-w-0 text-[10px] font-bold break-words">
                          <Flame className="h-3 w-3 shrink-0" />
                          <span>{(selectedSignal?.setupType || scan?.setupType || "").replace(/_/g, " ")}</span>
                        </span>
@@ -494,14 +497,14 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
         {/* ROW 5: Confidence Evolution */}
         {scoreHistory.length >= 2 && (
           <motion.div transition={{ type: "spring", stiffness: 350, damping: 28 }} variants={{ hidden: { opacity: 0, y: 10 }, visible: { opacity: 1, y: 0 } }} className="mt-2 pt-2 border-t border-border/10 shrink-0 flex flex-col min-h-0">
-            <div className="text-[10px] font-bold uppercase tracking-widest text-neutral-500 mb-2 shrink-0 flex items-center justify-between">
+            <div className="text-xs font-bold uppercase tracking-widest text-neutral-500 mb-2 shrink-0 flex items-center justify-between">
                <span>Confidence Evolution</span>
                {(() => {
                  const currentScore = scoreHistory[scoreHistory.length - 1];
                  const startScore = scoreHistory[0];
                  const diff = currentScore - startScore;
                  return (
-                   <span className={cn("text-[9px] px-1 rounded-sm font-mono", diff > 0 ? "bg-bull/10 text-bull" : diff < 0 ? "bg-bear/10 text-bear" : "bg-neutral-800/50 text-neutral-500")}>
+                   <span className={cn("text-[9px] font-mono font-bold tabular-nums", diff > 0 ? "text-bull" : diff < 0 ? "text-bear" : "text-neutral-500")}>
                       {diff > 0 ? "+" : ""}{fmtNum(diff, 0)} PTS
                    </span>
                  );
@@ -610,8 +613,8 @@ function AutoFitText({ children, className }: { children: React.ReactNode, class
 function TerminalStat({ label, value, xl, color }: { label: string; value: React.ReactNode; xl?: boolean; color?: string }) {
   return (
     <div className="flex flex-col min-w-0">
-      <span className="text-[10px] font-bold font-sans uppercase tracking-widest text-muted-foreground mb-0.5 truncate">{label}</span>
-      <AutoFitText className={cn("font-black font-mono tabular-nums tracking-tighter leading-none", xl ? "text-2xl" : "text-xl", color || "text-foreground")}>
+      <span className="text-[11px] font-bold font-sans uppercase tracking-widest text-muted-foreground mb-0.5 truncate whitespace-nowrap">{label}</span>
+      <AutoFitText className={cn("font-black font-mono tabular-nums tracking-tighter leading-none", xl ? "text-3xl" : "text-2xl", color || "text-foreground")}>
         {typeof value === "string" || typeof value === "number" ? <DecryptText text={String(value)} /> : value}
       </AutoFitText>
     </div>
@@ -666,7 +669,7 @@ function MetricDetailView({ metricId, onBack, insights, forecast, selectedSignal
           {forecast?.technicalPatterns && forecast.technicalPatterns.length > 0 ? (
              <div className="flex flex-col gap-1.5">
                {forecast.technicalPatterns.map((p: string) => (
-                 <div key={p} className="text-orange-500 py-1 border-b border-border/10 font-bold uppercase tracking-wide text-xs">{p.replace(/_/g, " ")}</div>
+                 <div key={p} className="text-orange-500 py-1 border-b border-border/10 font-bold uppercase tracking-wide text-sm">{p.replace(/_/g, " ")}</div>
                ))}
              </div>
           ) : (
@@ -834,9 +837,9 @@ function MetricDetailView({ metricId, onBack, insights, forecast, selectedSignal
 
 function MatrixRow({ label, value, color, tooltip, onClick, className }: { label: string; value: React.ReactNode; color: string; tooltip?: string; onClick?: () => void; className?: string }) {
   const content = (
-    <motion.li onClick={onClick} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.3 }} className={cn("flex justify-between items-start group gap-2 py-1 min-w-0 text-[11px]", onClick ? "cursor-pointer" : "cursor-default", className)}>
-      <span className={cn("text-muted-foreground transition-colors shrink-0 rounded py-0.5 px-1 -ml-1", onClick ? "group-hover:bg-white/5 group-hover:text-foreground apple-hover" : "group-hover:text-foreground")}>{label}</span>
-      <span className={cn("font-bold flex flex-wrap items-center justify-end text-right min-w-0 tabular-nums break-words", color)}>
+    <motion.li onClick={onClick} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.3 }} className={cn("flex justify-between items-center group gap-1.5 py-1 min-w-0 text-[13px] sm:text-[14px] overflow-hidden", onClick ? "cursor-pointer" : "cursor-default", className)}>
+      <span className={cn("text-muted-foreground transition-colors shrink rounded py-0.5 px-1 -ml-1 truncate whitespace-nowrap", onClick ? "group-hover:bg-white/5 group-hover:text-foreground apple-hover" : "group-hover:text-foreground")}>{label}</span>
+      <span className={cn("font-bold flex items-center justify-end text-right shrink-0 tabular-nums whitespace-nowrap", color)}>
         {typeof value === 'string' || typeof value === 'number' ? <DecryptText text={String(value)} /> : value}
       </span>
     </motion.li>

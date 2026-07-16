@@ -11,6 +11,7 @@
 import axios from "axios";
 import { getAccessToken, invalidateAccessToken } from "../upstox/auth";
 import { updateMarketState } from "./market_state";
+import { recordVixSample } from "../analysis/market_internals";
 import { detectRegime } from "../analysis/regime_detector";
 import { logger } from "../lib/logger";
 import { getISTDateStr } from "../lib/ist-time";
@@ -68,7 +69,7 @@ let prevCloseFetchedDate: string | null = null;
  * Called once per day at market open (09:15 IST).
  */
 export async function initMarketFeed(): Promise<void> {
-  const token = getAccessToken();
+  const token = getAccessToken("trading");
   if (!token) {
     feedSnapshot = {
       ...feedSnapshot,
@@ -115,12 +116,13 @@ export async function initMarketFeed(): Promise<void> {
       timeout: 10_000,
     });
 
-    // Candles come newest-first from Upstox.
-    // candles[0] = today's in-progress candle (if market is open)
-    // candles[1] = yesterday's completed candle
+    // Candles come newest-first from Upstox. During market hours candles[0]
+    // is today's in-progress candle; pre-open there is NO today candle, so
+    // blindly taking candles[1] returns the close from two days ago. Pick the
+    // newest candle whose IST date is before today instead.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const candles: any[][] = resp.data?.data?.candles ?? [];
-    if (candles.length < 2) {
+    if (candles.length < 1) {
       logger.warn(
         { candles: candles.length },
         "Not enough Nifty candles for prev close",
@@ -128,7 +130,16 @@ export async function initMarketFeed(): Promise<void> {
       return;
     }
 
-    niftyPrevClose = candles[1]?.[4] as number; // [4] = close
+    const prevCandle = candles.find((c) => {
+      const ts = c?.[0];
+      return typeof ts === "string" && getISTDateStr(new Date(ts)) < todayIST;
+    });
+    if (!prevCandle || typeof prevCandle[4] !== "number") {
+      logger.warn({ candles: candles.length }, "No completed prior-day Nifty candle found");
+      return;
+    }
+
+    niftyPrevClose = prevCandle[4] as number; // [4] = close
     prevCloseFetchedDate = todayIST;
     feedSnapshot = {
       ...feedSnapshot,
@@ -154,7 +165,7 @@ export async function initMarketFeed(): Promise<void> {
  * HIGH FIX (Issue #9): Added retry logic with exponential backoff for transient failures
  */
 export async function updateMarketFeed(): Promise<void> {
-  const token = getAccessToken();
+  const token = getAccessToken("trading");
   if (!token) {
     feedSnapshot = {
       ...feedSnapshot,
@@ -217,6 +228,7 @@ export async function updateMarketFeed(): Promise<void> {
 
       if (vixLTP !== null) {
         stateUpdate.indiaVix = vixLTP;
+        recordVixSample(vixLTP); // feed the VIX rate-of-change window
       }
 
       updateMarketState(stateUpdate);
@@ -322,7 +334,7 @@ export function resetMarketFeedCache(): void {
 }
 
 export function getMarketFeedSnapshot(): MarketFeedSnapshot {
-  const tokenPresent = getAccessToken() !== null;
+  const tokenPresent = getAccessToken("trading") !== null;
   return {
     ...feedSnapshot,
     authenticated: feedSnapshot.authenticated || tokenPresent,

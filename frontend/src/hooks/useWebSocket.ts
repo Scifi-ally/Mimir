@@ -6,18 +6,23 @@ import { marketDataStore } from "@/providers/MarketDataProvider";
 
 let activeWsSocket: WebSocket | null = null;
 let pendingSymbols: string[] = [];
-
+const currentSubscribedSymbols = new Set<string>();
 let lastSubscribedSymbolsKey = "";
 
 export function subscribeWsSymbols(symbols: string[]) {
-  const newKey = symbols.slice().sort().join(",");
-  if (newKey === lastSubscribedSymbolsKey) return;
+  if (!symbols || !Array.isArray(symbols)) return;
+  const cleanSymbols = symbols.map(s => typeof s === "string" ? s.trim() : "").filter(Boolean);
+  cleanSymbols.forEach(s => currentSubscribedSymbols.add(s));
+
+  const toSubscribe = Array.from(currentSubscribedSymbols);
+  const newKey = toSubscribe.sort().join(",");
+  if (newKey === lastSubscribedSymbolsKey && activeWsSocket?.readyState === WebSocket.OPEN) return;
   lastSubscribedSymbolsKey = newKey;
 
-  if (activeWsSocket?.readyState === WebSocket.OPEN && symbols && symbols.length > 0) {
-    activeWsSocket.send(JSON.stringify({ event: "subscribe_symbols", data: { symbols } }));
-  } else if (symbols && symbols.length > 0) {
-    pendingSymbols = Array.from(new Set([...pendingSymbols, ...symbols]));
+  if (activeWsSocket?.readyState === WebSocket.OPEN && toSubscribe.length > 0) {
+    activeWsSocket.send(JSON.stringify({ event: "subscribe_symbols", data: { symbols: toSubscribe } }));
+  } else if (toSubscribe.length > 0) {
+    pendingSymbols = Array.from(new Set([...pendingSymbols, ...toSubscribe]));
   }
 }
 
@@ -144,9 +149,11 @@ export function useWebSocket() {
         checkConnected();
         lastMessageTimeMd = Date.now();
         nextSocketMd.send(JSON.stringify({ event: "subscribe", data: { topic: "ticks" } }));
-        if (pendingSymbols.length > 0) {
-          nextSocketMd.send(JSON.stringify({ event: "subscribe_symbols", data: { symbols: pendingSymbols } }));
+        const allSymbols = Array.from(new Set([...Array.from(currentSubscribedSymbols), ...pendingSymbols]));
+        if (allSymbols.length > 0) {
+          nextSocketMd.send(JSON.stringify({ event: "subscribe_symbols", data: { symbols: allSymbols } }));
           pendingSymbols = [];
+          lastSubscribedSymbolsKey = allSymbols.sort().join(",");
         }
         nextSocketMd.send(JSON.stringify({ event: "subscribe", data: { topic: "monitoring" } }));
         subscribeSymbol(nextSocketMd);
@@ -157,6 +164,7 @@ export function useWebSocket() {
         if (cancelled) return;
         if (activeWsSocket === socketMd) activeWsSocket = null;
         if (wsRef.current === socketMd) wsRef.current = null;
+        lastSubscribedSymbolsKey = "";
         isMdConnected = false;
         checkConnected();
         if (socketMd && socketMd.readyState !== WebSocket.CLOSED) socketMd.close();
@@ -303,16 +311,24 @@ export function useWebSocket() {
             case "suggestion_updated":
               debouncedInvalidate(["suggestions"]);
               break;
+            case "position_update":
+              // Trailing-stop / manual-close updates from position_tracker
+              debouncedInvalidate(["suggestions"]);
+              debouncedInvalidate(["positions"]);
+              break;
+            case "daily_loss_limit_reached":
+              debouncedInvalidate(["suggestions"]);
+              useStore.getState().addEvent({
+                type: "warning",
+                title: "Loss Limit Reached",
+                message: `Daily loss limit hit — new suggestions paused.`,
+              });
+              break;
             case "market_regime_changed":
               debouncedInvalidate(["regime"]);
               break;
             case "alert":
               debouncedInvalidate(["alerts"]);
-              useStore.getState().showIsland({
-                title: event.data.symbol || "Alert",
-                subtitle: event.data.message,
-                isNotification: true,
-              });
               useStore.getState().addEvent({
                 type: "warning",
                 title: event.data.symbol ? "Alert Triggered" : "System Alert",
@@ -321,23 +337,49 @@ export function useWebSocket() {
               });
               break;
             case "system_alert":
-              if (!event.data.message.toLowerCase().includes("connected to upstox")) {
-                useStore.getState().showIsland({
-                  title: "System Notification",
-                  subtitle: event.data.message,
-                  isNotification: true,
-                });
-              }
-              useStore.getState().addEvent({
-                type: "info",
-                title: "System Notification",
-                message: event.data.message,
-              });
-              // Safety net: if the alert is about a scan failure, force-reset scan state
               {
-                const msg = (event.data.message || "").toLowerCase();
-                if (msg.includes("scanner failed") || msg.includes("scan failed")) {
-                  setScanState({ scanning: false, phase: "failed", current: 0, total: 0, message: event.data.message, updatedAt: Date.now() });
+                const msgText = event.data.message || "";
+                const lower = msgText.toLowerCase();
+                const isLiveOrderEvent = lower.startsWith("live ");
+                const isModeChange = lower.includes("live trading armed") || lower.includes("live trading disarmed");
+
+                if (isLiveOrderEvent || isModeChange) {
+                  // Real-money events get first-class island treatment and
+                  // refresh the live panel + mode badge immediately.
+                  useStore.getState().showIsland({
+                    title: isModeChange
+                      ? (lower.includes("armed") ? "Live Trading Armed" : "Live Trading Disarmed")
+                      : lower.includes("failed") ? "Live Order Failed" : "Live Order Placed",
+                    subtitle: msgText,
+                    isNotification: true,
+                  });
+                  useStore.getState().addEvent({
+                    type: lower.includes("failed") ? "warning" : "info",
+                    title: isModeChange ? "Trading Mode" : "Live Order",
+                    message: msgText,
+                  });
+                  debouncedInvalidate(["trading-mode"]);
+                  debouncedInvalidate(["live", "orders"]);
+                  debouncedInvalidate(["live", "positions"]);
+                  debouncedInvalidate(["live", "funds"]);
+                  break;
+                }
+
+                if (!lower.includes("connected to upstox")) {
+                  useStore.getState().showIsland({
+                    title: "System Notification",
+                    subtitle: msgText,
+                    isNotification: true,
+                  });
+                }
+                useStore.getState().addEvent({
+                  type: "info",
+                  title: "System Notification",
+                  message: msgText,
+                });
+                // Safety net: if the alert is about a scan failure, force-reset scan state
+                if (lower.includes("scanner failed") || lower.includes("scan failed")) {
+                  setScanState({ scanning: false, phase: "failed", current: 0, total: 0, message: msgText, updatedAt: Date.now() });
                   queryClient.setQueryData(["session"], (old: any) => old ? { ...old, scanRunning: false } : old);
                 }
               }
@@ -404,12 +446,26 @@ export function useWebSocket() {
         wsRef.current.onclose = null;
         wsRef.current.onerror = null;
         wsRef.current.onmessage = null;
-        if (wsRef.current.readyState !== WebSocket.CLOSED) {
+        if (wsRef.current.readyState === WebSocket.CONNECTING) {
+          const currentWs = wsRef.current;
+          currentWs.onopen = () => currentWs.close();
+        } else if (wsRef.current.readyState === WebSocket.OPEN) {
           wsRef.current.close();
         }
       }
-      if (socketInt && socketInt !== wsRef.current && socketInt.readyState !== WebSocket.CLOSED) {
-        socketInt.close();
+      if (socketInt && socketInt !== wsRef.current) {
+        if (socketInt.readyState === WebSocket.CONNECTING) {
+          socketInt.onopen = () => socketInt?.close();
+        } else if (socketInt.readyState === WebSocket.OPEN) {
+          socketInt.close();
+        }
+      }
+      if (socketMd && socketMd !== wsRef.current) {
+        if (socketMd.readyState === WebSocket.CONNECTING) {
+          socketMd.onopen = () => socketMd?.close();
+        } else if (socketMd.readyState === WebSocket.OPEN) {
+          socketMd.close();
+        }
       }
       wsRef.current = null;
       if (worker) {

@@ -57,8 +57,14 @@ async function doFetchOptionChain(): Promise<OptionChainSnapshot | null> {
     }
 
     const spotPrice = data.records.underlyingValue;
-    const totalCE_OI = data.filtered.CE.totOI || 1; 
-    const totalPE_OI = data.filtered.PE.totOI || 0;
+    const totalCE_OI = data.filtered?.CE?.totOI;
+    const totalPE_OI = data.filtered?.PE?.totOI;
+    // Reject rather than fabricate: `|| 1` here previously turned missing CE OI
+    // into PCR = PE_OI/1, wildly overstating put pressure into regime logic.
+    if (!totalCE_OI || !totalPE_OI || totalCE_OI <= 0) {
+      logger.warn({ totalCE_OI, totalPE_OI }, "Option Chain: OI totals missing/zero — rejecting snapshot");
+      return null;
+    }
     const pcr = totalPE_OI / totalCE_OI;
 
     const expiries = data.records.expiryDates;
@@ -90,14 +96,9 @@ async function doFetchOptionChain(): Promise<OptionChainSnapshot | null> {
     return cache;
 
   } catch (err: any) {
-    logger.warn({ error: err?.message || String(err), status: err?.response?.status }, "Option Chain fetch failed, using fallback");
-    cache = {
-      pcr: 0.94,
-      maxPain: 23500,
-      spotPrice: 23545.2,
-      fetchedAt: new Date()
-    };
-    return cache;
+    logger.warn({ error: err?.message || String(err), status: err?.response?.status }, "Option Chain fetch failed — no data available");
+    // Return null, never fabricated PCR/max-pain: these feed the UI and regime logic.
+    return null;
   } finally {
     isFetching = false;
   }

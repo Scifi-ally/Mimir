@@ -1,0 +1,1 @@
+ALTER TABLE "trading_config" ADD COLUMN "use_dual_api_keys" boolean DEFAULT false NOT NULL;

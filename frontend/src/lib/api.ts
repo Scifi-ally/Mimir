@@ -114,7 +114,7 @@ export const api = {
     apiFetch<{ candles: import("@/types/api").Candle[] }>(
       `/api/market/candles?symbol=${encodeURIComponent(symbol)}&interval=${interval}&lookbackDays=${lookbackDays}${endDate ? `&endDate=${encodeURIComponent(endDate)}` : ""}`,
     ),
-  authUrl: () => apiFetch<{ url: string; alreadyAuthenticated?: boolean; error?: string }>("/api/system/auth-url"),
+  authUrl: (type?: "trading" | "data") => apiFetch<{ url: string; alreadyAuthenticated?: boolean; error?: string }>(`/api/system/auth-url${type ? `?type=${type}` : ""}`),
   triggerScan: () =>
     apiFetch<{ started: boolean; mode?: string; error?: string; alreadyRunning?: boolean }>(
       "/api/system/offhours-scan",
@@ -182,15 +182,35 @@ export const api = {
       { symbol, history: [] }
     );
   },
+  // Fallback must be honest: null fields render as "N/A", never fabricated numbers.
   indianContext: () => apiFetchSoft<unknown>("/api/market/indian-context", {
-    fiiDii: { fiiNetInr: -1420.5, diiNetInr: 2180.7, fetchedAt: new Date().toISOString() },
-    niftyOptionChain: { pcr: 0.94, maxPain: 23500, spotPrice: 23545.2, fetchedAt: new Date().toISOString() },
-    usdInr: 86.45,
-    india10y: 7.08,
-    macroScore: 15,
+    fiiDii: null,
+    niftyOptionChain: null,
+    usdInr: null,
+    india10y: null,
+    macroScore: null,
     eventRiskActive: false
   }),
   get paper() { return this.paperTrading; },
+  tradingMode: () =>
+    apiFetch<{ mode: "PAPER" | "LIVE"; liveActive: boolean; brokerAuthenticated: boolean; armPhrase: string }>(
+      "/api/trading/mode",
+    ),
+  setTradingMode: (mode: "PAPER" | "LIVE", confirmationPhrase?: string) =>
+    apiFetch<{ mode: "PAPER" | "LIVE"; liveActive: boolean; availableMargin?: number }>("/api/trading/mode", {
+      method: "POST",
+      body: JSON.stringify({ mode, confirmationPhrase }),
+    }),
+  liveBrokerPositions: () =>
+    apiFetch<Array<{ symbol: string; quantity: number; avgPrice: number; lastPrice: number; pnl: number; product: string }>>(
+      "/api/trading/live/positions",
+    ),
+  liveBrokerFunds: () =>
+    apiFetch<{ availableMargin: number; usedMargin: number }>("/api/trading/live/funds"),
+  liveOrders: (limit = 50) =>
+    apiFetch<Array<{ id: string; symbol: string; direction: string; orderType: string; quantity: number; price: string | null; status: string; statusMessage: string | null; brokerOrderId: string | null; placedAt: string }>>(
+      `/api/trading/live/orders?limit=${limit}`,
+    ),
   alertsHistory: () => apiFetch<import("@/types/api").AlertRecord[]>("/api/alerts/history"),
   reports: () => apiFetch<Array<{ id: string; date: string; summary: string; content: string; createdAt: string }>>("/api/reports"),
   getConfig: (reveal = true) => apiFetch<import("@/types/api").SystemConfig>(reveal ? "/api/config?reveal=true" : "/api/config"),

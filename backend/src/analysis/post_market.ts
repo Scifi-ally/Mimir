@@ -117,10 +117,10 @@ export async function savePostMarketData(): Promise<void> {
     const mktState = getMarketState();
     if (mktState.niftyPrice != null) {
       const strongestSector =
-        mktState.topSectors.sort((a, b) => b.changePct - a.changePct)[0]
+        [...mktState.topSectors].sort((a, b) => b.changePct - a.changePct)[0]
           ?.name ?? null;
       const weakestSector =
-        mktState.topSectors.sort((a, b) => a.changePct - b.changePct)[0]
+        [...mktState.topSectors].sort((a, b) => a.changePct - b.changePct)[0]
           ?.name ?? null;
 
       await db

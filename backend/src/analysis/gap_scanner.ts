@@ -5,7 +5,7 @@ import { eq, and } from "drizzle-orm";
 import { getAccessToken } from "../upstox/auth";
 import { NSE_UNIVERSE } from "./stock_scanner";
 import { logger } from "../lib/logger";
-import { getISTDateStr } from "../lib/ist-time";
+import { getISTDateStr, shiftISTDateStr } from "../lib/ist-time";
 
 interface GapResult {
   symbol: string;
@@ -24,9 +24,7 @@ async function fetchPrevClose(
 ): Promise<number | null> {
   try {
     const today = getISTDateStr();
-    const from = new Date(Date.now() + 330 * 60 * 1000);
-    from.setUTCDate(from.getUTCDate() - 7); // look back 7 days to skip holidays
-    const fromStr = from.toISOString().split("T")[0]!;
+    const fromStr = shiftISTDateStr(today, -7); // look back 7 days to skip holidays
 
     const url = `https://api.upstox.com/v2/historical-candle/${encodeURIComponent(instrumentKey)}/day/${today}/${fromStr}`;
     const resp = await axios.get(url, {
@@ -125,6 +123,12 @@ export async function runGapScan(forDate?: string): Promise<void> {
     const ltp = ltpBySymbol[s.symbol];
     if (!prev || !ltp) continue;
 
+    // Avoid division by zero
+    if (prev.close === 0) {
+      logger.warn({ prevClose: prev.close, symbol: s.symbol }, "Skipping gap calculation due to zero previous close");
+      continue;
+    }
+
     const gapPct = ((ltp - prev.close) / prev.close) * 100;
     if (Math.abs(gapPct) < 1.5) continue; // Only significant gaps
 
@@ -169,7 +173,7 @@ export async function runGapScan(forDate?: string): Promise<void> {
   const rows = topGaps.map((g) => ({
     forDate: targetDate,
     symbol: g.symbol,
-    name: g.name,
+    name: g.name ? g.name.substring(0, 95) : "",
     category: "GAP_CANDIDATE" as const,
     condition: g.condition,
     priority: g.priority,

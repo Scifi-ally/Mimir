@@ -1,5 +1,4 @@
 import { useRef, useEffect, memo } from "react";
-import { animate } from "framer-motion";
 
 interface AnimatedNumberProps {
   value: number | null | undefined;
@@ -14,12 +13,12 @@ interface AnimatedNumberProps {
 }
 
 /**
- * AnimatedNumber - Smooth counting animation with flash effects
+ * AnimatedNumber - Number display with flash effects on change
  * 
  * Features:
- * - Counts up/down smoothly when value changes
+ * - Updates immediately when value changes without countdown/counting effect
  * - Flashes green on increase, red on decrease
- * - Customizable speed, decimals, and formatting
+ * - Customizable decimals and formatting
  * - Performance optimized with memo and refs
  */
 export const AnimatedNumber = memo(function AnimatedNumber({
@@ -29,7 +28,7 @@ export const AnimatedNumber = memo(function AnimatedNumber({
   prefix = "",
   suffix = "",
   showSign = false,
-  duration = 0.4,
+  duration: _ = 0.4,
   formatFn,
   flashColor = true,
 }: AnimatedNumberProps) {
@@ -60,34 +59,14 @@ export const AnimatedNumber = memo(function AnimatedNumber({
       }, 300);
     }
 
-    // Animate the number
-    if (prevValueRef.current === null || prevValueRef.current === value) {
-      // First render or no change - set immediately
-      const formatted = formatFn 
-        ? formatFn(value)
-        : value.toFixed(decimals);
-      const sign = showSign && value > 0 ? "+" : "";
-      node.textContent = `${sign}${formatted}`;
-      prevValueRef.current = value;
-      return;
-    }
-
-    // Animate from previous to current
-    const controls = animate(prevValueRef.current, value, {
-      duration,
-      ease: "easeOut",
-      onUpdate(latest) {
-        const formatted = formatFn
-          ? formatFn(latest)
-          : latest.toFixed(decimals);
-        const sign = showSign && latest > 0 ? "+" : "";
-        node.textContent = `${sign}${formatted}`;
-      },
-    });
-
+    // Update value directly without countdown/counting animation
+    const formatted = formatFn 
+      ? formatFn(value)
+      : value.toFixed(decimals);
+    const sign = showSign && value > 0 ? "+" : "";
+    node.textContent = `${sign}${formatted}`;
     prevValueRef.current = value;
-    return () => controls.stop();
-  }, [value, decimals, showSign, duration, formatFn, flashColor]);
+  }, [value, decimals, showSign, formatFn, flashColor]);
 
   if (value == null) {
     return <span className={`tabular-nums ${className}`}>—</span>;

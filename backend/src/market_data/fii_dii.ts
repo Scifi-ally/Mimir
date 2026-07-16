@@ -11,6 +11,7 @@ import { logger } from "../lib/logger";
 import { db } from "../../db/src";
 import { institutionalFlowsTable } from "../../db/src/schema/institutional_flows";
 import { resetDivergenceCache } from "../analysis/divergence_engine";
+import { getISTDateStr } from "../lib/ist-time";
 
 const NSE_HOME_URL = "https://www.nseindia.com/";
 const NSE_FIIDII_URL = "https://www.nseindia.com/api/fiidiiTradeReact";
@@ -77,7 +78,9 @@ async function doFetchFIIDIIData(): Promise<FIIDIISnapshot | null> {
       throw new Error("Parse failed on net values");
     }
 
-    const todayStr = new Date().toISOString().split("T")[0];
+    // IST trading date, not UTC — at 02:00 UTC the IST day has already rolled,
+    // and a UTC key would upsert under the previous day's row.
+    const todayStr = getISTDateStr();
     try {
       await db.insert(institutionalFlowsTable)
         .values({
@@ -116,14 +119,9 @@ async function doFetchFIIDIIData(): Promise<FIIDIISnapshot | null> {
       logger.error({ err: dbErr }, "FII/DII database fallback failed");
     }
 
-    // Always provide reliable fallback data so UI never shows N/A
-    cache = {
-      fiiNetInr: -1420.5,
-      diiNetInr: 2180.7,
-      fetchedAt: new Date(),
-    };
-    resetDivergenceCache();
-    return cache;
+    // No live data and no DB history — return null so callers/UI show N/A.
+    // Never fabricate flows: fake numbers feed regime detection and scoring.
+    return null;
   } finally {
     isFetching = false;
   }

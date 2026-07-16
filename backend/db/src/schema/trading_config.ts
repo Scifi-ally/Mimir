@@ -58,11 +58,15 @@ export const tradingConfigTable = pgTable("trading_config", {
     .default("8"),
   maxDeployedCapitalPct: decimal("max_deployed_capital_pct", { precision: 5, scale: 2 }).default("90"),
   paperTradingEnabled: boolean("paper_trading_enabled").notNull().default(true),
+  // "PAPER" | "LIVE" — LIVE mirrors every simulated fill to the broker as a
+  // real order. Requires explicit arming from the settings UI.
+  tradingMode: varchar("trading_mode", { length: 10 }).notNull().default("PAPER"),
   upstoxApiKey: text("upstox_api_key"),
   upstoxApiSecret: text("upstox_api_secret"),
   upstoxRedirectUri: text("upstox_redirect_uri"),
   upstoxDataApiKey: text("upstox_data_api_key"),
   upstoxDataApiSecret: text("upstox_data_api_secret"),
+  useDualApiKeys: boolean("use_dual_api_keys").notNull().default(false),
   discordWebhookUrl: text("discord_webhook_url"),
   telegramBotToken: text("telegram_bot_token"),
   telegramChatId: text("telegram_chat_id"),

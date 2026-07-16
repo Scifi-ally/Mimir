@@ -8,6 +8,20 @@ import type {
   TechnicalSnapshot,
 } from "./technical";
 
+// Setups with proven-negative expectancy under honest fills
+// (scripts/backtest_setups.ts, 365d, 2054 instruments, costs included):
+//   BREAKDOWN 2.5-5% WR, BEAR_MOMENTUM ~12% WR, BOLLINGER_SQUEEZE -1.4%/trade,
+//   LIQUIDITY_SWEEP -0.5%/trade, BREAKOUT -0.6%/trade.
+// Still detected for monitoring/UI, but never become trade suggestions.
+// Re-run the backtest before re-enabling any of these.
+export const NEGATIVE_EXPECTANCY_SETUPS = new Set([
+  "BREAKDOWN",
+  "BEAR_MOMENTUM",
+  "BOLLINGER_SQUEEZE_BREAKOUT",
+  "LIQUIDITY_SWEEP",
+  "BREAKOUT",
+]);
+
 export const SCORING_WEIGHTS = {
   WEAK_HTF_CONTEXT_PENALTY: 0.4,
   RS_STRONG_BOOST: 0.4,
@@ -997,7 +1011,7 @@ async function fetchDailyCandles(
   // eslint-disable-next-line unused-imports/no-unused-vars, @typescript-eslint/no-unused-vars
   _priority = false
 ): Promise<OHLCV[]> {
-  const token = getAccessToken();
+  const token = getAccessToken("data");
   if (!token) {
     logger.error("fetchDailyCandles: No authentication token available");
     throw new Error("Not authenticated");
@@ -1071,7 +1085,7 @@ async function fetchHourlyCandles(
   // eslint-disable-next-line unused-imports/no-unused-vars, @typescript-eslint/no-unused-vars
   _priority = false
 ): Promise<OHLCV[]> {
-  const token = getAccessToken();
+  const token = getAccessToken("data");
   if (!token) return [];
 
   const cacheKey = `${instrumentKey}_${daysBack}_${endDate ?? "latest"}`;
@@ -1118,7 +1132,7 @@ export async function fetchNiftyDailyCandles(
   daysBack = 180,
   toDate?: string,
 ): Promise<OHLCV[]> {
-  const token = getAccessToken();
+  const token = getAccessToken("data");
   if (!token) return [];
 
   const toDateStr = toDate ?? getLastCompletedTradingDayStr();
@@ -1501,7 +1515,9 @@ export async function scanStock(
     // Compute RS vs Nifty
     const rs60 = niftyCandles ? computeRS60(dailyCandles, niftyCandles) : 1.0;
 
-    let allCandidates = workerResult.allCandidates;
+    let allCandidates = workerResult.allCandidates.filter(
+      (c) => !NEGATIVE_EXPECTANCY_SETUPS.has(c.setupType),
+    );
 
     if (!allCandidates.length) {
       const fallback = buildIntradayFallbackSetup(snap, multiTf.signal);
@@ -1710,7 +1726,10 @@ export async function diagnoseScanNullReason(
       detectRangeLong(dailyCandles, snap),
       detectRangeShort(dailyCandles, snap),
     ].filter(
-      (c): c is NonNullable<typeof c> => c !== null && c.riskReward >= minRR,
+      (c): c is NonNullable<typeof c> =>
+        c !== null &&
+        c.riskReward >= minRR &&
+        !NEGATIVE_EXPECTANCY_SETUPS.has(c.setupType),
     );
     if (!allCandidates.length) return "no_setup_candidates";
 
@@ -1753,7 +1772,7 @@ export async function scanMarket(
   }) => void,
   abortCheck?: () => boolean,
 ): Promise<ScanResult[]> {
-  const token = getAccessToken();
+  const token = getAccessToken("data");
   if (!token) {
     logger.warn("Market scan skipped — Upstox not authenticated");
     return [];
@@ -1889,10 +1908,10 @@ export async function scanMarket(
     
     const last = r.candles[r.candles.length - 1]!;
     const prev = r.candles[r.candles.length - 2]!;
-    const dayChange = (last.close - prev.close) / prev.close; // Fraction, not percentage, since topSectors uses fractions typically, wait let's check!
+    const dayChangePct = ((last.close - prev.close) / prev.close) * 100;
 
     const current = sectorMap.get(r.sector) ?? { total: 0, count: 0 };
-    current.total += dayChange;
+    current.total += dayChangePct;
     current.count += 1;
     sectorMap.set(r.sector, current);
   }

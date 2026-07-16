@@ -34,6 +34,8 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
   const [tokenSavedToast, setTokenSavedToast] = useState(false);
   const [saveSuccessMessage, setSaveSuccessMessage] = useState<string | null>(null);
   const [actionFeedback, setActionFeedback] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [armingLive, setArmingLive] = useState(false);
+  const [armPhraseInput, setArmPhraseInput] = useState("");
 
   // Load config from backend
   const { data: config, isLoading } = useQuery({
@@ -41,6 +43,36 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
     queryFn: () => api.getConfig(true),
     enabled: isOpen,
     staleTime: 0,
+  });
+
+  // Trading mode (separate arming flow, not part of the config form)
+  const tradingModeQuery = useQuery({
+    queryKey: ["trading-mode"],
+    queryFn: api.tradingMode,
+    enabled: isOpen,
+    staleTime: 0,
+  });
+
+  const setModeMutation = useMutation({
+    mutationFn: ({ mode, confirmationPhrase }: { mode: "PAPER" | "LIVE"; confirmationPhrase?: string }) =>
+      api.setTradingMode(mode, confirmationPhrase),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ["trading-mode"] });
+      queryClient.invalidateQueries({ queryKey: ["system-config"] });
+      setArmingLive(false);
+      setArmPhraseInput("");
+      setActionFeedback({
+        type: "success",
+        text: res.mode === "LIVE"
+          ? `Live trading ARMED. Available margin ₹${Math.round(res.availableMargin ?? 0).toLocaleString("en-IN")}.`
+          : "Disarmed — engine is back in paper mode.",
+      });
+      setTimeout(() => setActionFeedback(null), 6000);
+    },
+    onError: (err: Error) => {
+      setActionFeedback({ type: "error", text: err.message || "Failed to switch trading mode" });
+      setTimeout(() => setActionFeedback(null), 6000);
+    },
   });
 
   useEffect(() => {
@@ -68,8 +100,8 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
     onSuccess: (newConfig) => {
       setFormData({ ...newConfig });
       queryClient.setQueryData(["system-config"], newConfig);
-      queryClient.invalidateQueries({ queryKey: ["system-status"] });
-      queryClient.invalidateQueries({ queryKey: ["session-state"] });
+      queryClient.invalidateQueries({ queryKey: ["status"] });
+      queryClient.invalidateQueries({ queryKey: ["session"] });
       setSaveSuccessMessage("Settings successfully saved and applied to live engine!");
       setTimeout(() => setSaveSuccessMessage(null), 4000);
     },
@@ -278,38 +310,73 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                   {/* TAB 1: BROKER INTEGRATION */}
                   {activeTab === "broker" && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-6">
+                      <div className="flex flex-col col-span-1 md:col-span-2">
+                        <div className="flex items-center gap-2 mb-1.5">
+                          <label className="text-sm font-semibold text-foreground tracking-tight">API Key Configuration Mode</label>
+                          <Tooltip content="Use a single API key, or dual API keys to split data analysis and live tick streaming to prevent rate limits." align="start">
+                            <span className="text-[10px] text-muted-foreground/60 hover:text-primary cursor-help">ⓘ</span>
+                          </Tooltip>
+                        </div>
+                        <div className="flex items-center gap-6 py-2 border-b border-foreground/15">
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="radio"
+                              name="dualMode"
+                              checked={formData.useDualApiKeys === false}
+                              onChange={() => handleInputChange("useDualApiKeys", false)}
+                              className="accent-primary w-3 h-3"
+                            />
+                            <span className="text-xs font-black text-bull">SINGLE KEY</span>
+                          </label>
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="radio"
+                              name="dualMode"
+                              checked={formData.useDualApiKeys === true}
+                              onChange={() => handleInputChange("useDualApiKeys", true)}
+                              className="accent-primary w-3 h-3"
+                            />
+                            <span className="text-xs font-black text-destructive">DUAL KEYS (RECOMMENDED)</span>
+                          </label>
+                        </div>
+                      </div>
+
                       {renderField(
-                        "Upstox Trading API Key",
-                        "Main Upstox API key used for executing real orders. Found in your Upstox Developer Console.",
+                        formData.useDualApiKeys ? "Upstox Feed API Key (Live Ticks)" : "Upstox API Key",
+                        formData.useDualApiKeys ? "Dedicated API Key to handle frontend real-time tick streaming & live charts." : "Your primary Upstox API key used for data analysis and tick streaming.",
                         "text",
                         formData.upstoxApiKey,
                         (e) => handleInputChange("upstoxApiKey", e.target.value),
                         "e.g. 8d3b2a1..."
                       )}
                       {renderField(
-                        "Upstox Trading API Secret",
-                        "The secret corresponding to your Trading API Key.",
+                        "Upstox Feed API Secret",
+                        "The secret corresponding to your Feed API Key.",
                         "password",
                         formData.upstoxApiSecret,
                         (e) => handleInputChange("upstoxApiSecret", e.target.value),
                         "********",
                         "upstoxApiSecret"
                       )}
-                      {renderField(
-                        "Upstox Data API Key (Optional)",
-                        "Separate API key if you have a distinct Upstox app for market data subscriptions.",
-                        "text",
-                        formData.upstoxDataApiKey,
-                        (e) => handleInputChange("upstoxDataApiKey", e.target.value)
-                      )}
-                      {renderField(
-                        "Upstox Data API Secret (Optional)",
-                        "Secret for your separate Data API key.",
-                        "password",
-                        formData.upstoxDataApiSecret,
-                        (e) => handleInputChange("upstoxDataApiSecret", e.target.value),
-                        "********",
-                        "upstoxDataApiSecret"
+                      {formData.useDualApiKeys && (
+                        <>
+                          {renderField(
+                            "Upstox Analysis API Key (Background Scanners)",
+                            "Separate API Key (UPSTOX_DATA_API_KEY) for heavy historical candle analysis, multi-timeframe scanners, and AI indicators. Prevents rate-limit clashes with live ticks.",
+                            "text",
+                            formData.upstoxDataApiKey,
+                            (e) => handleInputChange("upstoxDataApiKey", e.target.value)
+                          )}
+                          {renderField(
+                            "Upstox Analysis API Secret",
+                            "Secret corresponding to your Analysis API Key.",
+                            "password",
+                            formData.upstoxDataApiSecret,
+                            (e) => handleInputChange("upstoxDataApiSecret", e.target.value),
+                            "********",
+                            "upstoxDataApiSecret"
+                          )}
+                        </>
                       )}
                       {renderField(
                         "Upstox Redirect URI",
@@ -420,35 +487,106 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                   {/* TAB 6: EXECUTION ENGINE */}
                   {activeTab === "execution" && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-6">
-                      <div className="flex flex-col">
+                      <div className="flex flex-col col-span-full">
                         <div className="flex items-center gap-2 mb-1.5">
                           <label className="text-sm font-semibold text-foreground tracking-tight">Trading Engine Mode</label>
-                          <Tooltip content="Live Broker places real orders on Upstox. Paper Trading simulates everything locally without real risk." align="start">
+                          <Tooltip content="Paper mode simulates all fills locally with zero risk. Live mode mirrors every engine fill to Upstox as a REAL order — arming requires a typed confirmation." align="start">
                             <span className="text-[10px] text-muted-foreground/60 hover:text-primary cursor-help">ⓘ</span>
                           </Tooltip>
                         </div>
-                        <div className="flex items-center gap-6 py-2 border-b border-foreground/15">
-                          <label className="flex items-center gap-2 cursor-pointer">
-                            <input
-                              type="radio"
-                              name="mode"
-                              checked={formData.paperTradingEnabled === true}
-                              onChange={() => handleInputChange("paperTradingEnabled", true)}
-                              className="accent-primary w-3 h-3"
-                            />
-                            <span className="text-xs font-black text-bull">PAPER TRADING</span>
-                          </label>
-                          <label className="flex items-center gap-2 cursor-pointer">
-                            <input
-                              type="radio"
-                              name="mode"
-                              checked={formData.paperTradingEnabled === false}
-                              onChange={() => handleInputChange("paperTradingEnabled", false)}
-                              className="accent-primary w-3 h-3"
-                            />
-                            <span className="text-xs font-black text-destructive">LIVE BROKER</span>
-                          </label>
+
+                        <div className="flex items-center justify-between py-3 border-b border-foreground/15">
+                          <div className="flex items-center gap-3">
+                            {tradingModeQuery.data?.mode === "LIVE" ? (
+                              <>
+                                <span className="w-2 h-2 rounded-full bg-destructive animate-pulse" />
+                                <span className="text-xs font-black text-destructive tracking-widest">LIVE — REAL ORDERS ACTIVE</span>
+                              </>
+                            ) : (
+                              <>
+                                <span className="w-2 h-2 rounded-full bg-bull" />
+                                <span className="text-xs font-black text-bull tracking-widest">PAPER — SIMULATED FILLS</span>
+                              </>
+                            )}
+                          </div>
+                          {tradingModeQuery.data?.mode === "LIVE" ? (
+                            <button
+                              onClick={() => setModeMutation.mutate({ mode: "PAPER" })}
+                              disabled={setModeMutation.isPending}
+                              className="text-[10px] font-bold text-bull border border-bull/30 hover:border-bull hover:bg-bull/5 px-4 py-1.5 rounded uppercase tracking-widest transition-colors disabled:opacity-50"
+                            >
+                              {setModeMutation.isPending ? "Disarming..." : "Disarm → Paper"}
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => setArmingLive(true)}
+                              disabled={!tradingModeQuery.data?.brokerAuthenticated}
+                              className={cn(
+                                "text-[10px] font-bold px-4 py-1.5 rounded uppercase tracking-widest transition-colors border",
+                                tradingModeQuery.data?.brokerAuthenticated
+                                  ? "text-destructive border-destructive/30 hover:border-destructive hover:bg-destructive/5"
+                                  : "text-muted-foreground border-foreground/10 opacity-50 cursor-not-allowed"
+                              )}
+                            >
+                              Arm Live Trading
+                            </button>
+                          )}
                         </div>
+
+                        {!tradingModeQuery.data?.brokerAuthenticated && tradingModeQuery.data?.mode !== "LIVE" && (
+                          <p className="text-[10px] text-muted-foreground mt-2">
+                            Connect your Upstox account (Broker Integration tab) to enable live trading.
+                          </p>
+                        )}
+
+                        <AnimatePresence>
+                          {armingLive && (
+                            <motion.div
+                              initial={{ opacity: 0, height: 0 }}
+                              animate={{ opacity: 1, height: "auto" }}
+                              exit={{ opacity: 0, height: 0 }}
+                              className="overflow-hidden"
+                            >
+                              <div className="mt-4 pt-4 border-t border-destructive/20 space-y-3">
+                                <p className="text-xs text-foreground/80 leading-relaxed">
+                                  Live mode places <span className="font-bold text-destructive">real orders with real money</span> at
+                                  your broker for every engine fill — entries, targets, and stops. Position sizes follow your
+                                  capital settings. To confirm, type{" "}
+                                  <span className="font-mono font-bold text-foreground select-all">{tradingModeQuery.data?.armPhrase}</span> below.
+                                </p>
+                                <input
+                                  type="text"
+                                  value={armPhraseInput}
+                                  onChange={(e) => setArmPhraseInput(e.target.value)}
+                                  placeholder={tradingModeQuery.data?.armPhrase}
+                                  spellCheck={false}
+                                  autoComplete="off"
+                                  className="w-full bg-transparent text-sm font-mono text-foreground outline-none border-b border-destructive/30 focus:border-destructive px-0 py-2 transition-colors placeholder:text-muted-foreground/30"
+                                />
+                                <div className="flex gap-3 pt-1">
+                                  <button
+                                    onClick={() => setModeMutation.mutate({ mode: "LIVE", confirmationPhrase: armPhraseInput })}
+                                    disabled={armPhraseInput !== tradingModeQuery.data?.armPhrase || setModeMutation.isPending}
+                                    className={cn(
+                                      "text-[10px] font-bold px-4 py-1.5 rounded uppercase tracking-widest transition-colors border",
+                                      armPhraseInput === tradingModeQuery.data?.armPhrase && !setModeMutation.isPending
+                                        ? "text-white bg-destructive border-destructive hover:bg-destructive/90"
+                                        : "text-muted-foreground border-foreground/10 opacity-50 cursor-not-allowed"
+                                    )}
+                                  >
+                                    {setModeMutation.isPending ? "Arming..." : "Confirm — Go Live"}
+                                  </button>
+                                  <button
+                                    onClick={() => { setArmingLive(false); setArmPhraseInput(""); }}
+                                    className="text-[10px] font-bold text-muted-foreground hover:text-foreground border border-foreground/10 hover:border-foreground/20 px-4 py-1.5 rounded uppercase tracking-widest transition-colors"
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              </div>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
                       </div>
 
                       <div className="flex flex-col">
@@ -551,10 +689,10 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
               </button>
               
               <div className="flex items-center gap-6">
-                {formData.paperTradingEnabled ? (
-                  <div className="text-[10px] font-black text-bull animate-pulse tracking-widest flex items-center gap-1.5"><div className="w-1.5 h-1.5 bg-bull rounded-full"/>PAPER TRADING (SAFE)</div>
-                ) : (
+                {tradingModeQuery.data?.mode === "LIVE" ? (
                   <div className="text-[10px] font-black text-destructive animate-pulse tracking-widest flex items-center gap-1.5"><div className="w-1.5 h-1.5 bg-destructive rounded-full"/>LIVE BROKER EXECUTION</div>
+                ) : (
+                  <div className="text-[10px] font-black text-bull tracking-widest flex items-center gap-1.5"><div className="w-1.5 h-1.5 bg-bull rounded-full"/>PAPER TRADING (SAFE)</div>
                 )}
                 <div className="flex gap-3">
                   <button onClick={onClose} className="text-[10px] font-bold text-muted-foreground hover:text-foreground outline-none ring-0 border border-foreground/10 hover:border-foreground/20 bg-transparent px-4 py-1.5 rounded uppercase tracking-widest transition-colors">

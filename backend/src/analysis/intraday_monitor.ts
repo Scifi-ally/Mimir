@@ -16,8 +16,9 @@ import { logger } from "../lib/logger";
 import { stateStore } from "../lib/redis_state";
 import { db } from "../../db/src";
 import { suggestionsTable, overnightWatchlistTable } from "../../db/src";
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, inArray } from "drizzle-orm";
 import { getLatestPrice, getTickData } from "../market_data/tick_feeder";
+import { loadBalancer } from "../intelligence/load_balancer";
 import { calculateTopSectors } from "./sector_rotation";
 import { broadcast } from "../ws/websocket_server";
 import { createServerEvent } from "../ws/events";
@@ -269,6 +270,12 @@ async function evaluateMarketRegime() {
  */
 export async function runMonitoringCycle(): Promise<void> {
   if (!monitoringActive) {
+    return;
+  }
+
+  // Do not waste resources or generate conflicting notifications on old targets
+  // while a heavy active scan is discovering new targets.
+  if (loadBalancer.isScanning) {
     return;
   }
 
@@ -564,7 +571,7 @@ function buildTickDerivedSnapshot(
     Math.max(1, Math.min(5, volumes.length));
   const volumeRatio = avgVolume > 0 ? recentVolume / avgVolume : 1;
   const sessionRangePct =
-    currentPrice > 0
+    currentPrice > 0 && monitored.lowOfDay > 0 && monitored.highOfDay >= monitored.lowOfDay
       ? ((monitored.highOfDay - monitored.lowOfDay) / currentPrice) * 100
       : 1.5;
   const atr14 = currentPrice * (Math.max(0.8, sessionRangePct) / 100);
@@ -644,7 +651,7 @@ async function getActiveSymbolsSet(): Promise<Set<string>> {
     const rows = await db
       .select({ symbol: suggestionsTable.symbol })
       .from(suggestionsTable)
-      .where(eq(suggestionsTable.status, "ACTIVE"));
+      .where(inArray(suggestionsTable.status, ["ACTIVE", "PENDING"]));
     const symbols = new Set(rows.map((r) => r.symbol));
     activeSuggestionsCache = { symbols, timestamp: now };
     return symbols;
@@ -749,7 +756,7 @@ async function generateIntraDaySuggestion(
         adx14: Number(snap.adx14.toFixed(1)),
         sessionRangePct: Number(
           (
-            currentPrice > 0
+            currentPrice > 0 && monitored.lowOfDay > 0 && monitored.highOfDay >= monitored.lowOfDay
               ? ((monitored.highOfDay - monitored.lowOfDay) / currentPrice) * 100
               : 0
           ).toFixed(2),

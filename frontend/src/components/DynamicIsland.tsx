@@ -75,7 +75,7 @@ export function DynamicIsland() {
     }
   }, [isOpen]);
 
-  const isNotification = Boolean(islandConfig?.isNotification || (islandConfig && !islandConfig.onConfirm && !islandConfig.showSuccessOnly)) && !showCommandPalette && !showEventFeed;
+  const isNotification = Boolean(islandConfig?.isNotification || (islandConfig && !islandConfig.onConfirm && !islandConfig.showSuccessOnly && !islandConfig.content)) && !showCommandPalette && !showEventFeed;
 
   useEffect(() => {
     if (islandConfig?.showSuccessOnly || isNotification) {
@@ -89,7 +89,10 @@ export function DynamicIsland() {
   }, [islandConfig, hideIsland, isNotification]);
 
   const handleConfirm = async () => {
-    if (!islandConfig?.onConfirm) return;
+    if (!islandConfig?.onConfirm) {
+      hideIsland();
+      return;
+    }
     setIsProcessing(true);
     setError(null);
     try {
@@ -185,46 +188,57 @@ export function DynamicIsland() {
               </div>
             ) : islandConfig ? (
               <div className="flex flex-col shrink-0" style={{ padding: TOKENS.spacing.outer, width: 340 }}>
-                <div className="flex flex-col items-center text-center">
-                  {icon && (
-                    <div style={{ marginBottom: TOKENS.spacing.contentGap, color: isDestructive ? TOKENS.colors.destructive : TOKENS.colors.textPrimary }}>
-                      {icon}
-                    </div>
-                  )}
-                  <h3 style={{ fontSize: "16px", fontWeight: 700, color: TOKENS.colors.textPrimary, marginBottom: TOKENS.spacing.controlGap, letterSpacing: "-0.015em" }}>
-                    {title}
-                  </h3>
-                  <p style={{ fontSize: "13px", fontWeight: 500, color: TOKENS.colors.textSecondary, lineHeight: 1.5 }}>
-                    {subtitle}
-                  </p>
-                  {error && (
-                    <div className="flex items-start w-full gap-2 text-left" style={{ marginTop: TOKENS.spacing.contentGap, padding: "10px 14px", borderRadius: "12px", backgroundColor: "rgba(255,59,48,0.12)", color: TOKENS.colors.destructive, fontSize: "12px", fontWeight: 600 }}>
-                      <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
-                      <span>{error}</span>
-                    </div>
-                  )}
-                </div>
+                <>
+                  <div className="flex flex-col items-center text-center">
+                    {icon && (
+                      <div style={{ marginBottom: TOKENS.spacing.contentGap, color: isDestructive ? TOKENS.colors.destructive : TOKENS.colors.textPrimary }}>
+                        {icon}
+                      </div>
+                    )}
+                    <h3 style={{ fontSize: "16px", fontWeight: 700, color: TOKENS.colors.textPrimary, marginBottom: TOKENS.spacing.controlGap, letterSpacing: "-0.015em" }}>
+                      {title}
+                    </h3>
+                    {subtitle && (
+                      <p style={{ fontSize: "13px", fontWeight: 500, color: TOKENS.colors.textSecondary, lineHeight: 1.5 }}>
+                        {subtitle}
+                      </p>
+                    )}
+                    {islandConfig.content && (
+                      <div className="w-full text-left mt-2">
+                        {islandConfig.content}
+                      </div>
+                    )}
+                    {error && (
+                      <div className="flex items-start w-full gap-2 text-left" style={{ marginTop: TOKENS.spacing.contentGap, padding: "10px 14px", borderRadius: "12px", backgroundColor: "rgba(255,59,48,0.12)", color: TOKENS.colors.destructive, fontSize: "12px", fontWeight: 600 }}>
+                        <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+                        <span>{error}</span>
+                      </div>
+                    )}
+                  </div>
 
-                <div className="flex w-full" style={{ marginTop: TOKENS.spacing.sectionGap, gap: TOKENS.spacing.buttonGap }}>
-                  {!(islandConfig?.hideCancel) && (
-                    <button
-                      onClick={handleCancel}
-                      disabled={isProcessing}
-                      style={{ flex: 1, padding: "12px 0", borderRadius: "14px", backgroundColor: "var(--secondary)", color: "var(--foreground)", fontSize: "13px", fontWeight: 600, border: "1px solid var(--border)", opacity: isProcessing ? 0.5 : 1 }}
-                      className="hover:opacity-80 active:scale-[0.98] transition-all duration-200"
-                    >
-                      {cancelText}
-                    </button>
+                  {islandConfig?.onConfirm && (
+                    <div className="flex w-full" style={{ marginTop: TOKENS.spacing.sectionGap, gap: TOKENS.spacing.buttonGap }}>
+                      {!(islandConfig?.hideCancel) && (
+                        <button
+                          onClick={handleCancel}
+                          disabled={isProcessing}
+                          style={{ flex: 1, padding: "12px 0", borderRadius: "14px", backgroundColor: "var(--secondary)", color: "var(--foreground)", fontSize: "13px", fontWeight: 600, border: "1px solid var(--border)", opacity: isProcessing ? 0.5 : 1 }}
+                          className="hover:opacity-80 active:scale-[0.98] transition-all duration-200"
+                        >
+                          {cancelText}
+                        </button>
+                      )}
+                      <button
+                        onClick={handleConfirm}
+                        disabled={isProcessing}
+                        style={{ flex: 1, padding: "12px 0", borderRadius: "14px", backgroundColor: isDestructive ? "var(--destructive)" : "var(--foreground)", color: isDestructive ? "#ffffff" : "var(--background)", fontSize: "13px", fontWeight: 600, border: "none", display: "flex", alignItems: "center", justifyContent: "center", opacity: isProcessing ? 0.5 : 1 }}
+                        className="hover:opacity-90 active:scale-[0.98] transition-all duration-200 shadow-sm"
+                      >
+                        {isProcessing ? <Loader2 className="w-4 h-4 animate-spin text-[inherit]" /> : confirmText}
+                      </button>
+                    </div>
                   )}
-                  <button
-                    onClick={handleConfirm}
-                    disabled={isProcessing}
-                    style={{ flex: 1, padding: "12px 0", borderRadius: "14px", backgroundColor: isDestructive ? "var(--destructive)" : "var(--foreground)", color: isDestructive ? "#ffffff" : "var(--background)", fontSize: "13px", fontWeight: 600, border: "none", display: "flex", alignItems: "center", justifyContent: "center", opacity: isProcessing ? 0.5 : 1 }}
-                    className="hover:opacity-90 active:scale-[0.98] transition-all duration-200 shadow-sm"
-                  >
-                    {isProcessing ? <Loader2 className="w-4 h-4 animate-spin text-[inherit]" /> : confirmText}
-                  </button>
-                </div>
+                </>
               </div>
             ) : (
               <div className="w-full flex flex-col" style={{ width: paletteWidth }}>

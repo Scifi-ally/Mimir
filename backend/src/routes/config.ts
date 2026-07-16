@@ -28,10 +28,13 @@ function serializeConfig(cfg: ReturnType<typeof getConfig>, reveal = false) {
     weeklyLossLimitPct: cfg.weeklyLossLimitPct,
     rollingDrawdownPct: cfg.rollingDrawdownPct,
     paperTradingEnabled: cfg.paperTradingEnabled,
+    // Read-only here; mode changes go through POST /api/trading/mode (arming flow)
+    tradingMode: cfg.tradingMode,
     upstoxApiKey: cfg.upstoxApiKey,
     upstoxApiSecret: reveal ? (cfg.upstoxApiSecret || "") : (cfg.upstoxApiSecret ? SECRET_MASK : ""),
     upstoxDataApiKey: cfg.upstoxDataApiKey,
     upstoxDataApiSecret: reveal ? (cfg.upstoxDataApiSecret || "") : (cfg.upstoxDataApiSecret ? SECRET_MASK : ""),
+    useDualApiKeys: cfg.useDualApiKeys,
     upstoxRedirectUri: cfg.upstoxRedirectUri,
     stopLossMode: cfg.stopLossMode,
     maxDeployedCapitalPct: cfg.maxDeployedCapitalPct,
@@ -87,6 +90,7 @@ router.patch("/config", async (req, res) => {
       ...(parsed.data.upstoxDataApiSecret != null &&
         parsed.data.upstoxDataApiSecret !== "" &&
         parsed.data.upstoxDataApiSecret !== SECRET_MASK && { upstoxDataApiSecret: parsed.data.upstoxDataApiSecret }),
+      ...(parsed.data.useDualApiKeys != null && { useDualApiKeys: parsed.data.useDualApiKeys }),
       ...(parsed.data.upstoxRedirectUri != null && { upstoxRedirectUri: parsed.data.upstoxRedirectUri }),
       ...(parsed.data.stopLossMode != null && { stopLossMode: parsed.data.stopLossMode }),
       ...(parsed.data.maxDeployedCapitalPct != null && { maxDeployedCapitalPct: parsed.data.maxDeployedCapitalPct }),

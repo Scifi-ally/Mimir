@@ -37,13 +37,17 @@ interface AggregatedWatchlistCandidate {
 }
 
 function fitConditionForStorage(condition: string): string {
+  // Sanitize non-ASCII characters (e.g., ₹ -> Rs., … -> ...) to prevent Postgres WIN1252 encoding errors
+  let sanitized = condition.replace(/₹/g, 'Rs.').replace(/…/g, '...');
+  sanitized = sanitized.replace(/[^\x00-\x7F]/g, '');
+
   // If it's a JSON string, don't truncate it as that would break JSON validity
-  if (condition.startsWith('{') && condition.endsWith('}')) {
-    return condition;
+  if (sanitized.startsWith('{') && sanitized.endsWith('}')) {
+    return sanitized;
   }
   const maxLength = 250; // increased length to prevent pattern_name truncation
-  if (condition.length <= maxLength) return condition;
-  return `${condition.slice(0, maxLength - 1).trimEnd()}…`;
+  if (sanitized.length <= maxLength) return sanitized;
+  return `${sanitized.slice(0, maxLength - 3).trimEnd()}...`;
 }
 
 let scanRunning = false;
@@ -466,8 +470,8 @@ export async function runOvernightScanner(
       .map((candidate) => ({
         forDate: tomorrowStr,
         symbol: candidate.symbol,
-        name: candidate.name,
-        category: candidate.category,
+        name: candidate.name ? candidate.name.substring(0, 95) : "",
+        category: candidate.category ? candidate.category.substring(0, 29) : "",
         condition: fitConditionForStorage(candidate.condition),
         priority: candidate.priority,
       }));

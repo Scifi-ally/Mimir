@@ -12,6 +12,7 @@ router.get("/alerts/history", async (_req, res) => {
     }));
     res.json(mappedAlerts);
   } catch (err) {
+    _req.log.error({ err }, "Failed to fetch alert history");
     res.status(500).json({ status: "error", error: "Failed to fetch alert history" });
   }
 });

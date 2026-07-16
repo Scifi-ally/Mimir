@@ -225,7 +225,7 @@ export async function fetchMultiTimeframeData(
 ): Promise<MultiTimeframeData> {
   const [tf1h, tf4h, tfDaily] = await Promise.all([
     fetchCandles(instrumentKey, "60minute", 20, toDate),
-    fetchCandles(instrumentKey, "60minute", 60, toDate),
+    fetchCandles(instrumentKey, "240minute", 60, toDate),
     fetchCandles(instrumentKey, "day", 180, toDate),
   ]);
   

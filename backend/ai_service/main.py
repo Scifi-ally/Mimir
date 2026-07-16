@@ -479,7 +479,10 @@ def _compute_composite_score(kr: technical_pattern_engine.TechnicalPatternResult
     technical_component = kr.bullish_probability * 50
 
     import math
-    chronos_raw = 1 / (1 + math.exp(-cr.forecast_return_pct))  # 0..1
+    # Scale forecast before sigmoid: realistic short-horizon forecasts are
+    # ±0.3-1%, which unscaled maps to 0.43-0.57 — the component barely
+    # discriminates. x3 spreads ±1% to 0.05-0.95.
+    chronos_raw = 1 / (1 + math.exp(-cr.forecast_return_pct * 3.0))  # 0..1
     chronos_component = chronos_raw * 30
 
     confidence_component = kr.confidence * 15

@@ -88,7 +88,7 @@ if (!(Test-Path $PgsqlDir)) {
     # Run initdb to create the cluster. Use a superuser name 'postgres' and no password or simple password
     $PassFile = Join-Path $PortableDir "pg_pass.txt"
     "postgres" | Out-File -FilePath $PassFile -Encoding ASCII
-    & $InitDbExe -D $DataDir -U postgres -A md5 --pwfile=$PassFile
+    & $InitDbExe -D $DataDir -U postgres -A md5 -E UTF8 --locale=C --pwfile=$PassFile
     Remove-Item -Path $PassFile -Force
     
     Write-Host "PostgreSQL portable ready."

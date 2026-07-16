@@ -101,17 +101,23 @@ class MarketDataStore {
       direction = tick.direction;
     }
 
+    const incomingChangePct = tick.change_pct ?? tick.changePct;
+    const newChangePct = incomingChangePct != null ? incomingChangePct : existing.change_pct;
+    const incomingVolume = tick.volume;
+    const newVolume = incomingVolume != null ? incomingVolume : existing.volume;
+
     this.data.set(symbol, {
       ...existing,
       ltp: newLtp,
-      change_pct: tick.change_pct ?? tick.changePct ?? existing.change_pct,
-      volume: tick.volume ?? existing.volume,
+      change_pct: newChangePct,
+      volume: newVolume,
       timestamp: tick.timestamp ?? Date.now(),
       source: 'websocket',
       direction,
       is_transitioning: false,
     });
     this.notify(symbol);
+    this.notifyTelemetry();
   }
   
   // Called when market:analysis WebSocket event arrives
@@ -131,6 +137,7 @@ class MarketDataStore {
       regime_align: analysis.regime_align,
     });
     this.notify(symbol);
+    this.notifyTelemetry();
   }
   
   // Called when REST query resolves
@@ -148,6 +155,7 @@ class MarketDataStore {
       is_transitioning: shouldUpdatePrice ? false : existing.is_transitioning,
     });
     this.notify(symbol);
+    this.notifyTelemetry();
   }
   
   markTransitioning(symbol: string): void {

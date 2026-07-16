@@ -358,7 +358,7 @@ export function computeSuperTrend(candles: OHLCV[], period = 10, multiplier = 3)
 }
 
 export function fastSuperTrend(candles: OHLCV[], period = 10, multiplier = 3): number {
-  if (candles.length < period) return candles.length ? candles[candles.length - 1]!.close : 0;
+  if (candles.length <= period) return candles.length ? candles[candles.length - 1]!.close : 0;
 
   let atr = 0;
   for (let i = 1; i <= period; i++) {
@@ -1102,6 +1102,7 @@ export function detectLiquiditySweep(candles: OHLCV[], snap: TechnicalSnapshot):
   
   const target1 = direction === "BUY" ? entry + 2.5 * risk : entry - 2.5 * risk;
   const target2 = direction === "BUY" ? entry + 4.0 * risk : entry - 4.0 * risk;
+  if (target1 <= 0 || target2 <= 0) return null;
   const rr = Math.abs(target1 - entry) / risk;
   
   const confluence = [

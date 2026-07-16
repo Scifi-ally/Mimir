@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db } from "../../db/src";
 import { suggestionsTable, learningAnalyticsTable } from "../../db/src";
-import { eq, desc, and, gte, lte, count } from "drizzle-orm";
+import { eq, desc, and, gte, lte, count, inArray } from "drizzle-orm";
 import {
   GetSuggestionHistoryQueryParams,
   GetSuggestionParams,
@@ -23,7 +23,8 @@ const router = Router();
 router.get("/suggestions/active", async (req, res) => {
   try {
     const symbolParam = req.query.symbol as string | undefined;
-    const conditions = [eq(suggestionsTable.status, "ACTIVE")];
+    // Open = filled (ACTIVE) + awaiting entry touch (PENDING)
+    const conditions = [inArray(suggestionsTable.status, ["ACTIVE", "PENDING"])];
     if (symbolParam) {
       conditions.push(eq(suggestionsTable.symbol, symbolParam.toUpperCase()));
     }
@@ -420,12 +421,14 @@ router.post("/suggestions", async (req, res) => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         direction: direction as any,
         mode: "MANUAL"
-      }), "positions");
+        // "suggestions" — no client subscribes to a "positions" topic; the old
+        // channel meant manual-order updates were silently dropped.
+      }), "suggestions");
     }
 
     res.json(serializeSuggestion(inserted));
-  // eslint-disable-next-line unused-imports/no-unused-vars, @typescript-eslint/no-unused-vars
   } catch (err) {
+    req.log.error({ err }, "Failed to create manual order");
     res.status(500).json({ error: "Failed to create order" });
   }
 });

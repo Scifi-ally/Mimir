@@ -29,6 +29,9 @@ import { enrichWatchlistWithIntradayOpportunities } from "../analysis/intraday_s
 import { savePostMarketData } from "../analysis/post_market";
 import { runGapScan } from "../analysis/gap_scanner";
 import { fetchFIIDIIData } from "../market_data/fii_dii";
+import { refreshNSEFreeData } from "../market_data/nse_free_data";
+import { refreshCalibration, refreshSetupDemotions } from "../analysis/calibration_engine";
+import { fetchGapRisk } from "../analysis/gap_risk";
 import { fetchCorporateActionBlacklist } from "../market_data/corporate_actions";
 import {
   runPostMarketFullScan,
@@ -76,19 +79,23 @@ const ENABLE_INTRADAY_WATCHLIST_ENRICHMENT =
   (process.env["ENABLE_INTRADAY_WATCHLIST_ENRICHMENT"] ?? "true").toLowerCase() === "true";
 const MONITORING_INTERVAL_MS = 300; // Run monitoring cycle every 300ms during market hours
 const MARKET_OPEN_SCAN_WAIT_MS = 60_000;
-const MARKET_OPEN_SCAN_MAX_ATTEMPTS = 20;
 
 // HIGH FIX (Issue #10): Distributed lock helper to prevent duplicate scheduler execution
 const redisLockClient = createRedisClient("scheduler-locks");
 let redisLockConnected = false;
 
-async function acquireDistributedLock(lockKey: string, ttlSeconds: number = 60): Promise<string | null> {
+type LockResult =
+  | { status: "acquired"; lockValue: string }
+  | { status: "held-elsewhere" }
+  | { status: "redis-unavailable" };
+
+async function acquireDistributedLock(lockKey: string, ttlSeconds: number = 60): Promise<LockResult> {
   try {
     if (!redisLockConnected) {
       await redisLockClient.connect();
       redisLockConnected = true;
     }
-    
+
     const lockValue = crypto.randomUUID();
     const acquired = await redisLockClient.set(
       `scheduler:lock:${lockKey}`,
@@ -96,11 +103,14 @@ async function acquireDistributedLock(lockKey: string, ttlSeconds: number = 60):
       'EX', ttlSeconds,
       'NX'
     );
-    
-    return acquired ? lockValue : null;
+
+    return acquired ? { status: "acquired", lockValue } : { status: "held-elsewhere" };
   } catch (err) {
-    logger.warn({ err, lockKey }, "Failed to acquire distributed lock - falling back to local execution");
-    return crypto.randomUUID(); // Fallback to allow execution if Redis unavailable
+    // Redis being down must NOT silently disable critical scheduler jobs.
+    // The local runningJobs set still prevents same-process overlap; the only
+    // risk is multi-instance overlap, which is preferable to jobs never running.
+    logger.error({ err, lockKey }, "Redis unavailable for distributed lock — running with local lock only");
+    return { status: "redis-unavailable" };
   }
 }
 
@@ -232,14 +242,16 @@ async function runExclusive(
   // Distributed lock for critical jobs
   let lockValue: string | null = null;
   if (useDistributedLock) {
-    lockValue = await acquireDistributedLock(name, 300); // 5 min TTL for long-running jobs
-    if (!lockValue) {
+    const lock = await acquireDistributedLock(name, 300); // 5 min TTL for long-running jobs
+    if (lock.status === "held-elsewhere") {
       logger.warn(
         { job: name },
         "Skipping scheduler job because another instance is running (distributed lock)",
       );
       return;
     }
+    // redis-unavailable → proceed with local lock only (never silently disable jobs)
+    lockValue = lock.status === "acquired" ? lock.lockValue : null;
   }
 
   runningJobs.add(name);
@@ -573,6 +585,22 @@ export function startScheduler(): void {
     await refreshCorporateActions();
   });
 
+  // ── 07:45 IST Mon–Fri — NSE free data (delivery %, F&O ban, bulk deals) ──
+  scheduleJob("nse-free-data-refresh", "45 7 * * 1-5", async () => {
+    logger.info("Pre-market: refreshing NSE free data feeds");
+    await refreshNSEFreeData();
+  });
+
+  // ── 08:30 + 09:05 IST Mon–Fri — overnight gap risk (ES=F, USDINR, Nifty) ─
+  scheduleJob("gap-risk-refresh", "30 8 * * 1-5", async () => {
+    logger.info("Pre-market: refreshing overnight gap risk");
+    await fetchGapRisk();
+  });
+  scheduleJob("gap-risk-refresh-preopen", "5 9 * * 1-5", async () => {
+    logger.info("Pre-open: final gap risk refresh");
+    await fetchGapRisk();
+  });
+
   // ── 08:00 IST (02:30 UTC) Mon–Fri — daily reset ──────────────────────────
   scheduleJob("daily-reset", "0 8 * * 1-5", () => {
     logger.info("Pre-market: resetting daily state");
@@ -589,8 +617,8 @@ export function startScheduler(): void {
     });
   });
 
-  // ── 08:45 IST (03:15 UTC) Mon–Fri — gap scan ─────────────────────────────
-  scheduleJob("gap-scan", "45 8 * * 1-5", async () => {
+  // ── 09:12 IST (03:42 UTC) Mon–Fri — gap scan ─────────────────────────────
+  scheduleJob("gap-scan", "12 9 * * 1-5", async () => {
     logger.info("Pre-market: starting gap scan");
     await runGapScan();
 
@@ -659,27 +687,7 @@ export function startScheduler(): void {
         });
         return;
       }
-      if (attempts >= MARKET_OPEN_SCAN_MAX_ATTEMPTS) {
-        if (marketOpenRetryTimer) {
-          clearInterval(marketOpenRetryTimer);
-          marketOpenRetryTimer = null;
-        }
-        logger.error(
-          { attempts },
-          "Market-open delayed start timed out while pre-market scan was still running; starting monitoring with available data",
-        );
-        void runExclusive("market-open-timeout-start", async () => {
-          await beginMarketOpenMonitoring();
-        });
-        broadcast({
-          event: "system_alert",
-          data: {
-            message:
-              "Pre-market scan timed out. Live monitoring started with the best available watchlist.",
-            severity: "warning",
-          },
-        });
-      }
+      // Removed max attempts timeout block as per user request to wait indefinitely
     }, MARKET_OPEN_SCAN_WAIT_MS);
     }, true); // Use distributed lock
   });
@@ -715,7 +723,7 @@ export function startScheduler(): void {
   // ── POST-MARKET: 15:31 IST (10:01 UTC) Mon–Fri — Full NSE scan ────────────
   // Comprehensive scan of entire NSE universe to find tomorrow's best setups
   // Runs thoroughly without rushing - takes 30-45 minutes to analyze all stocks
-  scheduleJob("post-market-full-scan", "31 15 * * 0-5", async () => {
+  scheduleJob("post-market-full-scan", "31 15 * * 1-5", async () => {
     const offhoursStatus = getOffHoursScanStatus();
     if (offhoursStatus.running) {
       logger.warn(
@@ -782,6 +790,22 @@ export function startScheduler(): void {
     await runLearningPipeline();
   });
 
+  // ── POST-MARKET: 16:05 IST Mon–Fri — outcome calibration refresh ─────────
+  // Rebuild the empirical confidence table daily; re-evaluate walk-forward
+  // setup demotions weekly (Friday) once the week's outcomes are booked.
+  scheduleJob("calibration-refresh", "5 16 * * 1-5", async () => {
+    logger.info("Post-market: refreshing confidence calibration from outcomes");
+    await refreshCalibration();
+  });
+
+  scheduleJob("setup-demotion-check", "10 16 * * 5", async () => {
+    logger.info("Weekly: walk-forward setup expectancy check");
+    const demoted = await refreshSetupDemotions();
+    if (demoted.size > 0) {
+      logger.warn({ setups: Array.from(demoted) }, "Setups currently demoted by rolling expectancy");
+    }
+  });
+
   // ── POST-MARKET: 16:15 IST (10:45 UTC) Mon–Fri — generate daily report ──
   scheduleJob("generate-daily-report", "15 16 * * 1-5", async () => {
     const { generateDailyReport } = await import("../analysis/post_market_report");
@@ -805,9 +829,11 @@ export function startScheduler(): void {
       const { exec } = await import("child_process");
       const { promisify } = await import("util");
       const path = await import("path");
+      const { fileURLToPath } = await import("url");
       const execAsync = promisify(exec);
       logger.info("Running weekly Alpha Score IC recalculation");
-      const scriptPath = path.resolve(__dirname, "../../../ai_service/backtest/run_weekly_ic.py");
+      const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+      const scriptPath = path.resolve(moduleDir, "../../ai_service/backtest/run_weekly_ic.py");
       const { stdout, stderr } = await execAsync(`python ${scriptPath}`);
       logger.info({ stdout, stderr }, "Weekly IC recalculation completed");
     } catch (err) {
@@ -853,6 +879,11 @@ export function startScheduler(): void {
 
   // Expire old intraday suggestions from previous days just in case the bot was offline at midnight
   void expireOldSuggestions();
+
+  // Prime outcome-derived state so the first generation cycle isn't uncalibrated
+  void refreshCalibration();
+  void refreshSetupDemotions();
+  void refreshNSEFreeData();
 
   if (!isMarketOpen()) {
     runExclusive("startup-market-feed-offhours", async () => {

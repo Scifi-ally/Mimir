@@ -2,6 +2,14 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { ScanProgress } from "@/types/api";
 
+// crypto.randomUUID requires a secure context — undefined when the dashboard
+// is opened over plain http:// on a LAN IP. IDs here only key React lists.
+function uid(): string {
+  return typeof crypto !== "undefined" && crypto.randomUUID
+    ? crypto.randomUUID()
+    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export interface ScanLog {
   id: string;
   symbol: string;
@@ -24,7 +32,8 @@ export interface AppEvent {
 export type IslandConfig = {
   icon?: React.ReactNode;
   title: string;
-  subtitle: string;
+  subtitle?: string;
+  content?: React.ReactNode;
   confirmText?: string;
   cancelText?: string;
   isDestructive?: boolean;
@@ -110,7 +119,7 @@ export const useStore = create<AppStore>()(
       const newLogs = [...state.scanLogs];
       newLogs[existingIndex] = {
         ...log,
-        id: crypto.randomUUID(), // New ID for React key change detection
+        id: uid(), // New ID for React key change detection
         time: new Date().toISOString() // Use ISO timestamp instead of locale string
       };
       return { scanLogs: newLogs.slice(0, 50) };
@@ -119,7 +128,7 @@ export const useStore = create<AppStore>()(
     // Add new log
     const newLog: ScanLog = { 
       ...log, 
-      id: crypto.randomUUID(), 
+      id: uid(),
       time: new Date().toISOString() 
     };
     return { scanLogs: [newLog, ...state.scanLogs].slice(0, 50) };
@@ -154,7 +163,7 @@ export const useStore = create<AppStore>()(
     events: [
       {
         ...event,
-        id: crypto.randomUUID(),
+        id: uid(),
         timestamp: new Date().toISOString(),
       },
       ...state.events,

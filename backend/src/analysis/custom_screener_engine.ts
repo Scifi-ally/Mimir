@@ -26,7 +26,7 @@ async function resolveTargetSymbols(targetType: string, specificSymbol?: string)
   }
   
   if (targetType === "SUGGESTIONS") {
-    const rows = await db.select().from(suggestionsTable).where(eq(suggestionsTable.status, "ACTIVE"));
+    const rows = await db.select().from(suggestionsTable).where(inArray(suggestionsTable.status, ["ACTIVE", "PENDING"]));
     return rows.map(r => r.symbol);
   }
   

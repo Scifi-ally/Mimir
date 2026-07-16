@@ -194,14 +194,16 @@ export function detectRegime(): void {
       updateMarketState({ regime: "UNKNOWN", suggestionsPaused: false, pauseReason: "Initializing..." });
       return;
     } else {
-      // Force deterministic classification!
+      // Force deterministic classification with NEUTRAL values — fabricated
+      // bullish defaults (+0.45% / 1250 adv / +450Cr FII) previously biased
+      // the regime engine toward BULLISH whenever real data was missing.
       inputsForced = true;
       indiaVix = (indiaVix ?? 0) > 0 ? indiaVix! : 14.2;
-      niftyChangePct = niftyChangePct !== null ? niftyChangePct : 0.45;
-      advanceCount = advanceCount > 0 ? advanceCount : 1250;
-      declineCount = declineCount > 0 ? declineCount : 850;
-      fiiNetInr = fiiNetInr ?? 450;
-      diiNetInr = diiNetInr ?? 250;
+      niftyChangePct = niftyChangePct !== null ? niftyChangePct : 0;
+      advanceCount = advanceCount > 0 ? advanceCount : 1000;
+      declineCount = declineCount > 0 ? declineCount : 1000;
+      fiiNetInr = fiiNetInr ?? 0;
+      diiNetInr = diiNetInr ?? 0;
     }
   }
 

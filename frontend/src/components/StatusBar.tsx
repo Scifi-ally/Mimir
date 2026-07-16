@@ -4,6 +4,8 @@ import type { SystemStatus, MarketRegime } from "@/types/api";
 import { ArrowUpRight, ArrowDownRight } from "lucide-react";
 import { Tooltip } from "@/components/mimir/tooltip";
 import { motion } from "framer-motion";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@/lib/api";
 
 function StatusLed({ status }: { status: "ok" | "warn" | "error" | "unknown" }) {
   const color = status === "ok" ? "bg-green-500" : status === "warn" ? "bg-yellow-500" : status === "error" ? "bg-red-500" : "bg-neutral-500";
@@ -28,6 +30,13 @@ interface StatusBarProps {
 }
 
 export const StatusBar = memo(function StatusBar({ status, regime, wsConnected, macro }: StatusBarProps) {
+  const { data: tradingMode } = useQuery({
+    queryKey: ["trading-mode"],
+    queryFn: api.tradingMode,
+    refetchInterval: 30000,
+    staleTime: 15000,
+  });
+  const isLiveTrading = tradingMode?.mode === "LIVE";
   const aiStatus = status?.aiStatus?.toLowerCase() ?? "unknown";
   const aiMode = status?.aiMode?.toLowerCase() ?? "";
   const aiOk = aiStatus.includes("healthy") || aiMode === "ai mode";
@@ -39,6 +48,14 @@ export const StatusBar = memo(function StatusBar({ status, regime, wsConnected, 
   return (
     <div className="shrink-0 h-10 pb-1.5 w-full bg-background flex items-center px-4 sm:px-6 text-[9px] font-mono text-muted-foreground tracking-widest uppercase z-50 overflow-x-auto whitespace-nowrap [&::-webkit-scrollbar]:hidden">
       <div className="flex shrink-0 items-center gap-4 sm:gap-6 text-foreground/70">
+        {isLiveTrading && (
+          <span className="flex items-center gap-1.5 cursor-help" title="Live trading armed — engine fills place real broker orders">
+            <div className="flex items-center gap-1.5 bg-destructive/10 px-2 py-0.5 rounded-full border border-destructive/30">
+              <StatusLed status="error" />
+              <span className="font-bold text-[10px] text-destructive">LIVE</span>
+            </div>
+          </span>
+        )}
         <span className="flex items-center gap-1.5 cursor-help" title="AI Status: Health of Native Math Models">
           AI
           <div className="flex items-center gap-1.5 bg-foreground/5 px-2 py-0.5 rounded-full border border-border/20">
@@ -68,7 +85,7 @@ export const StatusBar = memo(function StatusBar({ status, regime, wsConnected, 
               <div className="flex justify-between text-muted-foreground">
                 <span>Sector Breadth:</span>
                 <span className="font-mono font-bold text-foreground">
-                  {regime?.sectorBreadth != null ? `${(regime.sectorBreadth * 100).toFixed(0)}%` : "N/A"}
+                  {regime?.sectorBreadth != null ? `${regime.sectorBreadth.toFixed(0)}%` : "N/A"}
                 </span>
               </div>
               <div className="flex justify-between text-muted-foreground">

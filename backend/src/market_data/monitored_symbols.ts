@@ -1,4 +1,4 @@
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, inArray } from "drizzle-orm";
 import { db } from "../../db/src";
 import { overnightWatchlistTable, suggestionsTable } from "../../db/src";
 import { findStockBySymbol, getEffectiveUniverse } from "../analysis/stock_scanner";
@@ -8,6 +8,12 @@ import { initTickFeeder } from "./tick_feeder";
 import { getISTDateStr, getLastCompletedTradingDayStr, getNextTradingDayStr } from "../lib/ist-time";
 import { logger } from "../lib/logger";
 import { isMarketOpen } from "./market_state";
+import { createUpstoxClient } from "../lib/upstox-client";
+import { getAccessToken } from "../upstox/auth";
+import { broadcastMarketTicks } from "../ws/websocket_server";
+import { tickDistribution } from "./tick_distribution";
+
+const upstoxClient = createUpstoxClient({ cacheTimeMs: 15_000 });
 
 export interface MonitoredStock {
   symbol: string;
@@ -17,6 +23,60 @@ export interface MonitoredStock {
 
 const manualSymbols = new Set<string>();
 let cachedWatchlistDate: string | null = null;
+
+export async function addManualMonitoredSymbols(symbols: string[]): Promise<MonitoredStock[]> {
+  const results: MonitoredStock[] = [];
+  let added = false;
+  for (const symbol of symbols) {
+    const stock = await findStockBySymbol(symbol.toUpperCase());
+    if (stock) {
+      manualSymbols.add(stock.symbol);
+      results.push({ symbol: stock.symbol, key: stock.key, source: "manual" });
+      added = true;
+    }
+  }
+  if (added) {
+    await syncMonitoredSubscriptions();
+    const token = getAccessToken("trading");
+    if (token && results.length > 0) {
+      void (async () => {
+        try {
+          const keys = results.map(r => r.key);
+          const quotes = await upstoxClient.fetchQuotesForInstruments(keys, token);
+          const batch: [string, number, number, number, number, number, number | null][] = [];
+          for (const [key, quote] of Object.entries(quotes)) {
+            const match = results.find(r => r.key === key || r.key.toLowerCase() === key.toLowerCase());
+            if (match && quote && quote.last_price != null) {
+              const changePct = quote.prev_close ? ((quote.last_price - quote.prev_close) / quote.prev_close) * 100 : (quote.change_pct ?? 0);
+              tickDistribution.ingestTick({
+                symbol: match.symbol,
+                ltp: quote.last_price,
+                volume: quote.volume ?? 0,
+                timestamp: Date.now(),
+                changePercent: changePct,
+              });
+              batch.push([
+                match.symbol,
+                quote.last_price,
+                quote.volume ?? 0,
+                0,
+                0,
+                Date.now(),
+                changePct
+              ]);
+            }
+          }
+          if (batch.length > 0) {
+            broadcastMarketTicks(batch);
+          }
+        } catch (err) {
+          logger.debug({ err }, "Failed to fetch initial quotes for manual monitored symbols");
+        }
+      })();
+    }
+  }
+  return results;
+}
 
 async function loadWatchlistSymbols(limit = MONITORING_MAX_STOCKS): Promise<{
   symbols: string[];
@@ -65,7 +125,7 @@ export async function getMonitoredSubscriptionStocks(): Promise<MonitoredStock[]
   const activeSuggestions = await db
     .select({ symbol: suggestionsTable.symbol })
     .from(suggestionsTable)
-    .where(eq(suggestionsTable.status, "ACTIVE"));
+    .where(inArray(suggestionsTable.status, ["ACTIVE", "PENDING"]));
   const suggestionSymbols = activeSuggestions.map(s => s.symbol);
 
   let ordered = [...new Set([...watchlistSymbols, ...suggestionSymbols, ...manualSymbols])];
@@ -109,27 +169,8 @@ export async function addManualMonitoredSymbol(symbol: string): Promise<Monitore
   const stock = await findStockBySymbol(symbol.toUpperCase());
   if (!stock) return null;
   manualSymbols.add(stock.symbol);
-  if (isMarketOpen()) {
-    await syncMonitoredSubscriptions();
-  }
+  await addManualMonitoredSymbols([stock.symbol]);
   return { symbol: stock.symbol, key: stock.key, source: "manual" };
-}
-
-export async function addManualMonitoredSymbols(symbols: string[]): Promise<MonitoredStock[]> {
-  const results: MonitoredStock[] = [];
-  let added = false;
-  for (const symbol of symbols) {
-    const stock = await findStockBySymbol(symbol.toUpperCase());
-    if (stock) {
-      manualSymbols.add(stock.symbol);
-      results.push({ symbol: stock.symbol, key: stock.key, source: "manual" });
-      added = true;
-    }
-  }
-  if (added && isMarketOpen()) {
-    await syncMonitoredSubscriptions();
-  }
-  return results;
 }
 
 export async function isSymbolMonitored(symbol: string): Promise<boolean> {

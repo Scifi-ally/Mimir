@@ -4,16 +4,16 @@ import { sql } from "drizzle-orm";
 async function run() {
   console.log("Deleting duplicate suggestions...");
   
-  // Delete suggestions that are duplicates generated today
+  // Delete suggestions that are duplicates generated today (keep earliest per symbol)
   const query = sql`
     DELETE FROM suggestions
-    WHERE id NOT IN (
-      SELECT min(id)
+    WHERE generated_at >= current_date
+    AND id NOT IN (
+      SELECT DISTINCT ON (symbol) id
       FROM suggestions
       WHERE generated_at >= current_date
-      GROUP BY symbol
-    )
-    AND generated_at >= current_date;
+      ORDER BY symbol, generated_at ASC
+    );
   `;
   
   await db.execute(query);

@@ -1,8 +1,8 @@
 import { useRef, useEffect, memo } from "react";
-import { motion, useSpring, useTransform, animate } from "framer-motion";
+import { motion, useSpring, useTransform } from "framer-motion";
 
-// ─── Animated Number with Countdown ────────────────────────────────
-// Smoothly animates number changes with counting effect
+// ─── Number display without Countdown ──────────────────────────────
+// Immediately updates number changes without counting effect
 function AnimatedNumber({ value, decimals = 2 }: { value: number; decimals?: number }) {
   const nodeRef = useRef<HTMLSpanElement>(null);
   const prevValueRef = useRef<number>(value);
@@ -11,16 +11,8 @@ function AnimatedNumber({ value, decimals = 2 }: { value: number; decimals?: num
     const node = nodeRef.current;
     if (!node || value === prevValueRef.current) return;
 
-    const controls = animate(prevValueRef.current, value, {
-      duration: 0.4, // Fast animation
-      ease: "easeOut",
-      onUpdate(latest) {
-        node.textContent = latest.toFixed(decimals);
-      },
-    });
-
+    node.textContent = value.toFixed(decimals);
     prevValueRef.current = value;
-    return () => controls.stop();
   }, [value, decimals]);
 
   return <span ref={nodeRef}>{value.toFixed(decimals)}</span>;

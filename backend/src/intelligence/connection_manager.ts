@@ -102,7 +102,7 @@ export class UpstoxConnectionManager {
     this.publishStatus("connecting", "upstox_ws");
 
     try {
-      const token = getAccessToken("data");
+      const token = getAccessToken("trading");
       if (!token) {
         logger.warn("No Upstox access token available for Connection Manager");
         this.isConnecting = false;
@@ -321,7 +321,10 @@ export class UpstoxConnectionManager {
           if (ff.marketFF) {
             const marketFF = ff.marketFF;
             lastPrice = Number(marketFF.ltpc?.ltp ?? 0);
-            volume = parseInt(marketFF.eFeedDetails?.tv?.toString() || "0", 10);
+            if (marketFF.marketOHLC && marketFF.marketOHLC.ohlc) {
+              const daily = marketFF.marketOHLC.ohlc.find((c: any) => c.interval === "1d");
+              if (daily) volume = Number(daily.volume ?? 0);
+            }
             const bidAsk = marketFF.marketLevel?.bidAskQuote;
             if (bidAsk && bidAsk.length > 0) {
               bid = Number(bidAsk[0].bp ?? 0) || null;
@@ -474,7 +477,7 @@ export class UpstoxConnectionManager {
     if (!force && wsIsActive && receivedRecentTicks) return;
     if (this.subscribedKeys.size === 0) return;
 
-    const token = getAccessToken("data");
+    const token = getAccessToken("trading");
     if (!token) return;
 
     try {

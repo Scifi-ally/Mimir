@@ -82,7 +82,7 @@ message MarketFullFeed {
   MarketLevel marketLevel = 2;
   OptionGreeks optionGreeks = 3;
   MarketOHLC marketOHLC = 4;
-  ExtendedFeedDetails eFeedDetails = 5;
+  // removed eFeedDetails due to schema change
 }
 
 message IndexFullFeed {
@@ -91,7 +91,7 @@ message IndexFullFeed {
   double lastClose = 3;
   double yh = 4;
   double yl = 5;
-  ExtendedFeedDetails eFeedDetails = 6;
+  // removed eFeedDetails due to schema change
 }
 
 message FullFeed {
@@ -105,7 +105,7 @@ message OptionChain {
   LTPC ltpc = 1;
   Quote bidAskQuote = 2;
   OptionGreeks optionGreeks = 3;
-  ExtendedFeedDetails eFeedDetails = 4;
+  // removed eFeedDetails due to schema change
 }
 
 message Feed {
