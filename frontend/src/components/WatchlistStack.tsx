@@ -237,7 +237,7 @@ export const WatchlistStack = memo(function WatchlistStack({ items, monitored, s
               type="button"
               onClick={() => handleCategorySelect(null)}
               className={cn(
-                "transition-all duration-300 relative group font-normal",
+                "transition-all duration-300 relative group font-bold",
                 "@max-md:px-3 @max-md:py-1.5 @max-md:rounded-full",
                 selectedCategory === null 
                   ? "@max-md:bg-foreground @max-md:text-background @min-md:text-foreground @min-md:border-foreground"
@@ -256,7 +256,7 @@ export const WatchlistStack = memo(function WatchlistStack({ items, monitored, s
                 type="button"
                 onClick={() => handleCategorySelect(cat)}
                 className={cn(
-                  "transition-all duration-300 relative group font-normal",
+                  "transition-all duration-300 relative group font-bold",
                   "@max-md:px-3 @max-md:py-1.5 @max-md:rounded-full",
                   selectedCategory === cat
                     ? "@max-md:bg-foreground @max-md:text-background @min-md:text-foreground @min-md:border-foreground"
@@ -418,3 +418,4 @@ function countCategories(rows: StockRow[]) {
   });
   return sorted.slice(0, 6);
 }
+
