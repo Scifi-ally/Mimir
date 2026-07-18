@@ -18,10 +18,14 @@
     "test:preflight": "tsx ./scripts/preflight.ts",
     "test:cache": "vitest run tests/cache",
     "test:perf": "vitest run tests/perf",
-    "test:all": "npm run test:preflight && vitest run"
+    "test:all": "npm run test:preflight && vitest run",
+    "ranker:extract": "tsx ./scripts/extract_training_data.ts",
+    "ranker:train": "npm run ranker:extract && python ./ai_service/train_ranker.py",
+    "ranker:train:only": "python ./ai_service/train_ranker.py"
   },
   "dependencies": {
     "axios": "^1.16.0",
+    "compression": "^1.8.1",
     "cookie-parser": "^1.4.7",
     "cors": "^2",
     "decimal.js": "^10.6.0",
@@ -43,6 +47,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@types/compression": "^1.8.1",
     "@types/cookie-parser": "^1.4.10",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
