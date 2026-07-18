@@ -16,6 +16,7 @@ export const GetSuggestionHistoryStatus = {
   TARGET_2_HIT: "TARGET_2_HIT",
   STOP_HIT: "STOP_HIT",
   EXPIRED: "EXPIRED",
+  MISSED: "MISSED",
   CLOSED: "CLOSED",
   REJECTED: "REJECTED",
 } as const;

@@ -13,7 +13,15 @@ export type SessionPhase =
 
 export interface SectorData {
   name: string;
+  /** Genuine sector-average daily percent change (typically -3…+3). This is the
+   *  unit every consumer assumes (feature_engine sectorStrength, signal_generator
+   *  normalization, regime breadth). Both writers — the intraday tick path and the
+   *  scan pipeline — must populate this as a real percent, never a proxy. */
   changePct: number;
+  /** Optional intraday money-flow proxy in ₹millions (Σ priceDelta × volume).
+   *  Unbounded and sign-meaningful only; used for money-flow ranking, NOT as a
+   *  percent. Undefined on the scan-pipeline path. */
+  moneyFlowM?: number;
 }
 
 export interface MarketState {

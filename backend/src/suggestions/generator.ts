@@ -152,7 +152,7 @@ function summarizeRejections(rejectionCounts: Record<string, number>): Record<st
   };
 
   for (const [reason, count] of Object.entries(rejectionCounts)) {
-    if (reason.startsWith("scan_null_insufficient") || reason === "symbol_not_found") {
+    if (reason.startsWith("scan_null_insufficient") || reason === "symbol_not_found" || reason === "ltp_unavailable") {
       add("data_unavailable", count);
       continue;
     }
@@ -164,19 +164,19 @@ function summarizeRejections(rejectionCounts: Record<string, number>): Record<st
       add("quality_gate", count);
       continue;
     }
-    if (["risk_reward", "position_sizing"].includes(reason)) {
+    if (["risk_reward", "position_sizing", "setup_demoted", "delivery_pct", "gap_risk"].includes(reason)) {
       add("risk_gate", count);
       continue;
     }
-    if (["sector_cap", "direction_cap_buy", "direction_cap_sell", "already_open"].includes(reason)) {
+    if (["sector_cap", "direction_cap_buy", "direction_cap_sell", "already_open", "max_open_positions"].includes(reason)) {
       add("capacity_gate", count);
       continue;
     }
-    if (["signal_cooldown", "downtrend_vix_long_block", "uptrend_short_block"].includes(reason)) {
+    if (["signal_cooldown", "downtrend_vix_long_block", "uptrend_short_block", "fno_ban", "corporate_action", "market_internals"].includes(reason)) {
       add("execution_guard", count);
       continue;
     }
-    if (["scan_timeout", "exception"].includes(reason)) {
+    if (["scan_timeout", "exception", "insert_failed"].includes(reason)) {
       add("system_error", count);
       continue;
     }
@@ -383,6 +383,19 @@ export async function generateSuggestionsFromWatchlist(options?: {
       return;
     }
 
+    // Midday chop window (config-driven, e.g. 12:00–13:30 IST when volume and
+    // follow-through are weakest). Same bypass rules as the open filter.
+    if (
+      !options?.bypassTimingFilter &&
+      cfg.avoidMiddayEndMinute > cfg.avoidMiddayStartMinute &&
+      marketMinute >= cfg.avoidMiddayStartMinute &&
+      marketMinute < cfg.avoidMiddayEndMinute
+    ) {
+      logger.info({ marketMinute }, "Skipping generation due to midday timing filter");
+      lastGenerationDiagnostics.note = "Skipped due to midday timing filter.";
+      return;
+    }
+
     // Fetch supporting data in parallel
     const [todayCandidates, nextDayCandidates, corporateBlacklist, sectorCounts, niftyCandles] =
       await Promise.all([
@@ -435,8 +448,13 @@ export async function generateSuggestionsFromWatchlist(options?: {
     );
 
     const regime = state.regime;
-    if (regime === "TRENDING_DOWN" && state.indiaVix && state.indiaVix > 18) {
+    const longBlock = regime === "TRENDING_DOWN" && !!state.indiaVix && state.indiaVix > 18;
+    if (longBlock) {
       logger.info("Skipping long generation — downtrend with elevated VIX");
+    }
+    const shortBlock = regime === "TRENDING_UP" && !!state.indiaVix && state.indiaVix > 18;
+    if (shortBlock) {
+      logger.info("Skipping short generation — uptrend with elevated VIX");
     }
 
     const normalizedCandidates = candidates.map((c) => ({
@@ -615,24 +633,88 @@ export async function generateSuggestionsFromWatchlist(options?: {
     const candidateSymbols = pipelineResult.signals.map((s) => s.symbol);
     const livePrices = candidateSymbols.length ? await fetchLTPForSymbols(candidateSymbols).catch(() => ({} as Record<string, number>)) : {};
 
+    const isIntradayCandidate = (symbol: string): boolean =>
+      eligibleCandidates.find((c) => c.symbol === symbol)?.category?.toUpperCase().includes("INTRADAY") ?? false;
+
+    // Apply outcome-blended calibration BEFORE ranking so slot selection is
+    // driven by empirical win rates, not raw model confidence. ingestSignal is
+    // told the blend already happened (it is not idempotent).
+    for (const signal of pipelineResult.signals) {
+      const tradeType = isIntradayCandidate(signal.symbol) ? "INTRADAY" : "SWING";
+      const { confidence: calibratedConfidence, empirical } = await calibrateConfidence(
+        signal.confidence,
+        signal.setupType,
+        tradeType,
+      );
+      if (calibratedConfidence !== signal.confidence) {
+        logger.info(
+          {
+            symbol: signal.symbol,
+            setupType: signal.setupType,
+            modelConfidence: signal.confidence,
+            calibratedConfidence,
+            samples: empirical?.samples,
+            winRate: empirical?.winRate,
+          },
+          "Confidence calibrated against realized outcomes",
+        );
+        signal.confidence = calibratedConfidence;
+      }
+    }
+    // Re-rank on calibrated confidence (pipeline sorted on the raw score).
+    pipelineResult.signals.sort((a, b) => b.confidence - a.confidence);
+
+    // Seed per-direction counts from currently open suggestions so the
+    // configured same-direction cap is enforced alongside the sector cap.
+    const directionCounts: Record<string, number> = {};
+    for (const s of openSuggestions) {
+      directionCounts[s.direction] = (directionCounts[s.direction] ?? 0) + 1;
+    }
+
     for (const signal of pipelineResult.signals) {
       if (generated >= slotsAvailable) break;
 
+      // Regime gate: no new longs into a downtrend with elevated VIX.
+      if (longBlock && signal.signal === "BUY") {
+        addRejection("downtrend_vix_long_block");
+        continue;
+      }
+      // Symmetric regime gate: no new shorts into an uptrend with elevated VIX.
+      if (shortBlock && signal.signal === "SELL") {
+        addRejection("uptrend_short_block");
+        continue;
+      }
+
       const ltp = livePrices[signal.symbol];
-      const candidate = eligibleCandidates.find(c => c.symbol === signal.symbol);
-      const isIntraday = candidate?.category?.toUpperCase().includes("INTRADAY") ?? false;
-      
-      const success = await ingestSignal(signal, ltp, {
+      if (!ltp || ltp <= 0) {
+        addRejection("ltp_unavailable");
+        continue;
+      }
+
+      const sector = STOCK_SECTOR_MAP[signal.symbol] ?? "Other";
+      if ((sectorCounts[sector] ?? 0) >= cfg.maxSectorExposure) {
+        addRejection("sector_cap");
+        continue;
+      }
+      if ((directionCounts[signal.signal] ?? 0) >= cfg.maxSameDirectionOpenPositions) {
+        addRejection(signal.signal === "BUY" ? "direction_cap_buy" : "direction_cap_sell");
+        continue;
+      }
+
+      const rejectionReason = await ingestSignal(signal, ltp, {
         scanSessionId: options?.scanSessionId,
         source: options?.source,
-        isIntraday,
-        minRequiredRR
+        isIntraday: isIntradayCandidate(signal.symbol),
+        minRequiredRR,
+        confidenceCalibrated: true,
       });
 
-      if (success) {
+      if (rejectionReason === null) {
         generated++;
-        const sector = STOCK_SECTOR_MAP[signal.symbol] ?? "Other";
         sectorCounts[sector] = (sectorCounts[sector] ?? 0) + 1;
+        directionCounts[signal.signal] = (directionCounts[signal.signal] ?? 0) + 1;
+      } else {
+        addRejection(rejectionReason);
       }
     }
 
@@ -693,6 +775,31 @@ export async function generateSuggestionsFromWatchlist(options?: {
 }
 
 
+// ── Per-symbol ingest lock ────────────────────────────────────────────────────
+// Serializes the check-then-insert in ingestSignal per symbol so concurrent
+// scheduler + realtime calls can't insert duplicate open suggestions.
+
+const symbolIngestLocks = new Map<string, Promise<void>>();
+
+async function withSymbolLock<T>(symbol: string, fn: () => Promise<T>): Promise<T> {
+  const prev = symbolIngestLocks.get(symbol) ?? Promise.resolve();
+  const run = prev.then(fn, fn);
+  const settled = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  symbolIngestLocks.set(symbol, settled);
+  void settled.then(() => {
+    if (symbolIngestLocks.get(symbol) === settled) symbolIngestLocks.delete(symbol);
+  });
+  return run;
+}
+
+/**
+ * Runs all per-signal gates and inserts the suggestion.
+ * Returns null on success, or a rejection-reason string (fed into
+ * rejectionCounts / summarizeRejections by the generation loop) on rejection.
+ */
 export async function ingestSignal(
   signal: IntelligenceSignal,
   livePrice?: number,
@@ -701,35 +808,74 @@ export async function ingestSignal(
     source?: string;
     isIntraday?: boolean;
     minRequiredRR?: number;
+    /** Set when the caller already applied calibrateConfidence (batch path). */
+    confidenceCalibrated?: boolean;
   }
-): Promise<boolean> {
+): Promise<string | null> {
   const ltp = livePrice;
-  const minRequiredRR = options?.minRequiredRR ?? 1.3;
+  const marketState = getMarketState();
+
+  // Dynamic R:R floor mirrors the scheduler path (base 1.3, raised in
+  // high-VIX / weak-breadth regimes) so the realtime path can't admit
+  // lower-R:R trades than the batch generator would.
+  let dynamicMinRR = 1.3;
+  if (marketState.indiaVix && marketState.indiaVix > 16) {
+    dynamicMinRR += 0.2;
+  }
+  if (
+    marketState.declineCount > 0 &&
+    marketState.advanceCount > 0 &&
+    marketState.declineCount > marketState.advanceCount * 1.5
+  ) {
+    dynamicMinRR += 0.25;
+  }
+  const minRequiredRR = options?.minRequiredRR ?? dynamicMinRR;
+
+  // ── Regime execution guards ─────────────────────────────────────────
+  // No new longs into a downtrend (nor shorts into an uptrend) with elevated
+  // VIX. Mirrors the batch loop's gates so the realtime path, which calls
+  // ingestSignal directly, cannot bypass them.
+  if (marketState.indiaVix && marketState.indiaVix > 18) {
+    if (signal.signal === "BUY" && marketState.regime === "TRENDING_DOWN") {
+      logger.warn(
+        { symbol: signal.symbol, regime: marketState.regime, indiaVix: marketState.indiaVix },
+        "Discarding BUY suggestion: downtrend with elevated VIX",
+      );
+      return "downtrend_vix_long_block";
+    }
+    if (signal.signal === "SELL" && marketState.regime === "TRENDING_UP") {
+      logger.warn(
+        { symbol: signal.symbol, regime: marketState.regime, indiaVix: marketState.indiaVix },
+        "Discarding SELL suggestion: uptrend with elevated VIX",
+      );
+      return "uptrend_short_block";
+    }
+  }
 
   // ── NSE free-data gates ─────────────────────────────────────────────
   // Walk-forward demotion: rolling 90d expectancy for this setup is negative.
   if (isSetupDemoted(signal.setupType)) {
     logger.warn({ symbol: signal.symbol, setupType: signal.setupType }, "Discarding suggestion: setup demoted by walk-forward expectancy check");
-    return false;
+    return "setup_demoted";
   }
 
   // F&O ban period: OI limits make these erratic — hard reject.
   if (isSymbolBanned(signal.symbol)) {
     logger.warn({ symbol: signal.symbol }, "Discarding suggestion: symbol in F&O ban period");
-    return false;
+    return "fno_ban";
   }
 
   // Earnings/corp-action blackout: no binary event risk on open positions.
-  if (getMarketState().corporateActionSymbols.has(signal.symbol)) {
+  if (marketState.corporateActionSymbols.has(signal.symbol)) {
     logger.warn({ symbol: signal.symbol }, "Discarding suggestion: corporate event within 3 days");
-    return false;
+    return "corporate_action";
   }
 
   // Market internals: VIX spike halt, breadth + sector-RS gates for momentum.
   const internals = checkMarketInternals(signal.symbol, signal.signal as "BUY" | "SELL", signal.setupType);
   if (!internals.allowed) {
     logger.warn({ symbol: signal.symbol, setupType: signal.setupType, reason: internals.reason }, "Discarding suggestion: market internals gate");
-    return false;
+    return "market_internals";
   }
 
   // Delivery % gate for long momentum: low delivery = intraday churn, the
@@ -741,7 +887,7 @@ export async function ingestSignal(
         { symbol: signal.symbol, deliveryPct },
         "Discarding momentum BUY: delivery % below 25 (speculative churn, not accumulation)",
       );
-      return false;
+      return "delivery_pct";
     }
   }
 
@@ -757,53 +903,56 @@ export async function ingestSignal(
     ];
   }
 
-  if (ltp && ltp > 0) {
-    if (signal.signal === "BUY") {
-      if (ltp > signal.entryPrice * 1.002) {
-        logger.warn({ symbol: signal.symbol, ltp, origEntry: signal.entryPrice }, "Discarding BUY suggestion: live price has already passed planned entry point (Late Entry / Chased)");
-        return false;
-      }
-      const liveRisk = ltp - signal.stopLoss;
-      const liveReward = signal.target1 - ltp;
-      const liveRR = liveRisk > 0 ? liveReward / liveRisk : 0;
-      if (ltp <= signal.stopLoss || ltp >= signal.target1 || liveRR < minRequiredRR) {
-        logger.warn({ symbol: signal.symbol, ltp, origEntry: signal.entryPrice, liveRR, minRequiredRR }, "Discarding suggestion: live price has hit target/stop or risk-reward < minRequiredRR");
-        return false;
-      }
-      signal.riskReward = Number(liveRR.toFixed(2));
-    } else if (signal.signal === "SELL") {
-      if (ltp < signal.entryPrice * 0.998) {
-        logger.warn({ symbol: signal.symbol, ltp, origEntry: signal.entryPrice }, "Discarding SELL suggestion: live price has already passed planned entry point (Late Entry / Chased)");
-        return false;
-      }
-      const liveRisk = signal.stopLoss - ltp;
-      const liveReward = ltp - signal.target1;
-      const liveRR = liveRisk > 0 ? liveReward / liveRisk : 0;
-      if (ltp >= signal.stopLoss || ltp <= signal.target1 || liveRR < minRequiredRR) {
-        logger.warn({ symbol: signal.symbol, ltp, origEntry: signal.entryPrice, liveRR, minRequiredRR }, "Discarding suggestion: live price has hit target/stop or risk-reward < minRequiredRR");
-        return false;
-      }
-      signal.riskReward = Number(liveRR.toFixed(2));
-    }
+  // VWAP-side alignment: price on the wrong side of session VWAP for the trade
+  // direction is the classic counter-flow entry (buying while the average
+  // participant is under water). Soft adjustment only — no repo backtest has
+  // measured this as a hard gate yet, so it shifts confidence, never rejects.
+  const vwapDist = signal.featureVector?.vwapDistance;
+  if (typeof vwapDist === "number" && vwapDist !== 0) {
+    const vwapAligned = signal.signal === "BUY" ? vwapDist > 0 : vwapDist < 0;
+    signal.confidence = Math.max(0, Math.min(100, signal.confidence + (vwapAligned ? 3 : -6)));
+    signal.confluence = [
+      ...(signal.confluence ?? []),
+      vwapAligned
+        ? `Price on the right side of VWAP (${vwapDist.toFixed(2)}%)`
+        : `Counter-VWAP entry (${vwapDist.toFixed(2)}%) — reduced confidence`,
+    ];
   }
 
-  const todayStart = todayStartUTC();
-  
-  const [latestOpen] = await db
-    .select({ id: suggestionsTable.id })
-    .from(suggestionsTable)
-    .where(
-      and(
-        eq(suggestionsTable.symbol, signal.symbol),
-        or(
-          gte(suggestionsTable.generatedAt, todayStart),
-          inArray(suggestionsTable.status, ["ACTIVE", "PENDING"])
-        )
-      )
-    )
-    .limit(1);
+  // Live-price gates require a real LTP: without one we'd insert PENDING off
+  // stale daily-candle prices and auto-promote at whatever the market moved to.
+  if (!ltp || ltp <= 0) {
+    logger.warn({ symbol: signal.symbol }, "Discarding suggestion: live price unavailable (LTP fetch failed)");
+    return "ltp_unavailable";
+  }
 
-  if (latestOpen) return false;
+  if (signal.signal === "BUY") {
+    if (ltp > signal.entryPrice * 1.002) {
+      logger.warn({ symbol: signal.symbol, ltp, origEntry: signal.entryPrice }, "Discarding BUY suggestion: live price has already passed planned entry point (Late Entry / Chased)");
+      return "risk_reward";
+    }
+    const liveRisk = ltp - signal.stopLoss;
+    const liveReward = signal.target1 - ltp;
+    const liveRR = liveRisk > 0 ? liveReward / liveRisk : 0;
+    if (ltp <= signal.stopLoss || ltp >= signal.target1 || liveRR < minRequiredRR) {
+      logger.warn({ symbol: signal.symbol, ltp, origEntry: signal.entryPrice, liveRR, minRequiredRR }, "Discarding suggestion: live price has hit target/stop or risk-reward < minRequiredRR");
+      return "risk_reward";
+    }
+    signal.riskReward = Number(liveRR.toFixed(2));
+  } else if (signal.signal === "SELL") {
+    if (ltp < signal.entryPrice * 0.998) {
+      logger.warn({ symbol: signal.symbol, ltp, origEntry: signal.entryPrice }, "Discarding SELL suggestion: live price has already passed planned entry point (Late Entry / Chased)");
+      return "risk_reward";
+    }
+    const liveRisk = signal.stopLoss - ltp;
+    const liveReward = ltp - signal.target1;
+    const liveRR = liveRisk > 0 ? liveReward / liveRisk : 0;
+    if (ltp >= signal.stopLoss || ltp <= signal.target1 || liveRR < minRequiredRR) {
+      logger.warn({ symbol: signal.symbol, ltp, origEntry: signal.entryPrice, liveRR, minRequiredRR }, "Discarding suggestion: live price has hit target/stop or risk-reward < minRequiredRR");
+      return "risk_reward";
+    }
+    signal.riskReward = Number(liveRR.toFixed(2));
+  }
 
   const isIntraday = options?.isIntraday ?? false;
   const tradeType = isIntraday ? "INTRADAY" : "SWING";
@@ -818,18 +967,21 @@ export async function ingestSignal(
         { symbol: signal.symbol, impliedGapPct: gapRisk.impliedGapPct },
         "Discarding SWING suggestion: HIGH overnight gap risk",
       );
-      return false;
+      return "gap_risk";
     }
   }
 
   // Replace uncalibrated model confidence with the outcome-blended score:
   // empirical win rate for this setup×tradeType, weighted by sample count.
+  // When the caller already calibrated (batch path, so ranking/selection use
+  // the blended score), only the empirical stats are consumed here — the
+  // blend is not idempotent, so we must not apply it twice.
   const { confidence: calibratedConfidence, empirical } = await calibrateConfidence(
     signal.confidence,
     signal.setupType,
     tradeType,
   );
-  if (calibratedConfidence !== signal.confidence) {
+  if (!options?.confidenceCalibrated && calibratedConfidence !== signal.confidence) {
     logger.info(
       {
         symbol: signal.symbol,
@@ -843,116 +995,180 @@ export async function ingestSignal(
     );
     signal.confidence = calibratedConfidence;
   }
-  
-  const timing = calculateSuggestionTiming({
-    tradeType,
-    entryPrice: signal.entryPrice,
-    target1: signal.target1,
-    atr: signal.featureVector?.atr14,
-  });
 
-  // Honest fill model: only mark ACTIVE if the market is already at/past the
-  // planned entry. Otherwise PENDING — accuracy_tracker promotes it when price
-  // actually touches entry, so stats never count trades that never filled.
-  const entryTouched =
-    ltp && ltp > 0
-      ? signal.signal === "BUY"
-        ? ltp >= signal.entryPrice
-        : ltp <= signal.entryPrice
-      : false;
+  // Serialize the remaining check-then-insert per symbol: scheduler and
+  // realtime paths run concurrently and could otherwise both pass the
+  // duplicate/cap checks before either inserts.
+  return withSymbolLock(signal.symbol, async () => {
+    const cfg = getConfig();
+    const todayStart = todayStartUTC();
 
-  const [inserted] = await db
-    .insert(suggestionsTable)
-    .values({
-      symbol: signal.symbol,
-      name: signal.name,
-      exchange: "NSE",
-      direction: signal.signal,
+    const [latestOpen] = await db
+      .select({ id: suggestionsTable.id })
+      .from(suggestionsTable)
+      .where(
+        and(
+          eq(suggestionsTable.symbol, signal.symbol),
+          or(
+            gte(suggestionsTable.generatedAt, todayStart),
+            inArray(suggestionsTable.status, ["ACTIVE", "PENDING"])
+          )
+        )
+      )
+      .limit(1);
+
+    if (latestOpen) return "already_open";
+
+    // DB-backed capacity gates so the realtime path (which bypasses the batch
+    // generator's slot accounting) can't exceed the configured limits.
+    const openRows = await db
+      .select({ symbol: suggestionsTable.symbol, direction: suggestionsTable.direction })
+      .from(suggestionsTable)
+      .where(inArray(suggestionsTable.status, ["ACTIVE", "PENDING"]));
+
+    if (openRows.length >= cfg.maxOpenPositions) {
+      logger.warn(
+        { symbol: signal.symbol, open: openRows.length, max: cfg.maxOpenPositions },
+        "Discarding suggestion: max open positions reached",
+      );
+      return "max_open_positions";
+    }
+
+    const sector = STOCK_SECTOR_MAP[signal.symbol] ?? "Other";
+    const sectorOpen = openRows.filter((r) => (STOCK_SECTOR_MAP[r.symbol] ?? "Other") === sector).length;
+    if (sectorOpen >= cfg.maxSectorExposure) {
+      logger.warn(
+        { symbol: signal.symbol, sector, sectorOpen, max: cfg.maxSectorExposure },
+        "Discarding suggestion: max sector exposure reached",
+      );
+      return "sector_cap";
+    }
+
+    const sameDirectionOpen = openRows.filter((r) => r.direction === signal.signal).length;
+    if (sameDirectionOpen >= cfg.maxSameDirectionOpenPositions) {
+      logger.warn(
+        { symbol: signal.symbol, direction: signal.signal, sameDirectionOpen, max: cfg.maxSameDirectionOpenPositions },
+        "Discarding suggestion: max same-direction positions reached",
+      );
+      return signal.signal === "BUY" ? "direction_cap_buy" : "direction_cap_sell";
+    }
+
+    const timing = calculateSuggestionTiming({
       tradeType,
-      setupType: signal.setupType,
-      entryPrice: signal.entryPrice.toString(),
-      stopLoss: signal.stopLoss.toString(),
-      target1: signal.target1.toString(),
-      target2: signal.target2 ? signal.target2.toString() : null,
-      riskReward: signal.riskReward.toString(),
-      quantity: signal.positionSize,
-      maxRiskInr: signal.maxRiskInr.toString(),
-      stopDistancePct: signal.stopDistancePct.toString(),
-      marketRegime: signal.regime,
-      confidence: signal.confidence,
-      aiScore: signal.aiScore,
-      patternScore: signal.patternScore,
-      chronosScore: signal.chronosScore,
-      technicalScore: signal.technicalScore,
-      sentimentScore: signal.sentimentScore,
-      rankingMode: signal.rankingProvider,
-      reasoning: `[SENTIMENT: ${signal.sentimentScore > 60 ? "BULLISH" : signal.sentimentScore < 40 ? "BEARISH" : "NEUTRAL"}] ${signal.reasoning} Confluence: ${signal.confluence.slice(0, 2).join(", ")}.`,
-      validityTill: timing.validityTill,
-      expectedHoldMinutes: timing.expectedHoldMinutes,
-      expiresAt: timing.expiresAt,
-      status: entryTouched ? "ACTIVE" : "PENDING",
-      atr: signal.featureVector?.atr14?.toString() || "0",
-      highestPrice: signal.entryPrice.toString(),
-      lowestPrice: signal.entryPrice.toString(),
-      signalFactors: signal.signalFactors,
-    })
-    .returning();
-
-  if (inserted) {
-    logger.info({
-      id: inserted.id,
-      symbol: inserted.symbol,
-      setupType: inserted.setupType,
-      direction: inserted.direction,
-      entryPrice: inserted.entryPrice
-    }, "Database write: auto suggestion generated and inserted");
-
-    broadcast(
-      createServerEvent.newSuggestion({
-        id: inserted.id,
-        symbol: inserted.symbol,
-        direction: signal.signal as "BUY" | "SELL",
-        entryPrice: signal.entryPrice,
-        stopLoss: signal.stopLoss,
-        target1: signal.target1,
-        setupType: signal.setupType,
-        riskReward: signal.riskReward,
-        scanSessionId: options?.scanSessionId,
-      }),
-      "suggestions"
-    );
-
-    intelligenceBus.publish("suggestionGenerated", {
-      suggestion: {
-        id: inserted.id,
-        instrumentKey: `NSE_EQ|${inserted.symbol}`,
-        symbol: inserted.symbol,
-        direction: signal.signal as "BUY" | "SELL",
-        setup: signal.setupType,
-        confidence: signal.confidence,
-        entry: signal.entryPrice,
-        stopLoss: signal.stopLoss,
-        target: signal.target1,
-        target1: signal.target1,
-        riskReward: signal.riskReward,
-        reasoning: [signal.reasoning],
-        generatedAt: Date.now(),
-        expiresAt: timing.expiresAt.getTime(),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      } as any
+      entryPrice: signal.entryPrice,
+      target1: signal.target1,
+      atr: signal.featureVector?.atr14,
+      empiricalMedianMinutes: empirical?.medianTimeToTargetMin,
     });
 
-    logger.info(
-      {
+    // Honest fill model: only mark ACTIVE if the market is already at/past the
+    // planned entry. Otherwise PENDING — accuracy_tracker promotes it when price
+    // actually touches entry, so stats never count trades that never filled.
+    const entryTouched =
+      ltp && ltp > 0
+        ? signal.signal === "BUY"
+          ? ltp >= signal.entryPrice
+          : ltp <= signal.entryPrice
+        : false;
+
+    const [inserted] = await db
+      .insert(suggestionsTable)
+      .values({
         symbol: signal.symbol,
-        setup: signal.setupType,
+        name: signal.name,
+        exchange: "NSE",
         direction: signal.signal,
-        rr: signal.riskReward,
+        tradeType,
+        setupType: signal.setupType,
+        entryPrice: signal.entryPrice.toString(),
+        stopLoss: signal.stopLoss.toString(),
+        target1: signal.target1.toString(),
+        target2: signal.target2 ? signal.target2.toString() : null,
+        riskReward: signal.riskReward.toString(),
+        quantity: signal.positionSize,
+        maxRiskInr: signal.maxRiskInr.toString(),
+        stopDistancePct: signal.stopDistancePct.toString(),
+        marketRegime: signal.regime,
         confidence: signal.confidence,
-      },
-      "New suggestion generated via Layer 7 Pipeline"
-    );
-    return true;
-  }
-  return false;
+        aiScore: signal.aiScore,
+        patternScore: signal.patternScore,
+        chronosScore: signal.chronosScore,
+        technicalScore: signal.technicalScore,
+        sentimentScore: signal.sentimentScore,
+        rankingMode: signal.rankingProvider,
+        reasoning: `[SENTIMENT: ${signal.sentimentScore > 60 ? "BULLISH" : signal.sentimentScore < 40 ? "BEARISH" : "NEUTRAL"}] ${signal.reasoning} Confluence: ${signal.confluence.slice(0, 2).join(", ")}.`,
+        validityTill: timing.validityTill,
+        expectedHoldMinutes: timing.expectedHoldMinutes,
+        expiresAt: timing.expiresAt,
+        status: entryTouched ? "ACTIVE" : "PENDING",
+        atr: signal.featureVector?.atr14?.toString() || "0",
+        highestPrice: signal.entryPrice.toString(),
+        lowestPrice: signal.entryPrice.toString(),
+        signalFactors: signal.signalFactors,
+        // Persist the full feature vector so a model can later be trained on the
+        // realized outcome of this exact signal (Phase 1.1). Discarded before now.
+        featureVector: signal.featureVector ?? null,
+      })
+      .onConflictDoNothing()
+      .returning();
+
+    if (inserted) {
+      logger.info({
+        id: inserted.id,
+        symbol: inserted.symbol,
+        setupType: inserted.setupType,
+        direction: inserted.direction,
+        entryPrice: inserted.entryPrice
+      }, "Database write: auto suggestion generated and inserted");
+
+      broadcast(
+        createServerEvent.newSuggestion({
+          id: inserted.id,
+          symbol: inserted.symbol,
+          direction: signal.signal as "BUY" | "SELL",
+          entryPrice: signal.entryPrice,
+          stopLoss: signal.stopLoss,
+          target1: signal.target1,
+          setupType: signal.setupType,
+          riskReward: signal.riskReward,
+          scanSessionId: options?.scanSessionId,
+        }),
+        "suggestions"
+      );
+
+      intelligenceBus.publish("suggestionGenerated", {
+        suggestion: {
+          id: inserted.id,
+          instrumentKey: `NSE_EQ|${inserted.symbol}`,
+          symbol: inserted.symbol,
+          direction: signal.signal as "BUY" | "SELL",
+          setup: signal.setupType,
+          confidence: signal.confidence,
+          entry: signal.entryPrice,
+          stopLoss: signal.stopLoss,
+          target: signal.target1,
+          target1: signal.target1,
+          riskReward: signal.riskReward,
+          reasoning: [signal.reasoning],
+          generatedAt: Date.now(),
+          expiresAt: timing.expiresAt.getTime(),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } as any
+      });
+
+      logger.info(
+        {
+          symbol: signal.symbol,
+          setup: signal.setupType,
+          direction: signal.signal,
+          rr: signal.riskReward,
+          confidence: signal.confidence,
+        },
+        "New suggestion generated via Layer 7 Pipeline"
+      );
+      return null;
+    }
+    logger.warn({ symbol: signal.symbol }, "Suggestion insert returned no row (conflict or failure)");
+    return "insert_failed";
+  });
 }

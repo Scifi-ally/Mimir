@@ -175,9 +175,6 @@ class ScannerOrchestrator {
 
             // Generate suggestions for top 5 ranked opportunities
             for (const opportunity of ranked.slice(0, 5)) {
-              // Also add it to the active suggestions map for real-time tracking
-              this.suggestions.generate(opportunity);
-
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               const signal: any = {
                 symbol: opportunity.symbol,
@@ -209,7 +206,16 @@ class ScannerOrchestrator {
 
               const { ingestSignal, fetchLTPForSymbols } = await import("../suggestions/generator");
               const ltpMap = await fetchLTPForSymbols([opportunity.symbol]);
-              await ingestSignal(signal, ltpMap[opportunity.symbol], { isIntraday: true, source: "realtime" });
+              // ingestSignal returns null on success, or a rejection-reason string.
+              const rejectionReason = await ingestSignal(signal, ltpMap[opportunity.symbol], { isIntraday: true, source: "realtime" });
+              if (rejectionReason) {
+                logger.debug({ symbol: opportunity.symbol, rejectionReason }, "Realtime suggestion rejected by ingest gates");
+              } else {
+                // Register for real-time tracking (frontend broadcast + Redis
+                // cache) only after every ingest gate passed — rejected signals
+                // must not surface as active intelligence suggestions.
+                this.suggestions.generate(opportunity);
+              }
             }
           } catch (err) {
             logger.warn({ err }, "AI Ranking task failed");

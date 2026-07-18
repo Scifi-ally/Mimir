@@ -1,5 +1,5 @@
 import { db, suggestionsTable } from "../../db/src";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { intelligenceBus } from "../intelligence/event_bus";
 import { getConfig } from "../config";
 import { broadcast } from "../ws/websocket_server";
@@ -81,12 +81,15 @@ export async function initPositionTracker() {
         if (stopLossMode === "FIXED") {
           // Under FIXED mode, just track the high/low
           if (highLowChanged) {
-            // CRITICAL FIX (Issue #2): Only update database, don't mutate cache
+            // Atomic GREATEST/LEAST (same as accuracy_tracker) — a concurrent
+            // watermark writer landing between our read and write cannot be
+            // regressed to this tick's values.
+            const p = ltp.toFixed(2);
             await db
               .update(suggestionsTable)
               .set({
-                highestPrice: highestPrice.toFixed(2),
-                lowestPrice: lowestPrice.toFixed(2),
+                highestPrice: sql`GREATEST(COALESCE(${suggestionsTable.highestPrice}, ${suggestionsTable.entryPrice}), ${p}::numeric)`,
+                lowestPrice: sql`LEAST(COALESCE(${suggestionsTable.lowestPrice}, ${suggestionsTable.entryPrice}), ${p}::numeric)`,
               })
               .where(eq(suggestionsTable.id, pos.id));
           }
@@ -155,12 +158,23 @@ export async function initPositionTracker() {
         if (stopChanged || highLowChanged) {
           // CRITICAL FIX (Issue #2): Only update database, don't mutate in-memory array
           // Next refresh cycle will pick up the changes from DB
+          // Atomic GREATEST/LEAST (same as accuracy_tracker): watermarks and the
+          // stop only ratchet in their monotonic direction, so a concurrent
+          // checker or /modify-stop write cannot be silently regressed.
+          const p = ltp.toFixed(2);
           await db
             .update(suggestionsTable)
             .set({
-              stopLoss: newStop.toFixed(2),
-              highestPrice: highestPrice.toFixed(2),
-              lowestPrice: lowestPrice.toFixed(2),
+              highestPrice: sql`GREATEST(COALESCE(${suggestionsTable.highestPrice}, ${suggestionsTable.entryPrice}), ${p}::numeric)`,
+              lowestPrice: sql`LEAST(COALESCE(${suggestionsTable.lowestPrice}, ${suggestionsTable.entryPrice}), ${p}::numeric)`,
+              ...(stopChanged
+                ? {
+                    stopLoss:
+                      pos.direction === "BUY"
+                        ? sql`GREATEST(${suggestionsTable.stopLoss}, ${newStop.toFixed(2)}::numeric)`
+                        : sql`LEAST(${suggestionsTable.stopLoss}, ${newStop.toFixed(2)}::numeric)`,
+                  }
+                : {}),
             })
             .where(eq(suggestionsTable.id, pos.id));
 

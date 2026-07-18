@@ -22,6 +22,7 @@ import {
 } from "./technical";
 import {
   getISTDateStr,
+  getISTDayBounds,
   getLastCompletedTradingDayStr,
   shiftISTDateStr,
 } from "../lib/ist-time";
@@ -62,6 +63,14 @@ export interface MultiTimeframeSignal {
 
 // ── Fetch helpers for multi-timeframe data ───────────────────────────────────
 
+// Instruments whose history simply starts later than the requested range
+// (new listings): once a head backfill returns nothing older than the cache
+// head, remember the earliest available date per instrument|interval so we
+// stop re-fetching the same empty head range on every call. Interior cache
+// holes (e.g. from downtime mid-range) are not detected or repaired here —
+// head/tail checks cannot see them.
+const earliestKnownHistoryStart = new Map<string, string>();
+
 export async function fetchCandles(
   instrumentKey: string,
   interval: string,
@@ -81,8 +90,34 @@ export async function fetchCandles(
   const toDateStr = toDate ?? defaultToDate;
   const fromDateStr = shiftISTDateStr(toDateStr, -daysBack);
 
-  const fromDateTime = new Date(fromDateStr + "T00:00:00Z");
-  const toDateTime = new Date(toDateStr + "T23:59:59Z");
+  // Candle timestamps are IST — use IST day bounds so a historical toDate
+  // doesn't leak the next day's candle (lookahead) or drop fromDate's own.
+  const fromDateTime = getISTDayBounds(fromDateStr).start;
+  const toDateTime = getISTDayBounds(toDateStr).end;
+
+  // The historical endpoint serves data only up to the previous trading day;
+  // candles for the current session come from the separate intraday endpoint.
+  const todayISTStr = getISTDateStr();
+  const includesToday = interval.endsWith("minute") && toDateStr >= todayISTStr;
+
+  // A closed market day (or pre-open) legitimately yields no intraday candles,
+  // and a transient intraday failure must never take down the whole fetch —
+  // degrade to historical-only data.
+  const fetchTodayIntradayCandles = async (): Promise<unknown[][]> => {
+    try {
+      return await upstoxClient.fetchIntradayCandles(
+        instrumentKey,
+        interval as "60minute" | "240minute",
+        token,
+      );
+    } catch (err) {
+      logger.warn(
+        { err, instrument: instrumentKey, interval },
+        "Intraday candle fetch failed; continuing with historical data only",
+      );
+      return [];
+    }
+  };
 
   try {
     // 1. Fetch cached candles from the database
@@ -100,8 +135,7 @@ export async function fetchCandles(
       .orderBy(asc(candlesTable.timestamp));
 
     const lastCachedTime = cachedCandles.length > 0 ? cachedCandles[cachedCandles.length - 1].timestamp : null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let apiCandles: any[][] = [];
+    let apiCandles: unknown[][] = [];
 
     // 2. Fetch delta if needed
     if (cachedCandles.length === 0) {
@@ -113,17 +147,67 @@ export async function fetchCandles(
         fromDateStr,
         token,
       );
+      if (includesToday) {
+        apiCandles = apiCandles.concat(await fetchTodayIntradayCandles());
+      }
     } else {
       const lastCachedDateStr = getISTDateStr(lastCachedTime!);
+      // Intraday candles for the current day go stale as the session
+      // progresses; refresh when the last cached candle is older than the
+      // staleness window (must stay >= the upstox client's intraday cache
+      // TTL to have any effect).
+      const INTRADAY_STALENESS_MS = 15 * 60 * 1000;
+      const intradayStale =
+        includesToday &&
+        lastCachedDateStr === todayISTStr &&
+        Date.now() - lastCachedTime!.getTime() > INTRADAY_STALENESS_MS;
       if (lastCachedDateStr < toDateStr) {
-        // Fetch only the missing delta from the API
-        apiCandles = await upstoxClient.fetchHistoricalCandles(
+        // Fetch only the missing completed-day delta from the historical API
+        // (the upsert below handles overlap on the lastCachedDateStr day).
+        // It never returns current-day candles, so skip it when only today's
+        // data is missing for an intraday interval.
+        if (!includesToday || lastCachedDateStr < todayISTStr) {
+          apiCandles = await upstoxClient.fetchHistoricalCandles(
+            instrumentKey,
+            interval as "day" | "60minute" | "240minute" | "week",
+            toDateStr,
+            lastCachedDateStr,
+            token,
+          );
+        }
+      }
+      if (includesToday && (lastCachedDateStr < todayISTStr || intradayStale)) {
+        apiCandles = apiCandles.concat(await fetchTodayIntradayCandles());
+      }
+
+      // Head backfill: if the cache is missing the older part of the requested
+      // range, fetch it. Allow a tolerance since fromDateStr is calendar days —
+      // weekends/holidays legitimately push the earliest candle a few days later.
+      const earliestCachedDateStr = getISTDateStr(cachedCandles[0].timestamp);
+      const HEAD_GAP_TOLERANCE_DAYS = 7;
+      const histKey = `${instrumentKey}|${interval}`;
+      const knownHistoryStart = earliestKnownHistoryStart.get(histKey);
+      const headMissing =
+        earliestCachedDateStr > shiftISTDateStr(fromDateStr, HEAD_GAP_TOLERANCE_DAYS) &&
+        // Skip when a previous head fetch established that the instrument's
+        // history simply starts at the cache head (new listing) — otherwise
+        // the empty head range would be re-fetched forever.
+        (knownHistoryStart === undefined || earliestCachedDateStr > knownHistoryStart);
+      if (headMissing) {
+        const headCandles = await upstoxClient.fetchHistoricalCandles(
           instrumentKey,
           interval as "day" | "60minute" | "240minute" | "week",
-          toDateStr,
-          lastCachedDateStr,
+          earliestCachedDateStr,
+          fromDateStr,
           token,
         );
+        const gotOlder = headCandles.some(
+          (c) => getISTDateStr(new Date(c[0] as string)) < earliestCachedDateStr,
+        );
+        if (!gotOlder) {
+          earliestKnownHistoryStart.set(histKey, earliestCachedDateStr);
+        }
+        apiCandles = apiCandles.concat(headCandles);
       }
     }
 
@@ -198,8 +282,12 @@ export async function fetchCandles(
       fromDateStr,
       token,
     );
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (candles as any[][])
+    const intradayCandles = includesToday ? await fetchTodayIntradayCandles() : [];
+    // Both series arrive newest-first and today's intraday candles are newer
+    // than anything the historical endpoint serves. Copy before reversing —
+    // the client caches and returns these arrays by reference, so an in-place
+    // .reverse() would corrupt the cached series for subsequent callers.
+    return [...intradayCandles, ...candles]
       .reverse()
       .map((c) => ({
         timestamp: c[0] as string,
@@ -214,10 +302,10 @@ export async function fetchCandles(
 
 /**
  * Fetch all timeframes in parallel for a stock
- * - 1h: last 20 trading days = ~480 candles
- * - 4h: last 60 trading days = ~240 candles
- * - Daily: last 180 trading days = ~180 candles
- * - Weekly: last 5 years = ~260 candles
+ * - 1h: last 20 calendar days = ~95 candles
+ * - 4h: last 60 calendar days = ~80 candles
+ * - Daily: last 420 calendar days = ~290 candles
+ * - Weekly: aggregated from the daily series = ~60 candles
  */
 export async function fetchMultiTimeframeData(
   instrumentKey: string,
@@ -226,7 +314,11 @@ export async function fetchMultiTimeframeData(
   const [tf1h, tf4h, tfDaily] = await Promise.all([
     fetchCandles(instrumentKey, "60minute", 20, toDate),
     fetchCandles(instrumentKey, "240minute", 60, toDate),
-    fetchCandles(instrumentKey, "day", 180, toDate),
+    // 420 days ≈ 60 weeks of dailies: aggregation must yield enough weekly
+    // bars to clear buildSnapshot's 55-candle minimum and analyzeTimeframe's
+    // 50-bar gate (180 days gave ~26 weekly bars — weekly analysis was
+    // permanently null).
+    fetchCandles(instrumentKey, "day", 420, toDate),
   ]);
   
   const tfWeekly = aggregateDailyToWeekly(tfDaily);
@@ -322,7 +414,7 @@ export function generateMultiTimeframeSignal(
       tf.analysis.trend === "UP"
         ? 1
         : tf.analysis.trend === "RANGING"
-          ? 0.25
+          ? 0.15
           : 0;
     const strengthWeight = 0.5 + tf.analysis.strength / 20;
     return sum + tf.weight * trendWeight * strengthWeight;
@@ -333,7 +425,7 @@ export function generateMultiTimeframeSignal(
       tf.analysis.trend === "DOWN"
         ? 1
         : tf.analysis.trend === "RANGING"
-          ? 0.25
+          ? 0.15
           : 0;
     const strengthWeight = 0.5 + tf.analysis.strength / 20;
     return sum + tf.weight * trendWeight * strengthWeight;
@@ -385,11 +477,11 @@ export function generateMultiTimeframeSignal(
   const volumeIncrease =
     direction === "BUY"
       ? [tf1h, tf4h, tfDaily].some((tf) =>
-          Boolean(tf && tf.trend === "UP" && tf.snapshot.volumeRatio > 1.1),
+          Boolean(tf && tf.trend === "UP" && tf.snapshot.volumeRatio > 1.25),
         )
       : direction === "SELL"
         ? [tf1h, tf4h, tfDaily].some((tf) =>
-            Boolean(tf && tf.trend === "DOWN" && tf.snapshot.volumeRatio > 1.1),
+            Boolean(tf && tf.trend === "DOWN" && tf.snapshot.volumeRatio > 1.25),
           )
         : false;
 

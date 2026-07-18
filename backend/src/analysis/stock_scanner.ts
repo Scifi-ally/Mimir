@@ -9,9 +9,20 @@ import type {
 } from "./technical";
 
 // Setups with proven-negative expectancy under honest fills
-// (scripts/backtest_setups.ts, 365d, 2054 instruments, costs included):
-//   BREAKDOWN 2.5-5% WR, BEAR_MOMENTUM ~12% WR, BOLLINGER_SQUEEZE -1.4%/trade,
-//   LIQUIDITY_SWEEP -0.5%/trade, BREAKOUT -0.6%/trade.
+// (scripts/backtest_setups.ts --days 180, 2058 instruments, costs 0.05%/side;
+//  confirmed by the hold/R parameter sweep in .backtest_sweep.md and the
+//  quality-filter study in .backtest_filters.md):
+//   BREAKDOWN            -1.606%/trade, 4.3% WR; best filter combo still -1.437%
+//   BOLLINGER_SQUEEZE    -1.463%/trade, 15.0% WR; best filter combo still -1.376%
+//   BREAKOUT             -0.813%/trade, 14.3% WR; best sweep config -0.297%;
+//                        VOLUME+RS combo +0.010% but on only 55 fills (noise)
+//   LIQUIDITY_SWEEP      -0.484%/trade, 16.4% WR; best combo -0.054% at 3.1% retention
+//   BEAR_MOMENTUM        -0.454%/trade, 8.7% WR; VOLUME+RS combo +0.154% but on only
+//                        61 fills at 11.1% WR (timeout-driven), and expectancy
+//                        deteriorates monotonically with hold time — live swing
+//                        holds (~10 trading days) sit in its worst region
+// No tested hold/R parameter setting or entry-filter combination produces a
+// statistically defensible edge for any of these, so all five stay disabled.
 // Still detected for monitoring/UI, but never become trade suggestions.
 // Re-run the backtest before re-enabling any of these.
 export const NEGATIVE_EXPECTANCY_SETUPS = new Set([
@@ -1025,7 +1036,9 @@ async function fetchDailyCandles(
   }
 
   const toDateStr = endDate ?? getLastCompletedTradingDayStr();
-  const lookbackDays = Math.min(daysBack, 365);
+  // 420d ≈ 60 weekly bars — enough for a real EMA50 in the weekly aggregation
+  // (the upstox client routes day spans >300d to V3, which allows multi-year).
+  const lookbackDays = Math.min(daysBack, 420);
   const fromDateStr = shiftISTDateStr(toDateStr, -lookbackDays);
 
   try {
@@ -1208,22 +1221,36 @@ function getHourlyConfirmation(
 function aggregateHourlyTo4h(hourlyCandles: OHLCV[]): OHLCV[] {
   if (hourlyCandles.length < 8) return [];
   const sorted = [...hourlyCandles].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+  // Group by IST trading day so no 4h bar bridges the overnight gap
+  // (a full NSE session yields 7 hourly bars -> chunks of 4 + 3).
+  const byDay = new Map<string, OHLCV[]>();
+  for (const c of sorted) {
+    // Shift into IST (+05:30) so the calendar date reflects the IST trading day.
+    const d = new Date(new Date(c.timestamp).getTime() + 330 * 60 * 1000);
+    const dayKey = d.toISOString().slice(0, 10);
+    const arr = byDay.get(dayKey) ?? [];
+    arr.push(c);
+    byDay.set(dayKey, arr);
+  }
   const buckets: OHLCV[] = [];
-  for (let i = 0; i + 3 < sorted.length; i += 4) {
-    const chunk = sorted.slice(i, i + 4);
-    const open = chunk[0]!.open;
-    const close = chunk[chunk.length - 1]!.close;
-    const high = Math.max(...chunk.map((c) => c.high));
-    const low = Math.min(...chunk.map((c) => c.low));
-    const volume = chunk.reduce((sum, c) => sum + c.volume, 0);
-    buckets.push({
-      timestamp: chunk[chunk.length - 1]!.timestamp,
-      open,
-      high,
-      low,
-      close,
-      volume,
-    });
+  for (const [, dayCandles] of [...byDay.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+    // Keep the trailing partial chunk as a bar so the freshest data is never dropped.
+    for (let i = 0; i < dayCandles.length; i += 4) {
+      const chunk = dayCandles.slice(i, i + 4);
+      const open = chunk[0]!.open;
+      const close = chunk[chunk.length - 1]!.close;
+      const high = Math.max(...chunk.map((c) => c.high));
+      const low = Math.min(...chunk.map((c) => c.low));
+      const volume = chunk.reduce((sum, c) => sum + c.volume, 0);
+      buckets.push({
+        timestamp: chunk[chunk.length - 1]!.timestamp,
+        open,
+        high,
+        low,
+        close,
+        volume,
+      });
+    }
   }
   return buckets;
 }
@@ -1331,6 +1358,43 @@ function scoreSetupQuality(
     };
   }
 
+  // MOMENTUM_CONTINUATION entry-quality gate (scripts/backtest_filters.ts,
+  // --days 180, 2058 instruments, honest fills, costs 0.05%/side):
+  // baseline -0.224%/trade over 5276 fills (26.4% WR). Requiring
+  // VOLUME >= 1.5x + positive RS + stop >= 0.8*ATR14 together measures
+  // +0.011%/trade (306 fills, 29.2% WR, 5.9% signal retention) — the only
+  // combination reaching breakeven. Every weaker subset stays negative
+  // (RS alone -0.078%, STOPATR alone -0.178%, VOLUME alone -0.444%), so all
+  // three are enforced jointly. Thresholds mirror the study exactly; RS uses
+  // rs60 vs Nifty (>1 = outperforming the index over 60 bars) as the live
+  // analog of the study's "60-bar return above equal-weight universe mean".
+  if (candidate.setupType === "MOMENTUM_CONTINUATION") {
+    if (snap.volumeRatio < 1.5) {
+      return {
+        accepted: false,
+        adjustment: 0,
+        reason: "momentum volume surge below 1.5x prior-20-bar average",
+      };
+    }
+    const stopDist = Math.abs(candidate.entryPrice - candidate.stopLoss);
+    if (!(snap.atr14 > 0) || stopDist / snap.atr14 < 0.8) {
+      return {
+        accepted: false,
+        adjustment: 0,
+        reason: "momentum stop tighter than 0.8x ATR14 (noise-level risk unit)",
+      };
+    }
+    const rsFavorable =
+      candidate.direction === "BUY" ? rs60 > 1.0 : rs60 < 1.0;
+    if (!rsFavorable) {
+      return {
+        accepted: false,
+        adjustment: 0,
+        reason: "momentum without favorable 60-bar relative strength",
+      };
+    }
+  }
+
   let adjustment = 0;
 
   if (!isIntradayFallback && !hasConstructiveLastCandle(candles, candidate.direction)) {
@@ -1365,6 +1429,16 @@ function scoreSetupQuality(
   if (mtfSignal.volumeIncrease) adjustment += 0.2;
   if (snap.adx14 >= 22 && snap.adx14 <= 42) adjustment += 0.25;
   if (snap.volumeRatio >= 1.15 && snap.volumeRatio <= 2.8) adjustment += 0.2;
+
+  // Penalize low-ADX (no trend) setups trying to trade momentum/breakout
+  if (snap.adx14 < 16 && !isIntradayFallback) {
+    adjustment -= 0.6;
+  }
+
+  // Reward delivery volume conviction (high delivery % = institutional interest)
+  if (snap.volumeRatio >= 1.5 && snap.avgDailyVolume > 1_000_000) {
+    adjustment += 0.3;
+  }
 
   return { accepted: true, adjustment };
 }
@@ -1457,7 +1531,10 @@ export async function scanStock(
   try {
     const [dailyCandles, hourlyCandles] = await Promise.all([
       fetchDailyCandles(stock.key, 800, toDateOverride, priority),
-      fetchHourlyCandles(stock.key, 14, toDateOverride, priority),
+      // 60 calendar days ≈ 40 trading days x 7 hourly bars ≈ 280 candles,
+      // aggregating to ~80 session-aligned 4h bars — comfortably above the
+      // 50-bar minimum analyzeTimeframe needs for a real 4h analysis.
+      fetchHourlyCandles(stock.key, 60, toDateOverride, priority),
     ]);
 
     if (dailyCandles.length < 60) {
@@ -1468,13 +1545,13 @@ export async function scanStock(
       return null;
     }
     
-    const tf4hEffective =
-      hourlyCandles.length >= 180
-        ? aggregateHourlyTo4h(hourlyCandles)
-        : buildProxy4hFromDaily(dailyCandles);
+    // 180 hourly candles ≈ 26 trading days ≈ 52 session-aligned 4h bars, just
+    // above analyzeTimeframe's 50-bar minimum; below that, use the daily proxy.
+    const usedProxy4h = hourlyCandles.length < 180;
+    const tf4hEffective = usedProxy4h
+      ? buildProxy4hFromDaily(dailyCandles)
+      : aggregateHourlyTo4h(hourlyCandles);
     const tfWeeklyEffective = aggregateDailyToWeekly(dailyCandles);
-    const hasStrongHigherTfContext =
-      tf4hEffective.length >= 30 && tfWeeklyEffective.length >= 30;
     const hasUsableHigherTf = tf4hEffective.length >= 30 && tfWeeklyEffective.length >= 30;
     
     if (!hasUsableHigherTf) {
@@ -1511,6 +1588,15 @@ export async function scanStock(
       tfDaily: dailyCandles,
       tfWeekly: tfWeeklyEffective,
     });
+
+    // "Strong" requires real (non-proxy) 4h data that actually produced a 4h
+    // analysis (>= 50 aggregated bars); proxy-4h or a null 4h analysis is
+    // still usable but takes the fallback haircut/cap paths instead of full
+    // MTF credit.
+    const hasStrongHigherTfContext =
+      !usedProxy4h &&
+      multiTf.analyses["4h"] !== null &&
+      tfWeeklyEffective.length >= 30;
 
     // Compute RS vs Nifty
     const rs60 = niftyCandles ? computeRS60(dailyCandles, niftyCandles) : 1.0;
@@ -1693,7 +1779,8 @@ export async function diagnoseScanNullReason(
   try {
     const [dailyCandles, hourlyCandles] = await Promise.all([
       fetchDailyCandles(stock.key, 800, toDateOverride),
-      fetchHourlyCandles(stock.key, 14, toDateOverride),
+      // Keep in sync with scanStock: 60 days ≈ 280 hourly ≈ 80 real 4h bars.
+      fetchHourlyCandles(stock.key, 60, toDateOverride),
     ]);
 
     if (dailyCandles.length < 60) return "insufficient_daily_candles";
@@ -1897,8 +1984,38 @@ export async function scanMarket(
   });
 
 
+  // Apply sector rotation bonus: stocks in top-performing sectors get a boost,
+  // stocks fighting sector headwinds get penalized.
+  const sectorPerf = new Map<string, { total: number; count: number }>();
+  for (const r of results) {
+    if (!r.sector || !r.candles || r.candles.length < 2) continue;
+    const last = r.candles[r.candles.length - 1]!;
+    const prev = r.candles[r.candles.length - 2]!;
+    const dayChangePct = ((last.close - prev.close) / prev.close) * 100;
+    const cur = sectorPerf.get(r.sector) ?? { total: 0, count: 0 };
+    sectorPerf.set(r.sector, { total: cur.total + dayChangePct, count: cur.count + 1 });
+  }
+  const sectorAvgs = new Map<string, number>();
+  for (const [sector, stats] of sectorPerf.entries()) {
+    sectorAvgs.set(sector, stats.total / stats.count);
+  }
+
+  for (const r of results) {
+    if (!r.sector) continue;
+    const sectorChg = sectorAvgs.get(r.sector) ?? 0;
+    if (r.setup.direction === "BUY" && sectorChg > 0.5) {
+      r.score += Math.min(0.5, sectorChg * 0.2);
+    } else if (r.setup.direction === "SELL" && sectorChg < -0.5) {
+      r.score += Math.min(0.5, Math.abs(sectorChg) * 0.2);
+    } else if (r.setup.direction === "BUY" && sectorChg < -0.8) {
+      r.score -= 0.4;
+    } else if (r.setup.direction === "SELL" && sectorChg > 0.8) {
+      r.score -= 0.4;
+    }
+  }
+
   const sorted = results
-    .filter((r) => r.score >= 5.8)
+    .filter((r) => r.score >= 6.5)
     .sort((a, b) => b.score - a.score);
 
   // Aggregate sector performance from the full scan results to feed the regime detector
@@ -1926,7 +2043,7 @@ export async function scanMarket(
   updateMarketState({ topSectors: realSectorAverages });
 
   logger.info(
-    { scanned: stocks.length, candidates: sorted.length, threshold: 5.8, sectors: realSectorAverages.length },
+    { scanned: stocks.length, candidates: sorted.length, threshold: 6.5, sectors: realSectorAverages.length },
     "Market scan complete",
   );
   return sorted;

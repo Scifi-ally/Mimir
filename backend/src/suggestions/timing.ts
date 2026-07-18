@@ -4,6 +4,9 @@ export interface SuggestionTimingInput {
   target1: number;
   atr?: number | null;
   generatedAt?: Date;
+  // Realized median minutes-to-target for this setup (calibration_engine).
+  // When present it overrides the ATR heuristic — measurement beats model.
+  empiricalMedianMinutes?: number | null;
 }
 
 export interface SuggestionTiming {
@@ -57,8 +60,15 @@ export function calculateSuggestionTiming(input: SuggestionTimingInput): Suggest
   const atr = input.atr != null && input.atr > 0 ? input.atr : Math.max(input.entryPrice * 0.01, distance);
   const targetAtrMultiple = Math.max(0.25, distance / atr);
 
+  const empirical = input.empiricalMedianMinutes;
+
   if (input.tradeType === "INTRADAY") {
-    const expectedHoldMinutes = Math.round(Math.max(30, Math.min(240, targetAtrMultiple * 90)) / 5) * 5;
+    const heuristic = Math.max(30, Math.min(240, targetAtrMultiple * 90));
+    // Blend 60/40 toward realized outcomes when we have them
+    const blended = empirical != null && empirical > 0
+      ? Math.max(30, Math.min(240, empirical * 0.6 + heuristic * 0.4))
+      : heuristic;
+    const expectedHoldMinutes = Math.round(blended / 5) * 5;
     const expiresAt = intradayExpiry(generatedAt, Math.round(expectedHoldMinutes * 1.5));
     return {
       expectedHoldMinutes,
@@ -70,7 +80,11 @@ export function calculateSuggestionTiming(input: SuggestionTimingInput): Suggest
   // Backtest (scripts/backtest_setups.ts): swing expectancy flips positive only
   // past ~10 trading days and peaks near 20. A short expiry closes trades before
   // the move completes, so give swings up to 10 trading days (14 calendar).
-  const expectedHoldMinutes = Math.round(Math.max(390, Math.min(10 * 390, targetAtrMultiple * 390)) / 30) * 30;
+  const swingHeuristic = Math.max(390, Math.min(10 * 390, targetAtrMultiple * 390));
+  const swingBlended = empirical != null && empirical > 0
+    ? Math.max(390, Math.min(10 * 390, empirical * 0.6 + swingHeuristic * 0.4))
+    : swingHeuristic;
+  const expectedHoldMinutes = Math.round(swingBlended / 30) * 30;
   // expectedHoldMinutes counts TRADING minutes (390/day). Convert to calendar
   // time: 1 trading day ≈ 1.4 calendar days (weekends), plus buffer, cap 14d.
   const tradingDays = expectedHoldMinutes / 390;

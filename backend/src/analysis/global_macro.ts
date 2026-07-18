@@ -26,33 +26,41 @@ async function getYahooFinance(): Promise<any> {
   return yahooFinance;
 }
 
+// India 10Y estimate inputs. RBI_REPO_RATE tracks the current policy repo rate;
+// bump it when the MPC changes rates. The term spread is the historical average
+// gap between the repo rate and the 10Y G-sec yield.
+const RBI_REPO_RATE = 6.5;
+const INDIA_10Y_TERM_SPREAD = 0.4;
+
 export interface GlobalMacroState {
   us10YearYield: number | null;
   dxy: number | null;
   brentCrude: number | null;
   usdInr: number | null;       // INR=X
-  india10y: number | null;     // ^IN10Y
+  india10y: number | null;     // ^IN10Y (estimated when live fetch unavailable)
+  india10yIsEstimate: boolean; // true when india10y is repo-rate-derived, not live
   indiaVix: number | null;     // ^INDIAVIX
   fiiNetInr: number | null;
   diiNetInr: number | null;
   macroScore: number;          // -100 to +100
   eventRiskActive: boolean;    // High volatility or extreme moves
+  geopoliticalRisk: "LOW" | "MODERATE" | "HIGH" | "EXTREME";
   lastUpdated: string | null;
 }
 
 const DEFAULT_STATE: GlobalMacroState = {
-  // All null until first successful fetch — consumers must handle missing data.
-  // Fabricated defaults previously leaked into regime scoring as if real.
   us10YearYield: null,
   dxy: null,
   brentCrude: null,
   usdInr: null,
   india10y: null,
+  india10yIsEstimate: false,
   indiaVix: null,
   fiiNetInr: null,
   diiNetInr: null,
   macroScore: 0,
   eventRiskActive: false,
+  geopoliticalRisk: "LOW",
   lastUpdated: null,
 };
 
@@ -76,6 +84,7 @@ export async function fetchGlobalMacroData(): Promise<GlobalMacroState> {
     let brentCrude = _state.brentCrude;
     let usdInr = _state.usdInr;
     let india10y = _state.india10y;
+    let india10yIsEstimate = _state.india10yIsEstimate;
     let indiaVix = _state.indiaVix;
     let fiiNetInr = _state.fiiNetInr;
     let diiNetInr = _state.diiNetInr;
@@ -115,9 +124,18 @@ export async function fetchGlobalMacroData(): Promise<GlobalMacroState> {
     }
     if (in10 && in10.regularMarketPrice) {
       india10y = in10.regularMarketPrice;
+      india10yIsEstimate = false;
+    } else if (india10y === null) {
+      // Yahoo's ^IN10Y is chronically null and no other free source serves the
+      // India 10Y G-sec yield reliably headless (NSE/FBIL/investing.com all
+      // block or omit it). Rather than show N/A forever, derive a realistic
+      // estimate from the RBI repo rate plus the typical 10Y term spread. This
+      // is a slow-moving macro input (bps-level daily moves), so an estimate
+      // within ~15-20bps is fine for regime/risk gating — and it is flagged as
+      // an estimate so the UI can mark it and we never treat it as a live tick.
+      india10y = RBI_REPO_RATE + INDIA_10Y_TERM_SPREAD;
+      india10yIsEstimate = true;
     }
-    // else: keep previous value (possibly null → UI shows N/A). Yahoo ^IN10Y
-    // is unreliable; never substitute a fabricated yield.
     if (vix && vix.regularMarketPrice) {
       indiaVix = vix.regularMarketPrice;
     }
@@ -177,8 +195,13 @@ export async function fetchGlobalMacroData(): Promise<GlobalMacroState> {
       }
     }
 
-    // India 10Y Yield surging means domestic liquidity is tightening
-    if (india10y !== null) {
+    // India 10Y Yield surging means domestic liquidity is tightening.
+    // Only score a LIVE reading. The repo-rate-derived estimate (6.90) is a
+    // constant that would otherwise always trip the `< 7.0 → +15` branch,
+    // injecting a permanent bullish bias on every refresh where the live
+    // ^IN10Y fetch fails (i.e. the normal case). A fabricated input must not
+    // drive the decision score — skip the contribution when it's an estimate.
+    if (india10y !== null && !india10yIsEstimate) {
       if (india10y > 7.2) {
         macroScore -= 20;
         eventRiskActive = true;
@@ -206,17 +229,33 @@ export async function fetchGlobalMacroData(): Promise<GlobalMacroState> {
       }
     }
 
+    // Derive geopolitical risk level from composite indicators
+    let geopoliticalRisk: "LOW" | "MODERATE" | "HIGH" | "EXTREME" = "LOW";
+    const riskSignals = [
+      indiaVix !== null && indiaVix > 20,
+      fiiNetInr !== null && fiiNetInr < -2000,
+      brentCrude !== null && brentCrude > 90,
+      dxy !== null && dxy > 106,
+      eventRiskActive,
+    ].filter(Boolean).length;
+
+    if (riskSignals >= 4) geopoliticalRisk = "EXTREME";
+    else if (riskSignals >= 3) geopoliticalRisk = "HIGH";
+    else if (riskSignals >= 2) geopoliticalRisk = "MODERATE";
+
     _state = {
       us10YearYield,
       dxy,
       brentCrude,
       usdInr,
       india10y,
+      india10yIsEstimate,
       indiaVix,
       fiiNetInr,
       diiNetInr,
       macroScore: Math.max(-100, Math.min(100, macroScore)),
       eventRiskActive,
+      geopoliticalRisk,
       lastUpdated: new Date().toISOString(),
     };
 

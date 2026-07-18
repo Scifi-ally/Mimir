@@ -90,8 +90,16 @@ export async function initPaperEngine() {
           gte(paperPositionsTable.closedAt, todayStartUTC())
         )
       );
+      // Only OPEN positions created today count toward TODAY's drawdown. For
+      // pure intraday MIS this is almost always same-day, but a position held
+      // across a date boundary would otherwise leak its full running unrealized
+      // PnL into the next day's circuit-breaker math and could trip (or mask)
+      // the halt on PnL that wasn't incurred today.
       const openPositions = await db.select().from(paperPositionsTable).where(
-        eq(paperPositionsTable.status, 'OPEN')
+        and(
+          eq(paperPositionsTable.status, 'OPEN'),
+          gte(paperPositionsTable.createdAt, todayStartUTC())
+        )
       );
       const todaysPositions = [...todaysClosedPositions, ...openPositions];
 
@@ -102,6 +110,11 @@ export async function initPaperEngine() {
 
       if (totalDailyPnl.lte(maxDailyLossAmount)) {
         logger.error({ totalDailyPnl: totalDailyPnl.toNumber(), maxDailyLossAmount: maxDailyLossAmount.toNumber() }, "CIRCUIT BREAKER: Daily loss limit reached. Halting new trades.");
+        // The operative halt is the `return` below — it stops this engine from
+        // opening any new position for the rest of the session. The bus event is
+        // fired for any diagnostic/telemetry listener; the user-facing loss-limit
+        // alert is emitted independently by scheduler/jobs.ts over the WS, so the
+        // absence of a subscriber here is intentional, not a missing wire.
         intelligenceBus.publish("dailyLossLimitReached", {
           lossAmount: totalDailyPnl.toNumber(),
           limitAmount: maxDailyLossAmount.toNumber()
@@ -379,10 +392,25 @@ export async function initPaperEngine() {
         if (exitReason) {
           // MEDIUM FIX (Issue #22): Enhanced circuit limit detection with tracking
           // Check for consecutive zero-volume ticks to confirm circuit hit (not just one tick)
-          const isLiquidityZero = (tick.volume == null || tick.volume === 0) || 
-                                  (isBuy && (tick.bid == null || tick.bid === 0)) || 
-                                  (!isBuy && (tick.ask == null || tick.ask === 0));
-          
+          //
+          // Only a REAL WS tick can signal a circuit halt: on the WS path an absent
+          // bid/ask means no counterparty (genuine zero-liquidity / circuit signal).
+          // The HTTP fallback poll publishes ltp-only ticks (volume: null, no bid/ask)
+          // by design — treating that as "zero liquidity" made the guard fire on every
+          // fallback tick, deferring legitimate TARGET/STOP exits and force-filling them
+          // at 10x slippage (0.5% vs 0.05%) during a mere feed degradation. Skip the
+          // circuit path entirely for non-WS ticks and let the exit fill normally.
+          // NOTE (Issue #M6): tick.volume is the running DAY-cumulative volume from
+          // the 1d OHLC candle, not per-tick traded quantity. It is 0 only pre-open
+          // and null whenever a WS packet carries LTP/depth without the 1d candle, so
+          // it is not a circuit-halt signal — using it here produced false positives
+          // even on real WS ticks. The genuine zero-counterparty signal is an absent
+          // bid (for a sell-side exit) or ask (for a buy-side exit) on a live book.
+          const isWsTick = tick.source === "ws" || tick.source === undefined;
+          const isLiquidityZero = isWsTick && (
+                                  (isBuy && (tick.bid == null || tick.bid === 0)) ||
+                                  (!isBuy && (tick.ask == null || tick.ask === 0)));
+
           if (isLiquidityZero) {
             const tracker = circuitLimitTracker.get(pos.symbol) || {
               consecutiveZeroVolumeTicks: 0,

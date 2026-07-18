@@ -15,6 +15,13 @@ interface UpstoxToken {
 let _tradingToken: UpstoxToken | null = null;
 let _dataToken: UpstoxToken | null = null;
 
+// When a token expires, every in-flight request (one per instrument) fails with
+// 401 and calls invalidateAccessToken in a burst. After the first call the token
+// is already null and the rest are redundant, but each still logged a warning
+// and hit the DB. Throttle per type so a storm collapses to one log + one delete.
+const INVALIDATION_THROTTLE_MS = 60_000;
+const _lastInvalidatedAt: Record<"trading" | "data", number> = { trading: 0, data: 0 };
+
 function setAccessToken(token: UpstoxToken, type: "trading" | "data" = "trading"): void {
   if (type === "trading") _tradingToken = token;
   else _dataToken = token;
@@ -129,8 +136,18 @@ export function getTokenExpiryInfo(type: "trading" | "data" = "trading"): number
 }
 
 export async function invalidateAccessToken(reason?: string, type: "trading" | "data" = "trading"): Promise<void> {
+  const alreadyCleared = (type === "trading" ? _tradingToken : _dataToken) === null;
+  const now = Date.now();
+  const throttled = alreadyCleared && now - _lastInvalidatedAt[type] < INVALIDATION_THROTTLE_MS;
+
   if (type === "trading") _tradingToken = null;
   else _dataToken = null;
+
+  // A redundant invalidation within the throttle window (the rest of a 401 burst)
+  // is a no-op: token is already null, so skip the DB delete and the log.
+  if (throttled) return;
+
+  _lastInvalidatedAt[type] = now;
   await clearPersistedAccessToken(type);
   logger.warn({ reason: reason ?? "unspecified" }, `Upstox ${type} access token invalidated`);
 }

@@ -57,6 +57,13 @@
       "when": 1784147000000,
       "tag": "0007_live_trading",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1784400000000,
+      "tag": "0008_feature_persistence",
+      "breakpoints": true
     }
   ]
 }

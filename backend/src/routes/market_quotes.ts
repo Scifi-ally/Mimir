@@ -11,6 +11,7 @@ import { db, overnightWatchlistTable } from "../../db/src";
 import { upstoxClient, fetchIndexPrevClose } from "./market_utils";
 import { getFiiDiiDivergence, type DivergenceResult } from "../analysis/divergence_engine";
 import { computeOFI } from "../analysis/order_flow";
+import { getLatestPrice, getOHLC } from "../market_data/tick_feeder";
 import { z } from "zod";
 
 const router = Router();
@@ -36,40 +37,106 @@ const indexMetricsCache: { at: number; data: DashboardIndices | null } = {
   data: null,
 };
 
+// Last-known-good value per index, so a transient Yahoo failure for one symbol
+// doesn't blank it out — we keep serving the previous real value instead. Keyed
+// by the Yahoo symbol. Never seeded with fake data; only real fetched values.
+const lastGoodByYfSymbol = new Map<string, { ltp: number; changePct: number | null; at: number }>();
+
+// Maps each dashboard index to the live tick-feeder symbol name (see
+// monitored_symbols.ts). The tick feeder subscribes to all 5 indices, so when
+// Yahoo is unavailable we fall back to the real broker feed's last price.
+const TICK_FEEDER_SYMBOLS = {
+  nifty50: "NIFTY 50",
+  sensex: "SENSEX",
+  bankNifty: "BANKNIFTY",
+  finnifty: "FINNIFTY",
+  indiaVix: "INDIA VIX",
+} as const;
+
+// Pull a live quote from the tick feeder (real broker WebSocket cache). changePct
+// is derived from the session open when available — honest intraday change, not a
+// fabricated day change. Returns null ltp when the feed has nothing.
+function tickFeederQuote(symbol: string): LiveIndexQuote {
+  const ltp = getLatestPrice(symbol);
+  if (ltp == null) return { keyUsed: null, ltp: null, changePct: null };
+  const ohlc = getOHLC(symbol);
+  const open = ohlc?.open;
+  const changePct = open != null && open > 0 ? Number((((ltp - open) / open) * 100).toFixed(3)) : null;
+  return { keyUsed: `feed:${symbol}`, ltp, changePct };
+}
+
 function fallbackDashboardIndices(): DashboardIndices {
   const state = getMarketState();
+  // Prefer the live tick feeder (all 5 indices), then fall back to whatever the
+  // aggregated market state cached for NIFTY / VIX. No hardcoded nulls anymore.
+  const nifty = tickFeederQuote(TICK_FEEDER_SYMBOLS.nifty50);
+  const vix = tickFeederQuote(TICK_FEEDER_SYMBOLS.indiaVix);
   return {
-    nifty50: { keyUsed: state.niftyPrice == null ? null : "cached:NIFTY", ltp: state.niftyPrice, changePct: state.niftyChangePct },
-    sensex: { keyUsed: null, ltp: null, changePct: null },
-    bankNifty: { keyUsed: null, ltp: null, changePct: null },
-    finnifty: { keyUsed: null, ltp: null, changePct: null },
-    indiaVix: { keyUsed: state.indiaVix == null ? null : "cached:VIX", ltp: state.indiaVix, changePct: null },
+    nifty50: nifty.ltp != null
+      ? nifty
+      : { keyUsed: state.niftyPrice == null ? null : "cached:NIFTY", ltp: state.niftyPrice, changePct: state.niftyChangePct },
+    sensex: tickFeederQuote(TICK_FEEDER_SYMBOLS.sensex),
+    bankNifty: tickFeederQuote(TICK_FEEDER_SYMBOLS.bankNifty),
+    finnifty: tickFeederQuote(TICK_FEEDER_SYMBOLS.finnifty),
+    indiaVix: vix.ltp != null
+      ? vix
+      : { keyUsed: state.indiaVix == null ? null : "cached:VIX", ltp: state.indiaVix, changePct: null },
     fiiDiiDivergence: null,
     fetchedAt: new Date().toISOString(),
   };
 }
 
 async function buildDashboardIndices(): Promise<DashboardIndices | null> {
+  // Maps Yahoo symbol -> tick-feeder symbol for the per-index feed fallback.
+  const YF_TO_FEED: Record<string, string> = {
+    "^NSEI": TICK_FEEDER_SYMBOLS.nifty50,
+    "^BSESN": TICK_FEEDER_SYMBOLS.sensex,
+    "^NSEBANK": TICK_FEEDER_SYMBOLS.bankNifty,
+    "^CNXFIN": TICK_FEEDER_SYMBOLS.finnifty,
+    "^INDIAVIX": TICK_FEEDER_SYMBOLS.indiaVix,
+  };
+
   const computeYF = async (symbol: string): Promise<LiveIndexQuote> => {
-    try {
-      const res = await axios.get(`https://query1.finance.yahoo.com/v8/finance/chart/${symbol}`, { timeout: 1500 });
-      const meta = res.data.chart?.result?.[0]?.meta;
-      if (!meta) throw new Error("Invalid Yahoo Finance payload");
-      
-      const ltp = meta.regularMarketPrice;
-      const prevClose = meta.previousClose;
-      const changePct = prevClose > 0 ? ((ltp - prevClose) / prevClose) * 100 : null;
-      
-      return {
-        keyUsed: `YF:${symbol}`,
-        ltp,
-        changePct: changePct != null ? Number(changePct.toFixed(3)) : null,
-      };
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      logger.warn({ symbol, err: msg }, "Failed to fetch index from Yahoo Finance");
-      return { keyUsed: null, ltp: null, changePct: null };
+    // Yahoo rejects requests with the default axios UA; a browser-like UA is
+    // required or it returns empty/blocked payloads. query2 is a live mirror we
+    // retry against if query1 fails.
+    const hosts = ["query1.finance.yahoo.com", "query2.finance.yahoo.com"];
+    for (const host of hosts) {
+      try {
+        const res = await axios.get(`https://${host}/v8/finance/chart/${symbol}`, {
+          timeout: 4000,
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+            "Accept": "application/json",
+          },
+        });
+        const meta = res.data?.chart?.result?.[0]?.meta;
+        if (!meta || meta.regularMarketPrice == null) throw new Error("Invalid Yahoo Finance payload");
+
+        const ltp = meta.regularMarketPrice;
+        const prevClose = meta.previousClose ?? meta.chartPreviousClose;
+        const changePct = prevClose > 0 ? Number((((ltp - prevClose) / prevClose) * 100).toFixed(3)) : null;
+
+        lastGoodByYfSymbol.set(symbol, { ltp, changePct, at: Date.now() });
+        return { keyUsed: `YF:${symbol}`, ltp, changePct };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.warn({ symbol, host, err: msg }, "Failed to fetch index from Yahoo Finance");
+      }
     }
+
+    // Yahoo fully failed for this symbol. Prefer the live broker feed, then the
+    // last-known-good Yahoo value (kept fresh for up to 10 minutes). Never null
+    // out a value we can still source honestly.
+    const feed = tickFeederQuote(YF_TO_FEED[symbol] ?? "");
+    if (feed.ltp != null) return feed;
+
+    const cached = lastGoodByYfSymbol.get(symbol);
+    if (cached && Date.now() - cached.at < 10 * 60_000) {
+      return { keyUsed: `YF:${symbol}:stale`, ltp: cached.ltp, changePct: cached.changePct };
+    }
+
+    return { keyUsed: null, ltp: null, changePct: null };
   };
 
   const [nifty50, sensex, bankNifty, finnifty, indiaVix, fiiDiiDivergence] = await Promise.all([

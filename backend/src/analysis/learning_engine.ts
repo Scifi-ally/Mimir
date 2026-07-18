@@ -45,12 +45,18 @@ export async function runLearningPipeline(): Promise<void> {
         id: suggestionsTable.id,
         symbol: suggestionsTable.symbol,
         setupType: suggestionsTable.setupType,
+        tradeType: suggestionsTable.tradeType,
         direction: suggestionsTable.direction,
         entryPrice: suggestionsTable.entryPrice,
+        stopLoss: suggestionsTable.stopLoss,
+        highestPrice: suggestionsTable.highestPrice,
+        lowestPrice: suggestionsTable.lowestPrice,
         outcomePrice: suggestionsTable.outcomePrice,
         pnlInr: suggestionsTable.pnlInr,
         status: suggestionsTable.status,
+        confidence: suggestionsTable.confidence,
         marketRegime: suggestionsTable.marketRegime,
+        featureVector: suggestionsTable.featureVector,
         closedAt: suggestionsTable.closedAt,
         generatedAt: suggestionsTable.generatedAt,
         reasoning: suggestionsTable.reasoning,
@@ -91,12 +97,41 @@ export async function runLearningPipeline(): Promise<void> {
     await analyzeSymbolMetrics(closed);
     
     // 9. Trigger background RL Model fine-tuning
-    const { triggerRLTraining } = await import("./ai_client");
+    const { triggerRLTraining, triggerRankerTraining } = await import("./ai_client");
     const rlStarted = await triggerRLTraining();
     if (rlStarted) {
         logger.info("Triggered background RL model fine-tuning.");
     } else {
         logger.warn("Failed to trigger RL model fine-tuning or already running.");
+    }
+
+    // 10. Refresh the learned ranker's training data, then trigger a retrain.
+    // Order matters: the extractor must finish WRITING backend/data/
+    // ranker_train.jsonl before the trainer (python) reads it. We run the
+    // extractor IN-PROCESS (imported, not spawned — the portable install has no
+    // guaranteed tsx/python-on-PATH for node subprocesses, and both sides anchor
+    // the file path to their own module dir so cwd can't split them), await it,
+    // then fire the background retrain. The trainer's champion-challenger gate
+    // ensures a bad retrain can never demote the live model, so triggering
+    // unconditionally after a successful extract is safe.
+    try {
+      const { extractTrainingData } = await import("../../scripts/extract_training_data");
+      const extract = await extractTrainingData();
+      logger.info(
+        { rows: extract.rows, wins: extract.wins, losses: extract.losses, out: extract.outPath },
+        "Refreshed learned-ranker training data",
+      );
+      if (extract.rows > 0) {
+        const rankerStarted = await triggerRankerTraining();
+        logger.info(
+          { rankerStarted },
+          rankerStarted
+            ? "Triggered background ranker retrain (champion-challenger gated)."
+            : "Ranker retrain not started (busy or AI service unavailable).",
+        );
+      }
+    } catch (err) {
+      logger.warn({ err }, "Ranker training-data refresh failed; skipping retrain this cycle");
     }
 
     logger.info("Continuous learning pipeline completed successfully");
@@ -121,10 +156,28 @@ async function syncSignalOutcomes(closed: any[]): Promise<void> {
     if (existing) continue;
 
     const pnl = trade.pnlInr ? parseFloat(trade.pnlInr) : 0;
-    
+
     let duration = 0;
     if (trade.closedAt && trade.generatedAt) {
       duration = Math.round((trade.closedAt.getTime() - trade.generatedAt.getTime()) / (1000 * 60));
+    }
+
+    // Realized excursions in R-multiples (R = initial risk = |entry - stop|).
+    // MFE = best favourable move, MAE = worst adverse move, both signed by
+    // direction. These become regression labels / features for the ranker.
+    const entry = parseFloat(trade.entryPrice);
+    const stop = trade.stopLoss ? parseFloat(trade.stopLoss) : NaN;
+    const risk = Number.isFinite(stop) ? Math.abs(entry - stop) : NaN;
+    let mfeR: string | null = null;
+    let maeR: string | null = null;
+    if (Number.isFinite(risk) && risk > 0) {
+      const hi = trade.highestPrice ? parseFloat(trade.highestPrice) : entry;
+      const lo = trade.lowestPrice ? parseFloat(trade.lowestPrice) : entry;
+      const isBuy = trade.direction === "BUY";
+      const favourable = isBuy ? hi - entry : entry - lo;
+      const adverse = isBuy ? entry - lo : hi - entry;
+      mfeR = (favourable / risk).toFixed(3);
+      maeR = (adverse / risk).toFixed(3);
     }
 
     await db.insert(signalOutcomesTable).values({
@@ -137,6 +190,12 @@ async function syncSignalOutcomes(closed: any[]): Promise<void> {
       durationMinutes: duration,
       status: trade.status,
       marketRegime: trade.marketRegime || "UNKNOWN",
+      featureVector: trade.featureVector ?? null,
+      setupType: trade.setupType ?? null,
+      tradeType: trade.tradeType ?? null,
+      confidence: trade.confidence ?? null,
+      mfeR,
+      maeR,
       closedAt: trade.closedAt || new Date(),
     });
   }

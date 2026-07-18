@@ -7,13 +7,18 @@ import { intelligenceBus } from "../intelligence/event_bus";
 import { getAccessToken } from "../upstox/auth";
 import { tickDistribution } from "./tick_distribution";
 import { initSectorRotation, updateSectorFlowFromTick } from "../analysis/sector_rotation";
+import { getISTDateStr } from "../lib/ist-time";
 
 interface TickData {
   symbol: string;
   price: number;
   volume: number;
-  bid: number;
-  ask: number;
+  // null = the feed did not carry a quote for this tick. Never synthesize a
+  // spread: downstream liquidity/circuit-limit guards in paper_engine treat a
+  // null/zero bid or ask as "no liquidity", and a fabricated ±0.05 spread would
+  // both mask that condition and defeat the spread-blowout abort.
+  bid: number | null;
+  ask: number | null;
   timestamp: Date;
 }
 
@@ -44,11 +49,22 @@ let volumePollerTimer: ReturnType<typeof setInterval> | null = null;
 let eventBusUnsubscribe: (() => void) | null = null;
 let reconnectUnsubscribe: (() => void) | null = null;
 let lastTickTimestamp: number = 0;
+let initPromise: Promise<void> = Promise.resolve();
 
 /**
  * Initialize tick feeder - subscribe to watchlist stocks
+ *
+ * Serialized via a module-level promise chain: overlapping calls (e.g. from
+ * concurrent syncMonitoredSubscriptions) would otherwise both see
+ * eventBusUnsubscribe === null across the awaits and leak a duplicate
+ * marketTick handler.
  */
-export async function initTickFeeder(stocks: Array<{ symbol: string; key: string }>): Promise<void> {
+export function initTickFeeder(stocks: Array<{ symbol: string; key: string }>): Promise<void> {
+  initPromise = initPromise.catch(() => {}).then(() => doInitTickFeeder(stocks));
+  return initPromise;
+}
+
+async function doInitTickFeeder(stocks: Array<{ symbol: string; key: string }>): Promise<void> {
   if (!stocks.length) {
     logger.warn("No stocks provided for tick feeder initialization");
     return;
@@ -58,8 +74,18 @@ export async function initTickFeeder(stocks: Array<{ symbol: string; key: string
   stopTickFeeder();
 
   // Initialize subscription map
+  const todayISTStr = getISTDateStr();
   for (const stock of stocks) {
-    const cachedTicks = await stateStore.getTicks(stock.symbol).catch(() => []);
+    const allCachedTicks = await stateStore.getTicks(stock.symbol).catch(() => []);
+    // Redis keeps ticks for 24h, so a restart can restore the previous
+    // session: only today's (IST) ticks may seed cumulative day volume,
+    // open/high/low and history. A stale-day tick survives solely as the
+    // last-known price/quote (it doubles as prev close for sector rotation).
+    const cachedTicks = allCachedTicks.filter(t => {
+      const ts = new Date(t.timestamp);
+      return Number.isFinite(ts.getTime()) && getISTDateStr(ts) === todayISTStr;
+    });
+    const lastKnownTick = allCachedTicks.length > 0 ? allCachedTicks[allCachedTicks.length - 1] : null;
     const lastTick = cachedTicks.length > 0 ? cachedTicks[cachedTicks.length - 1] : null;
     const firstTick = cachedTicks.length > 0 ? cachedTicks[0] : null;
 
@@ -67,10 +93,10 @@ export async function initTickFeeder(stocks: Array<{ symbol: string; key: string
       instrumentKey: stock.key,
       symbol: stock.symbol,
       ticks: cachedTicks.map(t => ({ ...t, timestamp: new Date(t.timestamp) })),
-      lastPrice: lastTick ? lastTick.price : null,
+      lastPrice: lastKnownTick ? lastKnownTick.price : null,
       volume: lastTick ? lastTick.volume : 0,
-      bid: lastTick ? lastTick.bid : null,
-      ask: lastTick ? lastTick.ask : null,
+      bid: lastKnownTick ? lastKnownTick.bid : null,
+      ask: lastKnownTick ? lastKnownTick.ask : null,
       openPrice: firstTick ? firstTick.price : null,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       highPrice: cachedTicks.length > 0 ? Math.max(...cachedTicks.map((t: any) => t.price)) : null,
@@ -108,9 +134,12 @@ export async function initTickFeeder(stocks: Array<{ symbol: string; key: string
     }
 
     const lastPrice = tickEvent.ltp;
-    const volume = tickEvent.volume || sub.volume || 100000;
-    const bid = tickEvent.bid ?? lastPrice - 0.05;
-    const ask = tickEvent.ask ?? lastPrice + 0.05;
+    // Never fabricate volume: carry last known real volume (sub.volume starts at 0 = unknown)
+    const volume = tickEvent.volume ?? sub.volume;
+    // Never fabricate a spread either. Carry the last known real quote; if we've
+    // never seen one, leave it null so liquidity guards can see "no quote".
+    const bid = tickEvent.bid ?? sub.bid;
+    const ask = tickEvent.ask ?? sub.ask;
 
     if (lastPrice === sub.lastPrice && volume === sub.volume) {
       return; // Ignore unchanged ticks
@@ -146,13 +175,16 @@ export async function initTickFeeder(stocks: Array<{ symbol: string; key: string
       price: lastPrice,
       ltp: lastPrice,
       volume,
-      bid,
-      ask,
+      // tickDistribution's RawTick uses undefined for "absent"; map null→undefined.
+      bid: bid ?? undefined,
+      ask: ask ?? undefined,
       timestamp: tick.timestamp.getTime(),
     });
 
-    // 2. Update real-time sector rotation engine
-    updateSectorFlowFromTick(sub.symbol, lastPrice, volume);
+    // 2. Update real-time sector rotation engine (skip when volume unknown so the flow EMA isn't seeded with 0)
+    if (volume > 0) {
+      updateSectorFlowFromTick(sub.symbol, lastPrice, volume);
+    }
 
     const INDICES_SYMBOLS = new Set(["NIFTY 50", "BANKNIFTY", "FINNIFTY", "INDIA VIX", "SENSEX"]);
     if (INDICES_SYMBOLS.has(sub.symbol)) {
@@ -164,7 +196,8 @@ export async function initTickFeeder(stocks: Array<{ symbol: string; key: string
       else if (sub.symbol === "SENSEX") prop = "sensex";
 
       if (prop) {
-        broadcast(createServerEvent.indicesUpdate({ [prop]: { ltp: lastPrice, changePct: null } }), "all");
+        // "monitoring" topic: market-data channel filter only passes non-tick events with this topic
+        broadcast(createServerEvent.indicesUpdate({ [prop]: { ltp: lastPrice, changePct: null } }), "monitoring");
       }
     }
 

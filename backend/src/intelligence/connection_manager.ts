@@ -350,6 +350,7 @@ export class UpstoxConnectionManager {
           bid,
           ask,
           timestamp: Date.now(),
+          source: "ws",
         });
       }
     } catch (err) {
@@ -498,6 +499,7 @@ export class UpstoxConnectionManager {
           ltp: price,
           volume: null,
           timestamp: Date.now(),
+          source: "http_fallback",
         });
       }
       if (!force) this.publishStatus("connected", "upstox_http_fallback");

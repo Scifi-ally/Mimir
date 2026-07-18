@@ -12,6 +12,7 @@
  * - Technical pattern detection intraday
  */
 
+import { randomUUID } from "crypto";
 import { logger } from "../lib/logger";
 import { stateStore } from "../lib/redis_state";
 import { db } from "../../db/src";
@@ -22,10 +23,13 @@ import { loadBalancer } from "../intelligence/load_balancer";
 import { calculateTopSectors } from "./sector_rotation";
 import { broadcast } from "../ws/websocket_server";
 import { createServerEvent } from "../ws/events";
-import { intelligenceBus } from "../intelligence/event_bus";
 import { assessRisk } from "./risk_engine";
 import { buildSnapshot } from "./technical";
 import type { SetupCandidate, TechnicalSnapshot } from "./technical";
+import { ingestSignal } from "../suggestions/generator";
+import type { IntelligenceSignal } from "./signal_generator";
+import type { FeatureVector } from "./feature_engine";
+import { getLastRegimeOutput } from "./regime_detector";
 import {
   getISTDateStr,
   getLastCompletedTradingDayStr,
@@ -457,14 +461,26 @@ export function detectBreakoutConfirmation(
 
   const currentPrice = prices[prices.length - 1]!;
 
+  // Real volume confirmation: a breakout on CONTRACTING volume is the classic
+  // false-breakout signature, so we require volume into the last-5 window to be
+  // at least as strong as the prior baseline. Previously this was `volumeSum > 0`,
+  // which — since ticks always carry non-negative volume — was always true and
+  // filtered nothing. When there is no prior baseline (exactly the 5 ticks used
+  // for the range), fall back to requiring some traded volume.
+  const window = ticks.slice(-5);
+  const windowAvgVol = window.reduce((sum, t) => sum + t.volume, 0) / window.length;
+  const baseline = ticks.slice(0, -5);
+  const volumeConfirmed =
+    baseline.length > 0
+      ? windowAvgVol >= baseline.reduce((sum, t) => sum + t.volume, 0) / baseline.length
+      : windowAvgVol > 0;
+
   if (direction === "BUY") {
-    // For buy: price closes above midpoint with volume
-    const volumeSum = ticks.slice(-5).reduce((sum, t) => sum + t.volume, 0);
-    return currentPrice > midPoint && volumeSum > 0;
+    // For buy: price closes above midpoint with non-contracting volume
+    return currentPrice > midPoint && volumeConfirmed;
   } else {
-    // For sell: price closes below midpoint with volume
-    const volumeSum = ticks.slice(-5).reduce((sum, t) => sum + t.volume, 0);
-    return currentPrice < midPoint && volumeSum > 0;
+    // For sell: price closes below midpoint with non-contracting volume
+    return currentPrice < midPoint && volumeConfirmed;
   }
 }
 
@@ -516,7 +532,11 @@ async function resolveTechnicalSnapshot(
   symbol: string,
   currentPrice: number,
   monitored: MonitoredStock,
-): Promise<{ snap: TechnicalSnapshot; source: "live_scan" | "tick_derived" }> {
+): Promise<{
+  snap: TechnicalSnapshot;
+  source: "live_scan" | "tick_derived";
+  rsVsNifty: number | null;
+}> {
   try {
     const stock = await findStockBySymbol(symbol);
     if (stock) {
@@ -524,7 +544,7 @@ async function resolveTechnicalSnapshot(
       const scanResult = await scanStock(stock, niftyCandles);
       if (scanResult?.snapshot) {
         const snap = { ...scanResult.snapshot, close: currentPrice };
-        
+
         // Detect alerts in background
         detectAlerts(symbol, {
           rsi: snap.rsi14,
@@ -537,6 +557,7 @@ async function resolveTechnicalSnapshot(
         return {
           snap,
           source: "live_scan",
+          rsVsNifty: scanResult.rs60,
         };
       }
     }
@@ -546,6 +567,7 @@ async function resolveTechnicalSnapshot(
   return {
     snap: buildTickDerivedSnapshot(symbol, currentPrice, monitored),
     source: "tick_derived",
+    rsVsNifty: null,
   };
 }
 
@@ -662,7 +684,86 @@ async function getActiveSymbolsSet(): Promise<Set<string>> {
 }
 
 /**
- * Generate intraday suggestion when signal is confirmed
+ * Map the monitor's technical snapshot onto the feature-vector shape
+ * ingestSignal consumers expect. Snapshot-derived fields carry real values;
+ * candle-history features the tick path cannot compute stay neutral.
+ */
+function buildMonitorFeatureVector(
+  symbol: string,
+  snap: TechnicalSnapshot,
+  riskReward: number,
+  rsVsNifty: number | null,
+): FeatureVector {
+  const regimeOutput = getLastRegimeOutput();
+  const pctFrom = (base: number): number =>
+    base > 0 ? Number((((snap.close - base) / base) * 100).toFixed(2)) : 0;
+
+  return {
+    symbol,
+    timestamp: new Date().toISOString(),
+
+    rsi14: snap.rsi14,
+    atr14: snap.atr14,
+    atrPct: snap.close > 0 ? Number(((snap.atr14 / snap.close) * 100).toFixed(2)) : 0,
+    adx14: snap.adx14,
+    volumeRatio: snap.volumeRatio,
+    vwapDistance: pctFrom(snap.vwap),
+
+    ema20Dist: snap.distFromEma20Pct,
+    ema50Dist: pctFrom(snap.ema50),
+    ema200Dist: pctFrom(snap.ema200),
+
+    emaAlignment: snap.trend === "UP" ? 1 : snap.trend === "DOWN" ? -1 : 0,
+    trendConsistency: 50,
+
+    rsVsNifty60d: rsVsNifty ?? 1,
+    rsVsSector60d: 1,
+
+    pocDistancePct: pctFrom(snap.vpvrPOC),
+    bbWidthPct: 0,
+    vcpContraction: 1,
+
+    sectorStrength: 0,
+    marketStrength: Math.round(regimeOutput?.strength ?? 50),
+    regimeScore: Math.round(regimeOutput?.strength ?? 50),
+
+    momentumScore: 50,
+    trendScore: 50,
+    volatilityScore: 50,
+    riskRewardScore: riskReward <= 0 ? 0 : Math.min(100, Math.round((riskReward / 3) * 100)),
+
+    priceRoc5: 0,
+    priceRoc10: 0,
+    priceRoc20: 0,
+
+    bodyRatio: 0,
+    upperWickRatio: 0,
+    lowerWickRatio: 0,
+    closeLocation: 0.5,
+
+    // Candle-history volatility features: the tick path has no daily series,
+    // so these stay neutral (same convention as the ROC/candlestick fields).
+    realizedVol5: 0,
+    realizedVol20: 0,
+    volOfVol: 0,
+    cprWidthPct: 0,
+
+    // Tick-derived vector: ~15 of the ranker's candle-history features above are
+    // neutral placeholders (trendConsistency/momentum/trend/volatility scores,
+    // ROC, candlestick, realized-vol). Feeding this to the learned ranker would
+    // be train/serve skew, so it is explicitly marked incomplete. This path runs
+    // in Rule Mode and never calls the ranker; the marker makes toRankerFeatureArray
+    // throw loudly if that ever changes, rather than silently scoring placeholders.
+    rankerIncomplete: true,
+  };
+}
+
+/**
+ * Generate intraday suggestion when signal is confirmed.
+ * The monitor only detects the signal and sizes the position; the insert runs
+ * through ingestSignal so the F&O-ban, corporate-action, setup-demotion,
+ * market-internals, delivery-%, calibration, regime and per-symbol-lock gates
+ * all apply exactly as on the scheduler/realtime paths.
  */
 async function generateIntraDaySuggestion(
   symbol: string,
@@ -672,6 +773,7 @@ async function generateIntraDaySuggestion(
   if (!monitored || monitored.signalGenerated || currentPrice <= 0) return;
 
   try {
+    const startedAtMs = Date.now();
     const activeSymbols = await getActiveSymbolsSet();
     if (activeSymbols.has(symbol)) {
       monitored.signalGenerated = true;
@@ -707,47 +809,64 @@ async function generateIntraDaySuggestion(
       confluence: [monitored.watchlistEntry.category],
     };
 
-    const { snap, source: indicatorSource } = await resolveTechnicalSnapshot(
+    const { snap, source: indicatorSource, rsVsNifty } = await resolveTechnicalSnapshot(
       symbol,
       currentPrice,
       monitored,
     );
 
     const sector = STOCK_SECTOR_MAP[symbol] ?? "Other";
-    const riskAssessment = await assessRisk(setup, snap, sector);
+    const featureVector = buildMonitorFeatureVector(symbol, snap, setup.riskReward, rsVsNifty);
+    const riskAssessment = await assessRisk(setup, snap, sector, featureVector);
 
     if (!riskAssessment.passed) {
       logger.warn({ symbol, reasons: riskAssessment.rejectionReasons }, "Intraday signal rejected by Risk Engine");
       return;
     }
 
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
+    const regimeOutput = getLastRegimeOutput();
 
-    const [inserted] = await db
-      .insert(suggestionsTable)
-      .values({
+    const signal: IntelligenceSignal = {
       symbol,
-      name: monitored.watchlistEntry.name,
-      exchange: "NSE",
-      direction,
-      tradeType: "INTRADAY",
+      name: monitored.watchlistEntry.name ?? symbol,
+      signal: direction,
       setupType: "INTRADAY_SIGNAL",
-      entryPrice: currentPrice.toString(),
-      stopLoss: stopLoss.toString(),
-      target1: target1.toString(),
-      target2: target2.toString(),
-      riskReward: riskAssessment.riskReward.toString(),
-      quantity: riskAssessment.positionSize,
-      maxRiskInr: riskAssessment.maxRiskInr.toString(),
-      stopDistancePct: riskAssessment.stopDistancePct.toString(),
-      marketRegime: "INTRADAY",
+
+      entryPrice: currentPrice,
+      stopLoss,
+      target1,
+      target2,
+      riskReward: setup.riskReward,
+
+      // No AI ranking runs on the tick path — mirror the pipeline's
+      // fallback-mode conventions (aiScore/pattern/chronos 0, sentiment 50).
+      aiScore: 0,
+      confidence: setup.score,
+      patternScore: 0,
+      chronosScore: 0,
+      technicalScore: setup.score,
+      sentimentScore: 50,
+
+      sector,
+      regime: regimeOutput?.regime ?? "UNKNOWN",
+      regimeConfidence: regimeOutput?.confidence ?? 0,
+
+      positionSize: riskAssessment.positionSize,
+      investmentAmount: riskAssessment.investmentAmount,
+      maxRiskInr: riskAssessment.maxRiskInr,
+      stopDistancePct: riskAssessment.stopDistancePct,
+      riskWarnings: riskAssessment.warningReasons,
+
+      featureVector,
+
       reasoning: `Intraday signal: ${monitored.watchlistEntry.condition}`,
-      validityTill: tomorrow.toISOString().slice(0, 10),
-      status: "ACTIVE",
-      atr: snap.atr14.toString(),
-      highestPrice: currentPrice.toString(),
-      lowestPrice: currentPrice.toString(),
+      confluence: [monitored.watchlistEntry.category],
+      aiPatterns: [],
+      aiMode: "Rule Mode",
+      rankingProvider: "Technical Ranking",
+      scannerType: monitored.watchlistEntry.category,
+      timestamp: new Date().toISOString(),
+      signalId: randomUUID(),
       signalFactors: {
         source: indicatorSource,
         tickCount: getTickData(symbol).length,
@@ -763,12 +882,36 @@ async function generateIntraDaySuggestion(
         ),
         category: monitored.watchlistEntry.category,
       },
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } as any)
-      .returning();
 
-    if (!inserted) {
-      logger.warn({ symbol }, "Intraday suggestion insert returned no row");
+      provisional_trigger: currentPrice,
+      provisional_deviation: 0,
+
+      mtf_score: 0,
+      mtf_total: 0,
+      mtf_confluence: "PENDING",
+
+      scanLatencyMs: Date.now() - startedAtMs,
+      aiLatencyMs: 0,
+      totalLatencyMs: Date.now() - startedAtMs,
+    };
+
+    // ingestSignal owns the insert, duplicate check (under the per-symbol
+    // lock), capacity caps, timing/expiry and the newSuggestion broadcast +
+    // intelligenceBus publish.
+    const rejectionReason = await ingestSignal(signal, currentPrice, {
+      source: "intraday_monitor",
+      isIntraday: true,
+    });
+
+    if (rejectionReason !== null) {
+      if (rejectionReason === "already_open") {
+        monitored.signalGenerated = true;
+        await stateStore.saveMonitoredStock(symbol, monitored).catch(() => {});
+      }
+      logger.warn(
+        { symbol, direction, reason: rejectionReason },
+        "Intraday signal rejected by suggestion ingest gates",
+      );
       return;
     }
 
@@ -776,40 +919,6 @@ async function generateIntraDaySuggestion(
     activeSuggestionsCache.symbols.add(symbol);
     monitored.signalGenerated = true;
     await stateStore.saveMonitoredStock(symbol, monitored).catch(() => {});
-
-    broadcast(
-      createServerEvent.newSuggestion({
-        id: inserted.id,
-        symbol,
-        direction,
-        entryPrice: currentPrice,
-        stopLoss,
-        target1,
-        setupType: "INTRADAY_SIGNAL",
-        riskReward: riskAssessment.riskReward,
-      }),
-      "suggestions",
-    );
-
-    intelligenceBus.publish("suggestionGenerated", {
-      suggestion: {
-        id: inserted.id,
-        instrumentKey: `NSE_EQ|${symbol}`,
-        symbol,
-        direction,
-        setup: "INTRADAY_SIGNAL",
-        confidence: 80,
-        entry: currentPrice,
-        stopLoss,
-        target: target1,
-        target1,
-        riskReward: riskAssessment.riskReward,
-        reasoning: [`Intraday signal: ${monitored.watchlistEntry.condition}`],
-        generatedAt: Date.now(),
-        expiresAt: Date.now() + 20 * 60_000,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      } as any
-    });
 
     logger.info(
       {

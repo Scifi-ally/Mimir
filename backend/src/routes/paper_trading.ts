@@ -5,14 +5,18 @@ import {
   paperOrdersTable, 
   paperPositionsTable 
 } from "../../db/src/schema/paper_trading";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, inArray } from "drizzle-orm";
 import { logger } from "../lib/logger";
-// import { getConfig } from "../config";
+import { getConfig } from "../config";
 
 const router = Router();
 
+// Single source of truth for the paper account's starting balance: the same
+// configured trading capital the engine sizes against (paper_engine.getStartingBalance).
+// A hardcoded literal here silently diverged from config whenever a user changed
+// their trading capital, so a freshly-created account started with the wrong base.
 function getStartingBalance(): string {
-  return "10000.00";
+  return getConfig().tradingCapital.toFixed(2);
 }
 
 router.get("/paper/account", async (_req, res) => {
@@ -26,16 +30,13 @@ router.get("/paper/account", async (_req, res) => {
         startingBalance: targetBalance,
         allocatedMargin: "0.00"
       }).returning();
-    } else if (account.startingBalance !== targetBalance && (parseFloat(account.startingBalance) === 500000 || parseFloat(account.startingBalance) === 100000 || parseFloat(account.startingBalance) > 50000)) {
-      [account] = await db.update(paperAccountsTable)
-        .set({
-          balance: targetBalance,
-          startingBalance: targetBalance,
-          allocatedMargin: "0.00"
-        })
-        .where(eq(paperAccountsTable.id, account.id))
-        .returning();
     }
+    // NOTE: A read endpoint must never mutate account state. The previous
+    // implementation reset balance/startingBalance to the default and zeroed
+    // allocatedMargin whenever startingBalance > 50k — silently wiping funded
+    // accounts on every poll and, with OPEN positions, overstating available
+    // margin (committed margin still held, but allocatedMargin cleared). Any
+    // intentional balance reset belongs in an explicit POST action, not GET.
 
     // Get live unrealized PNL
     const openPositions = await db.select().from(paperPositionsTable)
@@ -77,7 +78,34 @@ router.get("/paper/history", async (_req, res) => {
       .where(eq(paperPositionsTable.status, "CLOSED"))
       .orderBy(desc(paperPositionsTable.closedAt))
       .limit(50);
-    res.json(closedPositions);
+
+    // Attach the actual exit reason from the order ledger — the UI must not
+    // guess TARGET/STOP from the P&L sign.
+    const suggestionIds = closedPositions
+      .map((p) => p.suggestionId)
+      .filter((id): id is string => id != null);
+    const exitOrders = suggestionIds.length > 0
+      ? await db.select({
+          suggestionId: paperOrdersTable.suggestionId,
+          orderType: paperOrdersTable.orderType,
+          executedAt: paperOrdersTable.executedAt,
+        })
+          .from(paperOrdersTable)
+          .where(inArray(paperOrdersTable.suggestionId, suggestionIds))
+          .orderBy(desc(paperOrdersTable.executedAt))
+      : [];
+    const exitBySuggestion = new Map<string, string>();
+    for (const o of exitOrders) {
+      // Rows are newest-first; keep the latest non-entry order per suggestion.
+      if (o.suggestionId && o.orderType !== "ENTRY" && !exitBySuggestion.has(o.suggestionId)) {
+        exitBySuggestion.set(o.suggestionId, o.orderType);
+      }
+    }
+
+    res.json(closedPositions.map((p) => ({
+      ...p,
+      closeReason: p.suggestionId ? exitBySuggestion.get(p.suggestionId) ?? null : null,
+    })));
   } catch (error) {
     logger.error({ error }, "Failed to fetch paper history");
     res.status(500).json({ error: "Internal server error" });

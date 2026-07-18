@@ -19,24 +19,68 @@ import { getISTDateStr, getLastCompletedTradingDayStr, shiftISTDateStr } from ".
 
 const NSE_BASE = "https://www.nseindia.com";
 const NSE_ARCHIVES = "https://archives.nseindia.com";
+const NSE_FNO_BAN_CSV = "https://nsearchives.nseindia.com/content/fo/fo_secban.csv";
 
 const BROWSER_HEADERS = {
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
   "Accept": "application/json, text/plain, */*",
   "Accept-Language": "en-US,en;q=0.9",
   "Referer": `${NSE_BASE}/`,
+  // NSE fingerprints on the Chrome client hints — without these the API 403s
+  // even with valid cookies. Keep in sync with fii_dii.ts.
+  "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+  "sec-ch-ua-mobile": "?0",
+  "sec-ch-ua-platform": '"Windows"',
 };
 
+// NSE only issues its full cookie set after a real navigation. Warming the
+// homepage + a content page and accumulating Set-Cookie from both is what makes
+// the JSON API return 200 instead of 403. See [[nse-scraping-recipe]].
 async function getNSECookies(): Promise<string> {
+  const jar = new Map<string, string>();
+  const collect = (raw: string | string[] | undefined) => {
+    if (!raw) return;
+    const arr = Array.isArray(raw) ? raw : [raw];
+    for (const c of arr) {
+      const [pair] = c.split(";");
+      const eq = pair.indexOf("=");
+      if (eq > 0) jar.set(pair.slice(0, eq).trim(), pair.slice(eq + 1).trim());
+    }
+  };
   try {
-    const resp = await axios.get(NSE_BASE, { headers: BROWSER_HEADERS, timeout: 10_000, maxRedirects: 3 });
-    const raw = resp.headers["set-cookie"] as string | string[] | undefined;
-    if (!raw) return "";
-    return Array.isArray(raw) ? raw.map((c) => c.split(";")[0]).join("; ") : (raw as string).split(";")[0] ?? "";
+    const home = await axios.get(NSE_BASE, {
+      headers: { ...BROWSER_HEADERS, Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" },
+      timeout: 10_000,
+      maxRedirects: 3,
+    });
+    collect(home.headers["set-cookie"] as string | string[] | undefined);
+    try {
+      const warm = await axios.get(`${NSE_BASE}/market-data/securities-available-for-trading`, {
+        headers: { ...BROWSER_HEADERS, Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", Referer: `${NSE_BASE}/` },
+        timeout: 10_000,
+        maxRedirects: 3,
+      });
+      collect(warm.headers["set-cookie"] as string | string[] | undefined);
+    } catch {
+      // Warmup page best-effort; homepage cookies alone sometimes suffice.
+    }
+    return [...jar.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
   } catch (err) {
     logger.warn({ err: (err as Error).message }, "NSE cookie fetch failed");
     return "";
   }
+}
+
+// Common headers for an NSE JSON API call made as an in-page XHR.
+function nseApiHeaders(cookies: string): Record<string, string> {
+  return {
+    ...BROWSER_HEADERS,
+    "X-Requested-With": "XMLHttpRequest",
+    "Sec-Fetch-Site": "same-origin",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Dest": "empty",
+    Cookie: cookies,
+  };
 }
 
 // ── 1. Delivery percentage ────────────────────────────────────────────────────
@@ -149,25 +193,26 @@ export async function getFnOBanList(): Promise<Set<string>> {
   if (banListCacheDate === today) return banListCache;
 
   try {
-    const cookies = await getNSECookies();
-    const resp = await axios.get(`${NSE_BASE}/api/reportSecBanApi`, {
-      headers: { ...BROWSER_HEADERS, Cookie: cookies },
+    // The old /api/reportSecBanApi JSON endpoint is dead (404). NSE now publishes
+    // the daily ban list as a plain CSV on nsearchives (no cookies needed):
+    //   "Securities in Ban For Trade Date DD-MON-YYYY:\n1,SYMBOL\n2,SYMBOL\n..."
+    const resp = await axios.get<string>(NSE_FNO_BAN_CSV, {
+      headers: { ...BROWSER_HEADERS, Accept: "text/csv,text/plain,*/*" },
       timeout: 10_000,
+      responseType: "text",
+      validateStatus: (s) => s === 200,
     });
-    // Response shape: { bandata: [{ symbolName: "XYZ" }, ...] } (observed) or
-    // an array of symbols in some deployments — handle both.
-    const rows: unknown = resp.data?.bandata ?? resp.data?.data ?? resp.data;
+
     const set = new Set<string>();
-    if (Array.isArray(rows)) {
-      for (const row of rows) {
-        const sym =
-          typeof row === "string"
-            ? row
-            : (row as { symbolName?: string; symbol?: string })?.symbolName ??
-              (row as { symbol?: string })?.symbol;
-        if (sym && typeof sym === "string") set.add(sym.toUpperCase().trim());
-      }
+    for (const line of resp.data.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed || /ban for trade date/i.test(trimmed)) continue;
+      // Rows look like "1,KAYNES" — take the token after the leading index.
+      const parts = trimmed.split(",");
+      const sym = (parts.length > 1 ? parts[1] : parts[0])?.trim().toUpperCase();
+      if (sym && /^[A-Z&-]+$/.test(sym)) set.add(sym);
     }
+
     banListCache = set;
     banListCacheDate = today;
     logger.info({ count: set.size }, "F&O ban list refreshed");
@@ -225,7 +270,7 @@ export async function getBulkDeals(): Promise<Map<string, BulkDealSignal>> {
     };
     const resp = await axios.get(
       `${NSE_BASE}/api/historicalOR/bulk-block-short-deals?optionType=bulk_deals&from=${fmt(from)}&to=${fmt(to)}`,
-      { headers: { ...BROWSER_HEADERS, Cookie: cookies }, timeout: 15_000 },
+      { headers: nseApiHeaders(cookies), timeout: 15_000 },
     );
 
     const rows: BulkDealRow[] = resp.data?.data ?? [];

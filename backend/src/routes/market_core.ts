@@ -75,6 +75,7 @@ router.get("/market/indian-context", async (_req, res) => {
       niftyOptionChain: optionChain ?? null,
       usdInr: macroData.usdInr,
       india10y: macroData.india10y,
+      india10yIsEstimate: macroData.india10yIsEstimate,
       macroScore: macroData.macroScore,
       eventRiskActive: macroData.eventRiskActive ?? false,
       economicEvent: getTodayEconomicEvent(),

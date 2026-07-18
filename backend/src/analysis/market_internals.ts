@@ -93,12 +93,12 @@ export function checkMarketInternals(
   // 3. Sector relative strength: momentum only in the top half of sectors.
   const sector = STOCK_SECTOR_MAP[symbol];
   if (sector && state.topSectors.length >= 4) {
-    const ranked = state.topSectors; // already sorted by money flow desc
+    const ranked = state.topSectors; // strength-descending (money-flow rank intraday, avg %-change from the scanner)
     const idx = ranked.findIndex((s) => s.name === sector);
     if (idx >= 0 && idx >= Math.ceil(ranked.length / 2)) {
       return {
         allowed: false,
-        reason: `Sector ${sector} ranked ${idx + 1}/${ranked.length} by money flow — momentum needs sector tailwind`,
+        reason: `Sector ${sector} ranked ${idx + 1}/${ranked.length} by relative strength — momentum needs sector tailwind`,
       };
     }
   }

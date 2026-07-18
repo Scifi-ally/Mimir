@@ -122,7 +122,9 @@ class TickDistributionServer {
     // Measure latency
     this.lastFeedLatency = Math.max(0, now - tickTime);
     
-    // Drop severely out-of-sequence / stale ticks (> 3000ms delayed) if newer tick exists
+    // Drop out-of-sequence ticks: if this tick is stamped more than 1000ms
+    // BEFORE the newest tick we already have for the symbol, it arrived late /
+    // out of order, so we keep the fresher cached value.
     const existing = this.tickCache.get(rawTick.symbol);
     if (existing && tickTime < existing.timestamp - 1000) {
       this.droppedTicks++;
@@ -199,18 +201,28 @@ class TickDistributionServer {
     }
 
     // NON-BLOCKING ASYNC DISPATCH TO ANALYSIS ENGINE
-    // Uses 'processedTick' (not 'marketTick') to avoid circular re-ingestion by tick_feeder
+    // Uses 'processedTick' (not 'marketTick') to avoid circular re-ingestion by tick_feeder.
+    //
+    // `normalized` is the shared, mutated-in-place cache entry. The setImmediate
+    // callback runs on a later macrotask, so reading `normalized.*` inside it
+    // would publish whatever the LATEST mutation left there — if two ticks for
+    // this symbol are ingested in the same macrotask, both queued callbacks would
+    // read the final state and publish the newest values twice, losing the
+    // intermediate tick. Snapshot the primitives NOW so each dispatch carries the
+    // exact values from its own ingest.
+    const snapshot = {
+      instrumentKey: normalized.instrumentKey || normalized.symbol,
+      symbol: normalized.symbol,
+      ltp: normalized.ltp,
+      volume: normalized.volume,
+      bid: normalized.bid,
+      ask: normalized.ask,
+      timestamp: normalized.timestamp,
+      source: "ws" as const,
+    };
     setImmediate(() => {
       try {
-        intelligenceBus.publish("processedTick", {
-          instrumentKey: normalized.instrumentKey || normalized.symbol,
-          symbol: normalized.symbol,
-          ltp: normalized.ltp,
-          volume: normalized.volume,
-          bid: normalized.bid,
-          ask: normalized.ask,
-          timestamp: normalized.timestamp,
-        });
+        intelligenceBus.publish("processedTick", snapshot);
       } catch (err) {
         logger.warn({ err }, "Suppressed error: failed to publish processedTick to intelligenceBus");
       }

@@ -37,6 +37,8 @@ export async function savePostMarketData(): Promise<void> {
     );
     const losses = rows.filter((r) => r.status === "STOP_HIT");
     const expired = rows.filter((r) => r.status === "EXPIRED");
+    // MISSED = entry never touched; no position existed, so no cost or P&L.
+    const missed = rows.filter((r) => r.status === "MISSED");
     const closed = [...wins, ...losses];
 
     const winRate = closed.length > 0 ? (wins.length / closed.length) * 100 : 0;
@@ -63,10 +65,18 @@ export async function savePostMarketData(): Promise<void> {
       (s, r) => s + (r.pnlInr ? parseFloat(r.pnlInr) : 0),
       0,
     );
-    const executed = rows.filter((r) => r.status !== "ACTIVE").length;
+    // Costs apply only to rows that actually filled: still-open (ACTIVE/PENDING),
+    // never-filled (MISSED) and dismissed (REJECTED) rows traded no legs today.
+    const executedRows = rows.filter(
+      (r) =>
+        r.status !== "ACTIVE" &&
+        r.status !== "PENDING" &&
+        r.status !== "MISSED" &&
+        r.status !== "REJECTED",
+    );
     const estimatedCosts =
-      executed * (cfg.brokeragePerOrderInr * 2) +
-      rows.reduce((sum, r) => {
+      executedRows.length * (cfg.brokeragePerOrderInr * 2) +
+      executedRows.reduce((sum, r) => {
         const entry = parseFloat(r.entryPrice);
         const qty = r.quantity ?? 0;
         return sum + (entry * qty * (cfg.slippageBps / 10000));
@@ -159,7 +169,7 @@ export async function savePostMarketData(): Promise<void> {
     broadcast({
       event: "system_alert",
       data: {
-        message: `Day closed — ${total} signals: ${wins.length}W / ${losses.length}L / ${expired.length} expired. Net P&L: ${pnlSign}₹${Math.round(totalPnl)}. Win rate: ${winRate.toFixed(0)}%.`,
+        message: `Day closed — ${total} signals: ${wins.length}W / ${losses.length}L / ${expired.length} expired / ${missed.length} unfilled. Net P&L: ${pnlSign}₹${Math.round(totalPnl)}. Win rate: ${winRate.toFixed(0)}%.`,
       },
     });
 

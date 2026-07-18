@@ -152,12 +152,38 @@ export async function syncRiskEngineState(): Promise<void> {
 
 // ── Position sizing ──────────────────────────────────────────────────────────
 
+/**
+ * Fractional-Kelly risk fraction. Given a calibrated win probability `p` and a
+ * reward:risk payoff `b` (target distance / stop distance, in R), the full Kelly
+ * bet fraction is f* = (p·b − (1−p)) / b. We take a QUARTER of it — quarter-Kelly
+ * is the standard conservative choice: it captures ~90% of full-Kelly's long-run
+ * growth at a fraction of the variance and drawdown, and is robust to the
+ * inevitable error in our probability estimate. Returns 0 when the edge is
+ * non-positive (the model expects to lose → don't bet), so a negative-edge trade
+ * is sized to zero even if it slips past the ranker gate.
+ */
+export function fractionalKellyRiskPct(
+  winProbability: number,
+  payoffRatio: number,
+  maxRiskPct: number,
+): number {
+  if (!(payoffRatio > 0) || !(winProbability > 0) || !(winProbability < 1)) return maxRiskPct;
+  const fullKelly = (winProbability * payoffRatio - (1 - winProbability)) / payoffRatio;
+  if (fullKelly <= 0) return 0;
+  const quarterKelly = fullKelly * 0.25;
+  // Kelly is expressed as a fraction of capital to RISK. Convert to a percent and
+  // cap at the configured per-trade max — Kelly may recommend more than we allow,
+  // but never less-conservative than the hard ceiling.
+  return Math.min(maxRiskPct, quarterKelly * 100);
+}
+
 function computePositionSize(
   capital: number,
   maxRiskPct: number,
   entryPrice: number,
   stopLoss: number,
   direction: "BUY" | "SELL",
+  kelly?: { winProbability: number; payoffRatio: number },
 ): { quantity: number; maxRiskInr: number; investmentAmount: number; riskPct: number } {
   const riskPerShare = direction === "BUY"
     ? entryPrice - stopLoss
@@ -167,7 +193,18 @@ function computePositionSize(
     return { quantity: 0, maxRiskInr: 0, investmentAmount: 0, riskPct: 0 };
   }
 
-  const maxRiskInr = capital * (maxRiskPct / 100);
+  // Size the risk budget. With a calibrated win probability we scale it by
+  // quarter-Kelly (edge-proportional); without one we use the flat configured
+  // max (graceful degradation — identical to the previous behaviour).
+  const effectiveRiskPct = kelly
+    ? fractionalKellyRiskPct(kelly.winProbability, kelly.payoffRatio, maxRiskPct)
+    : maxRiskPct;
+
+  if (effectiveRiskPct <= 0) {
+    return { quantity: 0, maxRiskInr: 0, investmentAmount: 0, riskPct: 0 };
+  }
+
+  const maxRiskInr = capital * (effectiveRiskPct / 100);
   let quantity = Math.floor(maxRiskInr / riskPerShare);
 
   // Cap position to 20% of capital
@@ -200,6 +237,7 @@ export async function assessRisk(
   snap: TechnicalSnapshot,
   sector: string,
   features?: FeatureVector,
+  winProbability?: number | null,
 ): Promise<RiskAssessment> {
   const cfg = getConfig();
   const autoRisk = await getAutoTunedRiskParams();
@@ -299,12 +337,20 @@ export async function assessRisk(
 
   // ── Position Sizing Calculation ───────────────────────────────────────────────────
   const effectiveMaxRiskPct = Math.min(cfg.maxRiskPerTradePct, autoRisk.maxRiskPerTradePct);
+  // Edge-proportional sizing: when the learned ranker gave a calibrated win
+  // probability, size via quarter-Kelly on the setup's own payoff ratio. Without
+  // one, fall back to the flat configured max (unchanged behaviour).
+  const kelly =
+    typeof winProbability === "number" && winProbability > 0 && riskReward > 0
+      ? { winProbability, payoffRatio: riskReward }
+      : undefined;
   let { quantity, maxRiskInr, investmentAmount, riskPct } = computePositionSize(
     cfg.tradingCapital,
     effectiveMaxRiskPct,
     entryPrice,
     stopLoss,
     direction,
+    kelly,
   );
 
   // Dynamic Macro Risk Adjustment

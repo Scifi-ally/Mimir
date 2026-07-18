@@ -41,8 +41,7 @@ initWebSocketServer(server);
 logSecurityMode();
 
 try {
-  await initConfigFromDb();
-  await initAccessTokenFromDb();
+  await Promise.all([initConfigFromDb(), initAccessTokenFromDb()]);
 } catch (err) {
   logger.warn({ err }, "Startup state restore failed; continuing with defaults");
 }

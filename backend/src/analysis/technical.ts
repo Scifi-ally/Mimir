@@ -1129,7 +1129,9 @@ export function aggregateDailyToWeekly(dailyCandles: OHLCV[]): OHLCV[] {
   const sorted = [...dailyCandles].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
   const map = new Map<string, OHLCV[]>();
   for (const c of sorted) {
-    const d = new Date(c.timestamp);
+    // Shift into IST (+05:30) so getUTCDay() reflects the IST trading day,
+    // not the UTC day (Monday IST candles are stamped Sunday 18:30 UTC).
+    const d = new Date(new Date(c.timestamp).getTime() + 330 * 60 * 1000);
     const day = d.getUTCDay();
     const mondayOffset = day === 0 ? -6 : 1 - day;
     d.setUTCDate(d.getUTCDate() + mondayOffset);

@@ -25,7 +25,14 @@ export class SuggestionGenerator {
       const now = Date.now();
       for (const row of dbSuggestions) {
         const generatedAtMs = row.generatedAt.getTime();
-        const expiresAtMs = generatedAtMs + 20 * 60_000;
+        // Honor the persisted expiry. The DB is the source of truth for a
+        // suggestion's lifetime (a SWING setup lives far longer than the old
+        // blanket 20-minute window). Fall back to tradeType-appropriate
+        // defaults only when expiresAt was never written.
+        const fallbackMs = row.tradeType === "SWING"
+          ? generatedAtMs + 5 * 24 * 60 * 60_000
+          : generatedAtMs + 20 * 60_000;
+        const expiresAtMs = row.expiresAt ? row.expiresAt.getTime() : fallbackMs;
         if (expiresAtMs <= now) continue;
 
         const stock = await findStockBySymbol(row.symbol);

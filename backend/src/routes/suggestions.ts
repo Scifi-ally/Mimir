@@ -14,6 +14,7 @@ import { todayStartUTC } from "../lib/ist-time";
 import { logger } from "../lib/logger";
 import { logApiError, sendFallback } from "../lib/api-errors";
 import { runLearningPipeline } from "../analysis/learning_engine";
+import { getCalibration, getAllCalibrations, ensureFresh } from "../analysis/calibration_engine";
 import { broadcast } from "../ws/websocket_server";
 import { createServerEvent } from "../ws/events";
 
@@ -22,6 +23,7 @@ const router = Router();
 // GET /api/suggestions/active
 router.get("/suggestions/active", async (req, res) => {
   try {
+    await ensureFresh(); // warm calibration cache so setupStats is populated
     const symbolParam = req.query.symbol as string | undefined;
     // Open = filled (ACTIVE) + awaiting entry touch (PENDING)
     const conditions = [inArray(suggestionsTable.status, ["ACTIVE", "PENDING"])];
@@ -154,6 +156,38 @@ router.get("/suggestions/history", async (req, res) => {
   }
 });
 
+// GET /api/suggestions/accuracy — realized track record for display
+// IMPORTANT: Must be defined BEFORE /suggestions/:id
+router.get("/suggestions/accuracy", async (req, res) => {
+  try {
+    await ensureFresh();
+    const cals = getAllCalibrations();
+    const closed = cals.reduce((a, c) => a + c.samples, 0);
+    const wins = cals.reduce((a, c) => a + Math.round(c.winRate * c.samples), 0);
+    const totalPnl = cals.reduce((a, c) => a + c.avgPnlInr * c.samples, 0);
+    res.json({
+      closedTrades: closed,
+      winRate: closed > 0 ? Math.round((wins / closed) * 100) : null,
+      totalPnlInr: Math.round(totalPnl),
+      lookbackDays: 120,
+      setups: cals
+        .filter((c) => c.samples >= 5)
+        .sort((a, b) => b.samples - a.samples)
+        .map((c) => ({
+          setupType: c.setupType,
+          tradeType: c.tradeType,
+          samples: c.samples,
+          winRate: Math.round(c.winRate * 100),
+          avgPnlInr: Math.round(c.avgPnlInr),
+          medianTimeToTargetMin: c.medianTimeToTargetMin != null ? Math.round(c.medianTimeToTargetMin) : null,
+        })),
+    });
+  } catch (err) {
+    logApiError(req, err);
+    sendFallback(res, { closedTrades: 0, winRate: null, totalPnlInr: 0, lookbackDays: 120, setups: [] }, "accuracy-error");
+  }
+});
+
 // GET /api/suggestions/learning/insights
 // IMPORTANT: Must be defined BEFORE /suggestions/:id to avoid 'learning' being captured as :id
 router.get("/suggestions/learning/insights", async (req, res) => {
@@ -213,6 +247,18 @@ function serializeSuggestion(
   s: typeof suggestionsTable.$inferSelect,
   prices: Record<string, number> = {},
 ) {
+  // Per-setup realized stats — how often this setup actually reached target,
+  // and how long winners took. Null until enough closed samples accumulate.
+  const cal = getCalibration(s.setupType, s.tradeType);
+  const setupStats =
+    cal && cal.samples >= 10
+      ? {
+          samples: cal.samples,
+          winRate: Math.round(cal.winRate * 100),
+          medianTimeToTargetMin: cal.medianTimeToTargetMin != null ? Math.round(cal.medianTimeToTargetMin) : null,
+        }
+      : null;
+
   return {
     id: s.id,
     symbol: s.symbol,
@@ -248,6 +294,7 @@ function serializeSuggestion(
     generatedAt: s.generatedAt.toISOString(),
     closedAt: s.closedAt?.toISOString() ?? null,
     signalFactors: s.signalFactors,
+    setupStats,
   };
 }
 
@@ -257,10 +304,41 @@ function serializeSuggestion(
 router.post("/suggestions/:id/accept", async (req, res) => {
   try {
     const id = req.params.id;
+    const [suggestion] = await db
+      .select()
+      .from(suggestionsTable)
+      .where(eq(suggestionsTable.id, id))
+      .limit(1);
+
+    if (!suggestion) {
+      res.status(404).json({ error: "Suggestion not found" });
+      return;
+    }
+
+    // Only an awaiting-entry row can be accepted — anything else is already
+    // live or terminal, and resurrecting a closed row would re-enter it into
+    // outcome polling and double-count it in calibration.
+    if (suggestion.status !== "PENDING") {
+      res
+        .status(409)
+        .json({ error: `Cannot accept suggestion with status ${suggestion.status}` });
+      return;
+    }
+
+    // Honest fill model: accepting enters at the current market price, not the
+    // planned entry — mirror the accuracy_tracker promotion by recording the
+    // fill as entryPrice and re-seeding the MFE/MAE watermarks at it.
+    const prices = await fetchLTPForSymbols([suggestion.symbol]);
+    const ltp = prices[suggestion.symbol];
+    const fill = ltp != null && Number.isFinite(ltp) && ltp > 0 ? ltp.toFixed(2) : null;
     await db
       .update(suggestionsTable)
-      .set({ status: "ACTIVE" })
-      .where(eq(suggestionsTable.id, id));
+      .set(
+        fill != null
+          ? { status: "ACTIVE", entryPrice: fill, highestPrice: fill, lowestPrice: fill }
+          : { status: "ACTIVE" },
+      )
+      .where(and(eq(suggestionsTable.id, id), eq(suggestionsTable.status, "PENDING")));
     res.json({ success: true });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (err: any) {
@@ -289,11 +367,33 @@ router.post("/suggestions/:id/reject", async (req, res) => {
 router.post("/suggestions/:id/close", async (req, res) => {
   try {
     const id = req.params.id;
+    const [suggestion] = await db
+      .select()
+      .from(suggestionsTable)
+      .where(eq(suggestionsTable.id, id))
+      .limit(1);
+
+    if (!suggestion) {
+      res.status(404).json({ error: "Suggestion not found" });
+      return;
+    }
+
+    if (suggestion.status !== "PENDING" && suggestion.status !== "ACTIVE") {
+      res
+        .status(409)
+        .json({ error: `Suggestion already closed with status ${suggestion.status}` });
+      return;
+    }
+
+    // Same MISSED/EXPIRED split as the expiry sweeps: a never-filled PENDING
+    // row was never a trade, so closing it must not record a calibration
+    // non-win — only a filled ACTIVE position closes as EXPIRED.
+    const nextStatus = suggestion.status === "PENDING" ? "MISSED" : "EXPIRED";
     await db
       .update(suggestionsTable)
-      .set({ status: "EXPIRED", closedAt: new Date() })
-      .where(eq(suggestionsTable.id, id));
-    res.json({ success: true });
+      .set({ status: nextStatus, closedAt: new Date() })
+      .where(and(eq(suggestionsTable.id, id), eq(suggestionsTable.status, suggestion.status)));
+    res.json({ success: true, status: nextStatus });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (err: any) {
     logApiError(req, err);

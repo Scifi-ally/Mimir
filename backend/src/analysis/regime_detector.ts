@@ -27,6 +27,7 @@ import { updateMarketState, getMarketState } from "../market_data/market_state";
 import { getConfig } from "../config";
 import { broadcast } from "../ws/websocket_server";
 import { createServerEvent } from "../ws/events";
+import { getGlobalMacroState } from "./global_macro";
 import { logger } from "../lib/logger";
 
 const STARTUP_TIME = Date.now();
@@ -157,6 +158,10 @@ function computeMarketStrength(
 
 let _lastRegimeOutput: RegimeOutput | null = null;
 
+// Latched true while a VIX-caused pause is in effect; cleared only when VIX
+// falls back below the warn zone (see hysteresis band in Steps 1–2).
+let _vixPauseLatched = false;
+
 export function getLastRegimeOutput(): RegimeOutput | null {
   return _lastRegimeOutput;
 }
@@ -175,6 +180,15 @@ export function detectRegime(): void {
   const elapsedMs = Date.now() - STARTUP_TIME;
   const isInitialGrace = elapsedMs < 5000;
   let inputsForced = false;
+
+  // Only a real feed reading may drive VIX pause/latch transitions — the
+  // fabricated 14.2 default below exists solely for regime classification.
+  const vixIsReal = indiaVix !== null && indiaVix > 0;
+
+  // Feed values as actually observed — broadcasts must never carry the
+  // forced classification defaults below as if they were live readings.
+  const observedIndiaVix = vixIsReal ? indiaVix : null;
+  const observedNiftyChangePct = niftyChangePct;
 
   if (niftyChangePct === null || indiaVix === null) {
     if (isInitialGrace) {
@@ -222,19 +236,44 @@ export function detectRegime(): void {
 
   const advancePct = adTotal > 0 ? (advanceCount / adTotal) * 100 : 50;
 
+  // Clear the VIX pause latch once a real VIX reading drops out of the
+  // hysteresis band — a feed outage (fabricated default) must not unlatch.
+  if (vixIsReal && indiaVix !== null && indiaVix <= vixPauseThreshold * 0.95) {
+    _vixPauseLatched = false;
+  }
+
   // ── Step 1: VIX gate (hard pause) ───────────────────────────────────────
-  if (indiaVix !== null && indiaVix > vixPauseThreshold) {
+  if (vixIsReal && indiaVix !== null && indiaVix > vixPauseThreshold) {
     regime = "HIGH_VOLATILITY";
     confidence = Math.min(95, 60 + (indiaVix - vixPauseThreshold) * 3);
     suggestionsPaused = true;
+    _vixPauseLatched = true;
     pauseReason = `India VIX ${indiaVix.toFixed(1)} exceeds pause threshold (${vixPauseThreshold}) — all signals paused`;
   }
   // ── Step 2: VIX warn zone ──────────────────────────────────────────────
-  else if (indiaVix !== null && indiaVix > vixPauseThreshold * 0.95) {
+  // Hysteresis band: pause at vix > threshold, resume only once vix drops
+  // below threshold * 0.95 — a VIX hovering at the threshold no longer
+  // flips suggestionsPaused on every tick.
+  else if (vixIsReal && indiaVix !== null && indiaVix > vixPauseThreshold * 0.95) {
     regime = "HIGH_VOLATILITY";
     confidence = 55;
-    suggestionsPaused = false;
-    pauseReason = null;
+    if (_vixPauseLatched) {
+      // Still inside the band after a VIX-caused pause — hold the pause.
+      suggestionsPaused = true;
+      pauseReason = `India VIX ${indiaVix.toFixed(1)} still near pause threshold (${vixPauseThreshold}) — signals held paused (hysteresis)`;
+    } else {
+      suggestionsPaused = false;
+      pauseReason = null;
+    }
+  }
+  // ── Step 2b: VIX feed outage while latched — hold the pause ───────────
+  // With no real reading, neither pausing nor resuming is justified; keep
+  // the latched pause until live VIX returns rather than trusting 14.2.
+  else if (!vixIsReal && _vixPauseLatched) {
+    regime = "HIGH_VOLATILITY";
+    confidence = 55;
+    suggestionsPaused = true;
+    pauseReason = `India VIX unavailable — VIX pause held until a live reading returns (threshold ${vixPauseThreshold})`;
   }
   // ── Step 3: Low volatility squeeze detection ───────────────────────────
   else if (indiaVix !== null && indiaVix < 12 && niftyChangePct !== null && Math.abs(niftyChangePct) < 0.15) {
@@ -279,28 +318,20 @@ export function detectRegime(): void {
   // ── Step 5: FII/DII flow modifier ──────────────────────────────────────
   if (fiiNetInr !== null && regime !== "HIGH_VOLATILITY") {
     if (fiiNetInr > 2000) {
-      // Strong FII buying can upgrade regime
+      // Strong FII buying can upgrade regime (at most one step)
       if (regime === "UNKNOWN" || regime === "SIDEWAYS_RANGE") {
         regime = "BULLISH_STEADY";
         confidence = Math.max(confidence, 60);
-      }
-      if (regime === "BULLISH_STEADY") {
+      } else if (regime === "BULLISH_STEADY") {
         regime = "BULLISH_EXPANSION";
         confidence = Math.min(confidence + 10, 95);
       }
-      // Relax VIX warn if FII buying
-      if (suggestionsPaused && indiaVix !== null && indiaVix <= vixPauseThreshold) {
-        suggestionsPaused = false;
-        pauseReason = null;
-        logger.info({ fiiNetInr, indiaVix }, "Signals un-paused — elevated VIX offset by strong FII buying");
-      }
     } else if (fiiNetInr < -2000) {
-      // Strong FII selling can downgrade regime
+      // Strong FII selling can downgrade regime (at most one step)
       if (regime === "UNKNOWN" || regime === "SIDEWAYS_RANGE") {
         regime = "BEARISH_STEADY";
         confidence = Math.max(confidence, 60);
-      }
-      if (regime === "BEARISH_STEADY") {
+      } else if (regime === "BEARISH_STEADY") {
         regime = "BEARISH_CONTRACTION";
         confidence = Math.min(confidence + 10, 95);
       }
@@ -312,12 +343,36 @@ export function detectRegime(): void {
     }
   }
 
+  // Relax a VIX-caused pause if strong FII buying and VIX only marginally
+  // above the pause threshold (checked outside the regime-guarded block —
+  // paused states are HIGH_VOLATILITY and were excluded above).
+  if (
+    suggestionsPaused &&
+    regime === "HIGH_VOLATILITY" &&
+    fiiNetInr !== null && fiiNetInr > 2000 &&
+    vixIsReal && indiaVix !== null && indiaVix <= vixPauseThreshold * 1.05
+  ) {
+    suggestionsPaused = false;
+    pauseReason = null;
+    _vixPauseLatched = false;
+    logger.info({ fiiNetInr, indiaVix }, "Signals un-paused — elevated VIX offset by strong FII buying");
+  }
+
   // Compute market strength
   const strength = computeMarketStrength(niftyChangePct, advanceCount, declineCount, sectorBreadth, momentum, indiaVix);
 
-  const niftyEmaTrendText = niftyChangePct >= 0 ? "NIFTY > 20 EMA" : "NIFTY < 20 EMA";
+  // ── Step 6: Geopolitical risk override ───────────────────────────────────
+  const macroState = getGlobalMacroState();
+  if (macroState.geopoliticalRisk === "EXTREME" && !suggestionsPaused) {
+    suggestionsPaused = true;
+    pauseReason = "Extreme geopolitical risk — multiple macro stress signals active";
+  } else if (macroState.geopoliticalRisk === "HIGH" && regime !== "BULLISH_EXPANSION") {
+    confidence = Math.max(confidence - 10, 30);
+  }
+
+  const niftyTrendText = niftyChangePct >= 0 ? "NIFTY up on day" : "NIFTY down on day";
   const breadthText = advanceCount >= declineCount ? "Breadth Positive" : "Breadth Negative";
-  const decisionReason = `${niftyEmaTrendText}, ${breadthText}, Sector Participation ${sectorBreadth}%`;
+  const decisionReason = `${niftyTrendText}, ${breadthText}, Sector Participation ${sectorBreadth}%, Geo Risk: ${macroState.geopoliticalRisk}`;
 
   // Build output
   const output: RegimeOutput = {
@@ -354,8 +409,8 @@ export function detectRegime(): void {
       confidence: output.confidence,
       volatility: output.volatility,
       strength: output.strength,
-      indiaVix: indiaVix ?? null,
-      niftyChange: niftyChangePct ?? null,
+      indiaVix: observedIndiaVix,
+      niftyChange: observedNiftyChangePct,
       sectorBreadth: output.sectorBreadth,
       momentum: output.niftyMomentum,
       suggestionsPaused,

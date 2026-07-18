@@ -43,6 +43,9 @@ export const suggestionsTable = pgTable("suggestions", {
   sentimentScore: integer("sentiment_score"),
   rankingMode: varchar("ranking_mode", { length: 20 }),
   signalFactors: jsonb("signal_factors"),
+  // Full 30-feature vector captured at signal time. Persisted so a model can be
+  // trained on realized outcomes (copied into signal_outcomes at close).
+  featureVector: jsonb("feature_vector"),
   highestPrice: decimal("highest_price", { precision: 10, scale: 2 }),
   lowestPrice: decimal("lowest_price", { precision: 10, scale: 2 }),
   atr: decimal("atr", { precision: 10, scale: 2 }),

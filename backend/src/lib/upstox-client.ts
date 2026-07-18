@@ -290,6 +290,12 @@ export interface UpstoxApiClient {
     fromDate: string,
     token: string,
   ): Promise<unknown[][]>;
+  fetchIntradayCandles(
+    instrumentKey: string,
+    interval: "1minute" | "5minute" | "15minute" | "60minute" | "240minute",
+    token: string,
+    priority?: boolean,
+  ): Promise<unknown[][]>;
 }
 
 function normalizeInstrumentKey(value: string): string {
@@ -585,8 +591,16 @@ export function createUpstoxClient(options?: {
             interval === "60minute" ||
             interval === "240minute";
 
-          let preferV3 = isV3OnlyInterval || interval === "week";
-          
+          // V2 caps day-interval requests at 1 year; route longer ranges
+          // straight to V3 (days unit allows up to a decade) instead of
+          // guaranteed-failing on V2 first.
+          const requestedSpanDays =
+            (Date.parse(toDate) - Date.parse(fromDate)) / 86_400_000;
+          let preferV3 =
+            isV3OnlyInterval ||
+            interval === "week" ||
+            (interval === "day" && requestedSpanDays > 300);
+
           if (!preferV3 && !isMarketOpen()) {
             v3RoundRobin = !v3RoundRobin;
             preferV3 = v3RoundRobin;
@@ -680,9 +694,76 @@ export function createUpstoxClient(options?: {
     });
   }
 
+  /**
+   * Fetch the current trading day's candles via the V3 intraday endpoint.
+   * The historical endpoint serves data only up to the previous trading day,
+   * so this is the only source of same-day candles. Memory-cached with a
+   * short TTL (the data is a rolling snapshot of the live session); a closed
+   * market day resolves to an empty array rather than an error.
+   */
+  const INTRADAY_CACHE_TIME_MS = Math.min(cacheTimeMs, 5 * 60 * 1000);
+
+  async function fetchIntradayCandles(
+    instrumentKey: string,
+    interval: "1minute" | "5minute" | "15minute" | "60minute" | "240minute",
+    token: string,
+    priority: boolean = false,
+  ): Promise<unknown[][]> {
+    const cacheKey = `intraday|${instrumentKey}|${interval}`;
+
+    const cached = candleCache.get(cacheKey);
+    if (cached) {
+      recordHistoricalCacheHit(cached.length);
+      return cached;
+    }
+
+    return candleDeduplicator.execute(cacheKey, async () => {
+      const data = await withRetry(
+        async () => {
+          const mapped = mapV2IntervalToV3(interval);
+          const url = `${BASE_URL.replace("/v2", "/v3")}/historical-candle/intraday/${encodeURIComponent(instrumentKey)}/${mapped.unit}/${mapped.size}`;
+          const resp = await axios.get(url, {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              Accept: "application/json",
+              "Content-Type": "application/json",
+            },
+            timeout: DEFAULT_TIMEOUT,
+          });
+          const candles = resp.data?.data?.candles ?? [];
+
+          recordHistoricalApiCall(candles.length);
+          if (LOG_UPSTOX_PAYLOADS) {
+            logger.info(
+              {
+                api: "upstox_intraday_candles",
+                instrumentKey,
+                interval,
+                count: candles.length,
+                sample: candles.slice(0, 2),
+              },
+              "Received Upstox intraday candle payload",
+            );
+          }
+          // Empty is normal on a market holiday or before the first candle
+          // of the session completes — not an error.
+          return normalizeCandlesNewestFirst(candles);
+        },
+        `Intraday candles fetch ${instrumentKey} ${interval}`,
+        // Keep retries bounded to avoid freezing full scan cycles.
+        { maxRetries: 2, baseDelayMs: 300, maxDelayMs: 2000 },
+        priority,
+      );
+
+      candleCache.set(cacheKey, data, INTRADAY_CACHE_TIME_MS);
+      return data;
+    });
+  }
+
     return {
       fetchQuotesForInstruments,
       fetchLTPForInstruments,
       fetchHistoricalCandles,
+      fetchIntradayCandles,
     };
 }

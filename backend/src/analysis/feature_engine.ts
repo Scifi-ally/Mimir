@@ -70,6 +70,94 @@ export interface FeatureVector {
   upperWickRatio: number;    // upper wick / range
   lowerWickRatio: number;    // lower wick / range
   closeLocation: number;     // where close sits in range (0=low, 1=high)
+
+  // Volatility structure (pure functions of the candle series → safe for the
+  // ranker, reconstructable point-in-time in the backtest)
+  realizedVol5: number;      // annualized realized vol of last 5 daily returns (%)
+  realizedVol20: number;     // annualized realized vol of last 20 daily returns (%)
+  volOfVol: number;          // std of rolling 5-day vol over last 20d (vol regime instability)
+  cprWidthPct: number;       // Central Pivot Range width as % of price (narrow → trend day)
+
+  // Set true by builders that cannot populate the full candle-history feature
+  // set (e.g. the tick path's buildMonitorFeatureVector, which hardcodes ~15
+  // fields to neutral placeholders). Such a vector is fine for the risk engine
+  // but MUST NOT be scored by the learned ranker — its placeholder columns are
+  // train/serve skew. toRankerFeatureArray throws on it so this can never slip
+  // through silently. Absent/false means the vector is ranker-safe.
+  rankerIncomplete?: boolean;
+}
+
+// ── Ranker feature contract ──────────────────────────────────────────────────
+// The single source of truth for WHICH features (and in what order) the learned
+// ranker consumes, shared by the training extractor and the serving path so the
+// two can never drift (train/serve skew is the #1 cause of a good backtest that
+// loses live money).
+//
+// Deliberately EXCLUDES the three live-only fields — `regimeScore`,
+// `sectorStrength`, `marketStrength` — which depend on getLastRegimeOutput() /
+// getMarketState() and cannot be reconstructed point-in-time in a candle
+// backtest. Feeding them would poison training with look-ahead / zeroed values.
+// Regime and sector already act as separate gates upstream in the pipeline, so
+// the ranker focuses purely on the setup's own candle-derived structure.
+export const RANKER_FEATURE_KEYS = [
+  "rsi14",
+  "atr14",
+  "atrPct",
+  "adx14",
+  "volumeRatio",
+  "vwapDistance",
+  "ema20Dist",
+  "ema50Dist",
+  "ema200Dist",
+  "emaAlignment",
+  "trendConsistency",
+  "rsVsNifty60d",
+  "rsVsSector60d",
+  "pocDistancePct",
+  "bbWidthPct",
+  "vcpContraction",
+  "momentumScore",
+  "trendScore",
+  "volatilityScore",
+  "riskRewardScore",
+  "priceRoc5",
+  "priceRoc10",
+  "priceRoc20",
+  "bodyRatio",
+  "upperWickRatio",
+  "lowerWickRatio",
+  "closeLocation",
+  "realizedVol5",
+  "realizedVol20",
+  "volOfVol",
+  "cprWidthPct",
+] as const satisfies readonly (keyof FeatureVector)[];
+
+export type RankerFeatureKey = (typeof RANKER_FEATURE_KEYS)[number];
+
+/**
+ * Projects a FeatureVector onto the ordered numeric array the ranker expects.
+ * Non-finite values are coerced to 0 so the model never sees NaN. The returned
+ * array's index order matches RANKER_FEATURE_KEYS exactly — the model's feature
+ * importances and any SHAP output line up with these names.
+ */
+export function toRankerFeatureArray(fv: FeatureVector): number[] {
+  // Guard against scoring a vector that was built without the full candle
+  // history. Feeding placeholder columns (trendConsistency/momentumScore/ROC/
+  // realizedVol = constant defaults) to the ranker is train/serve skew: the
+  // model saw real values in training and would produce a meaningless P(win).
+  // Fail loudly rather than silently ranking on garbage.
+  if (fv.rankerIncomplete) {
+    throw new Error(
+      `toRankerFeatureArray: refusing to score ranker-incomplete feature vector ` +
+      `for ${fv.symbol} (tick-derived / placeholder features). Use the full ` +
+      `candle-history feature engine before ranking.`,
+    );
+  }
+  return RANKER_FEATURE_KEYS.map((k) => {
+    const v = fv[k];
+    return typeof v === "number" && Number.isFinite(v) ? v : 0;
+  });
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -125,6 +213,52 @@ function computeTrendConsistency(candles: OHLCV[], direction: "UP" | "DOWN" | "S
     else if (direction === "SIDEWAYS") consistent += 0.5; // Neutral
   }
   return (consistent / last10.length) * 100;
+}
+
+/** Daily log returns from a close series. */
+function dailyReturns(closes: number[]): number[] {
+  const rets: number[] = [];
+  for (let i = 1; i < closes.length; i++) {
+    const prev = closes[i - 1]!;
+    if (prev > 0) rets.push(Math.log(closes[i]! / prev));
+  }
+  return rets;
+}
+
+/** Annualized realized volatility (%) from the last `window` daily returns. */
+function realizedVol(closes: number[], window: number): number {
+  const rets = dailyReturns(closes.slice(-(window + 1)));
+  if (rets.length < 2) return 0;
+  const mean = rets.reduce((a, b) => a + b, 0) / rets.length;
+  const variance = rets.reduce((a, r) => a + (r - mean) ** 2, 0) / (rets.length - 1);
+  // √252 annualization, ×100 for percent.
+  return Math.round(Math.sqrt(variance) * Math.sqrt(252) * 100 * 100) / 100;
+}
+
+/** Vol-of-vol: std of the rolling 5-day realized vol over the last ~20 days.
+ *  High values mean the volatility regime itself is unstable (whippy). */
+function computeVolOfVol(closes: number[]): number {
+  if (closes.length < 26) return 0;
+  const rollVols: number[] = [];
+  for (let end = closes.length - 20; end <= closes.length; end++) {
+    if (end < 6) continue;
+    rollVols.push(realizedVol(closes.slice(0, end), 5));
+  }
+  if (rollVols.length < 2) return 0;
+  const mean = rollVols.reduce((a, b) => a + b, 0) / rollVols.length;
+  const variance = rollVols.reduce((a, v) => a + (v - mean) ** 2, 0) / (rollVols.length - 1);
+  return Math.round(Math.sqrt(variance) * 100) / 100;
+}
+
+/** Central Pivot Range width as % of price, from the last completed candle.
+ *  Narrow CPR (< ~0.5%) historically precedes trending days; wide CPR → range. */
+function computeCprWidthPct(candle: OHLCV): number {
+  const pivot = (candle.high + candle.low + candle.close) / 3;
+  const bc = (candle.high + candle.low) / 2;
+  const tc = pivot - bc + pivot; // tc = 2*pivot - bc
+  const width = Math.abs(tc - bc);
+  if (candle.close <= 0) return 0;
+  return Math.round((width / candle.close) * 10000) / 100;
 }
 
 function computeCandlestickFeatures(candle: OHLCV): {
@@ -355,6 +489,12 @@ export function computeFeatureVector(
 
     // Candlestick
     ...candleFeatures,
+
+    // Volatility structure
+    realizedVol5: realizedVol(closes, 5),
+    realizedVol20: realizedVol(closes, 20),
+    volOfVol: computeVolOfVol(closes),
+    cprWidthPct: computeCprWidthPct(lastCandle),
   };
 
   logger.debug({ symbol, momentumScore, trendScore, volatilityScore, riskRewardScore }, "Feature vector computed");

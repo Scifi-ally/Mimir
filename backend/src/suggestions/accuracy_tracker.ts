@@ -51,7 +51,7 @@ export async function checkSuggestionOutcomes(prices: PriceMap): Promise<void> {
     outcomePrice: number;
     pnlInr: number | null;
   }> = [];
-  const promotions: string[] = [];
+  const promotions: Array<{ id: string; fillPrice: number }> = [];
 
   for (const suggestion of active) {
     const price = prices[suggestion.symbol];
@@ -75,16 +75,24 @@ export async function checkSuggestionOutcomes(prices: PriceMap): Promise<void> {
         suggestion.direction === "BUY" ? price >= t1 : price <= t1;
       if (alreadyPastTarget) {
         // Gapped through entry AND target between polls — a real order would
-        // fill near current price with no edge left. Pessimistic: missed trade.
+        // fill near current price with no edge left. Never filled: missed trade,
+        // excluded from win/loss stats (honest fill model).
         outcomes.push({
           id: suggestion.id,
           symbol: suggestion.symbol,
-          status: "EXPIRED",
+          status: "MISSED",
           outcomePrice: price,
           pnlInr: null,
         });
       } else {
-        promotions.push(suggestion.id);
+        // Model the fill at the observed (possibly gapped) price, not the
+        // planned entry — a real stop/limit trigger would fill here, so PnL
+        // and MFE/MAE baselines must use it.
+        const fillPrice =
+          suggestion.direction === "BUY"
+            ? Math.max(entry, price)
+            : Math.min(entry, price);
+        promotions.push({ id: suggestion.id, fillPrice });
       }
       continue;
     }
@@ -146,14 +154,18 @@ export async function checkSuggestionOutcomes(prices: PriceMap): Promise<void> {
 
   if (promotions.length > 0) {
     try {
-      await db
-        .update(suggestionsTable)
-        .set({ status: "ACTIVE" })
-        .where(inArray(suggestionsTable.id, promotions));
-      // Keep UI in sync — clients show PENDING as "awaiting entry"
-      for (const id of promotions) {
+      for (const promo of promotions) {
+        // Re-seed the MFE/MAE watermarks at the fill: they were seeded with the
+        // planned entry at insert, and on a gapped fill the stale seed would
+        // record an adverse excursion the market never traded.
+        const fill = promo.fillPrice.toFixed(2);
+        await db
+          .update(suggestionsTable)
+          .set({ status: "ACTIVE", entryPrice: fill, highestPrice: fill, lowestPrice: fill })
+          .where(eq(suggestionsTable.id, promo.id));
+        // Keep UI in sync — clients show PENDING as "awaiting entry"
         broadcast(
-          createServerEvent.suggestionUpdated({ id, status: "ACTIVE" }),
+          createServerEvent.suggestionUpdated({ id: promo.id, status: "ACTIVE" }),
           "suggestions",
         );
       }
@@ -186,7 +198,8 @@ export async function checkSuggestionOutcomes(prices: PriceMap): Promise<void> {
             | "TARGET_1_HIT"
             | "TARGET_2_HIT"
             | "STOP_HIT"
-            | "EXPIRED",
+            | "EXPIRED"
+            | "MISSED",
           pnlInr: outcome.pnlInr,
           outcomePrice: outcome.outcomePrice,
         }),
@@ -206,36 +219,41 @@ export async function checkSuggestionOutcomes(prices: PriceMap): Promise<void> {
   }
 }
 
+// Time-stop conditions shared by the expiry sweep.
+function expiryConditions() {
+  return or(
+    // New suggestions carry an explicit, strategy-aware time stop.
+    lte(suggestionsTable.expiresAt, new Date()),
+    // Legacy rows without expiresAt: expire intraday from previous days.
+    // Rows WITH expiresAt are governed by it alone — off-hours scans
+    // generate intraday setups the evening before their session.
+    and(
+      isNull(suggestionsTable.expiresAt),
+      eq(suggestionsTable.tradeType, "INTRADAY"),
+      lt(suggestionsTable.generatedAt, todayStartUTC())
+    ),
+    // Expire swing trades older than 14 days (backtest: edge needs ~10 trading days)
+    and(
+      eq(suggestionsTable.tradeType, "SWING"),
+      lt(suggestionsTable.generatedAt, new Date(Date.now() - 14 * 24 * 60 * 60 * 1000))
+    )
+  );
+}
+
 export async function expireOldSuggestions(): Promise<void> {
   try {
+    // Honest fill model: a PENDING row's entry was never touched, so no trade
+    // ever existed. Time it out as MISSED (excluded from win/loss calibration)
+    // rather than EXPIRED, which calibration counts as a non-win.
     await db
       .update(suggestionsTable)
-      .set({
-        status: "EXPIRED",
-        closedAt: new Date(),
-      })
-      .where(
-        and(
-          inArray(suggestionsTable.status, ["ACTIVE", "PENDING"]),
-          or(
-            // New suggestions carry an explicit, strategy-aware time stop.
-            lte(suggestionsTable.expiresAt, new Date()),
-            // Legacy rows without expiresAt: expire intraday from previous days.
-            // Rows WITH expiresAt are governed by it alone — off-hours scans
-            // generate intraday setups the evening before their session.
-            and(
-              isNull(suggestionsTable.expiresAt),
-              eq(suggestionsTable.tradeType, "INTRADAY"),
-              lt(suggestionsTable.generatedAt, todayStartUTC())
-            ),
-            // Expire swing trades older than 14 days (backtest: edge needs ~10 trading days)
-            and(
-              eq(suggestionsTable.tradeType, "SWING"),
-              lt(suggestionsTable.generatedAt, new Date(Date.now() - 14 * 24 * 60 * 60 * 1000))
-            )
-          )
-        )
-      );
+      .set({ status: "MISSED", closedAt: new Date() })
+      .where(and(eq(suggestionsTable.status, "PENDING"), expiryConditions()));
+
+    await db
+      .update(suggestionsTable)
+      .set({ status: "EXPIRED", closedAt: new Date() })
+      .where(and(eq(suggestionsTable.status, "ACTIVE"), expiryConditions()));
 
     logger.info("Expired old intraday and swing suggestions");
   } catch (err) {
@@ -245,12 +263,24 @@ export async function expireOldSuggestions(): Promise<void> {
 
 export async function expireTodayIntraday(): Promise<void> {
   try {
+    // Same MISSED/EXPIRED split as expireOldSuggestions: never-filled PENDING
+    // rows must not enter win/loss stats at the end-of-day sweep.
+    await db
+      .update(suggestionsTable)
+      .set({ status: "MISSED", closedAt: new Date() })
+      .where(
+        and(
+          eq(suggestionsTable.status, "PENDING"),
+          eq(suggestionsTable.tradeType, "INTRADAY"),
+        ),
+      );
+
     await db
       .update(suggestionsTable)
       .set({ status: "EXPIRED", closedAt: new Date() })
       .where(
         and(
-          inArray(suggestionsTable.status, ["ACTIVE", "PENDING"]),
+          eq(suggestionsTable.status, "ACTIVE"),
           eq(suggestionsTable.tradeType, "INTRADAY"),
         ),
       );

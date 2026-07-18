@@ -16,7 +16,7 @@
 import { logger } from "../lib/logger";
 import { detectRegime, getLastRegimeOutput, type MarketRegime, type RegimeOutput } from "./regime_detector";
 import { getScannerActivation, isScannerEnabled, setupTypeToScannerType } from "./scanner_activation";
-import { computeFeatureVector, type FeatureVector } from "./feature_engine";
+import { computeFeatureVector, toRankerFeatureArray, type FeatureVector } from "./feature_engine";
 import { assessRisk, syncRiskEngineState } from "./risk_engine";
 import { getConfig } from "../config";
 import type { TechnicalSnapshot, OHLCV } from "./technical";
@@ -55,9 +55,25 @@ async function getAdaptiveWeights(): Promise<AdaptiveWeights> {
       .limit(1);
       
     if (row && row.insights) {
-      adaptiveWeightsCache = { ...defaultWeights, ...JSON.parse(row.insights) };
+      const merged: AdaptiveWeights = { ...defaultWeights, ...JSON.parse(row.insights) };
+      // Learned weights are normalized to sum 1.0 without a sentiment key, so
+      // re-adding the default sentiment weight pushes the sum to ~1.10 —
+      // renormalize so confidence stays on the 0-100 scale.
+      const totalWeight =
+        merged.tech + merged.technicalRanking + merged.chronos +
+        merged.rs + merged.sector + merged.regime + merged.sentiment;
+      if (totalWeight > 0) {
+        merged.tech /= totalWeight;
+        merged.technicalRanking /= totalWeight;
+        merged.chronos /= totalWeight;
+        merged.rs /= totalWeight;
+        merged.sector /= totalWeight;
+        merged.regime /= totalWeight;
+        merged.sentiment /= totalWeight;
+      }
+      adaptiveWeightsCache = merged;
       lastWeightFetch = Date.now();
-      return adaptiveWeightsCache!;
+      return merged;
     }
   } catch (err) {
     logger.warn({ err }, "Failed to fetch adaptive weights, using defaults");
@@ -335,7 +351,11 @@ export async function runIntelligencePipeline(
           candle.close,
           candle.volume,
         ]),
-        features: c.features,
+        // Project the feature vector onto the shared ranker contract so the AI
+        // service's LightGBM ranker sees exactly the features it trained on, in
+        // the same order. Sent alongside the full feature dict the composite
+        // path already consumes.
+        features: { ...c.features, ranker_features: toRankerFeatureArray(c.features) },
       })),
     );
     logger.info(
@@ -356,10 +376,16 @@ export async function runIntelligencePipeline(
   for (const candidate of candidates) {
     const { result, features, snap } = candidate;
     const aiResult = aiResults.get(result.symbol);
+    // AI contributes when the Python service returned a real pattern-engine
+    // score. Previously this also required chronos/pattern source === "model",
+    // but the pattern engine always emits "engine" and Chronos emits "model"
+    // only when HF weights are loaded — so on the common synthetic-Chronos path
+    // this discarded the genuine pattern + sentiment scores and stored aiScore=0,
+    // poisoning outcome data. `isFallback` (now scoped to a real pattern-engine
+    // failure or the native-math path) is the correct, sufficient gate.
     const aiContributing =
       aiResult !== undefined &&
-      !aiResult.isFallback &&
-      (aiResult.technicalRanking.source === "model" || aiResult.chronos.source === "model");
+      !aiResult.isFallback;
       
     // Extract Sentiment
     const sentimentScore = aiResult?.sentiment_score ?? 50;
@@ -369,7 +395,9 @@ export async function runIntelligencePipeline(
 
     // Compute scores
     const technicalScore = Math.round(Math.min(100, (result.score / 10) * 100));
-    const patternScore = aiResult?.technicalRanking.bullish_probability ?? 0;
+    // bullish_probability is 0-1 from both the Python service and the native
+    // fallback — scale to the 0-100 range the confidence formula expects.
+    const patternScore = Math.max(0, Math.min(100, (aiResult?.technicalRanking.bullish_probability ?? 0) * 100));
     const chronosScore = aiResult
       ? mapChronosToScore(aiResult.chronos, result.setup.direction)
       : 0;
@@ -401,6 +429,38 @@ export async function runIntelligencePipeline(
     // Apply high volatility penalty instead of hard blocking trades
     if (regime.regime === "HIGH_VOLATILITY") {
       confidence = Math.max(0, confidence - 15);
+    }
+
+    // ── Learned ranker: the primary edge ──────────────────────────────
+    // When the LightGBM ranker served this batch it returns a calibrated
+    // P(target1 before stop). We (a) HARD-GATE on the model's own
+    // out-of-sample-optimal threshold — conservative risk means we simply
+    // don't take trades the model expects to lose — and (b) blend the
+    // probability into the confidence so the learned model, not the
+    // hand-tuned linear formula, drives ranking. When the ranker is absent
+    // (null win_probability), nothing here fires and the composite score
+    // continues to rank exactly as before (graceful degradation).
+    const winProb = aiResult?.win_probability;
+    const rankerLoaded = aiResult?.ranker_loaded === true;
+    if (rankerLoaded && typeof winProb === "number") {
+      // Threshold from the trained model's meta (expectancy-maximising on the
+      // held-out slice), with a conservative floor so a loose auto-threshold
+      // can never wave through coin-flips.
+      const rankerThreshold = Math.max(0.5, aiResult?.ranker_threshold ?? 0.5);
+      if (winProb < rankerThreshold) {
+        rejectedByAI++;
+        logger.debug(
+          { symbol: result.symbol, winProb, rankerThreshold, setupType: result.setup.setupType },
+          "Signal rejected — learned ranker P(win) below threshold",
+        );
+        continue;
+      }
+      // Blend: map the calibrated probability to a 0-100 scale and take a
+      // 70/30 weighting toward the model over the legacy composite. The model
+      // is the measured edge; the composite is a prior that keeps ordering
+      // sane in the probability band where the model is less discriminating.
+      const rankerConfidence = winProb * 100;
+      confidence = Math.round(rankerConfidence * 0.7 + confidence * 0.3);
     }
 
     const aiScore = aiContributing && aiResult ? aiResult.composite_score : 0;
@@ -531,7 +591,10 @@ export async function runIntelligencePipeline(
     }
 
     // ── Risk assessment ───────────────────────────────────────────────
-    const riskAssessment = await assessRisk(result.setup, snap, result.sector, features);
+    // Pass the calibrated win probability so position sizing can scale by
+    // quarter-Kelly. undefined when the ranker is absent → flat sizing as before.
+    const sizingWinProb = rankerLoaded && typeof winProb === "number" ? winProb : undefined;
+    const riskAssessment = await assessRisk(result.setup, snap, result.sector, features, sizingWinProb);
 
     if (!riskAssessment.passed) {
       rejectedByRisk++;

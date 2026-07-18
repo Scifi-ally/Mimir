@@ -14,6 +14,11 @@ export interface MarketTickEvent {
   bid?: number | null;
   ask?: number | null;
   timestamp: number;
+  // Origin of the tick. "ws" carries a real depth quote (bid/ask/volume present
+  // when the book is live), so an absent bid/ask genuinely signals no liquidity.
+  // "http_fallback" is an LTP-only poll that NEVER carries bid/ask/volume, so its
+  // missing quote must not be read as a circuit-limit/zero-liquidity signal.
+  source?: "ws" | "http_fallback";
 }
 
 export interface ConnectionStatusEvent {

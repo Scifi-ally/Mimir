@@ -38,6 +38,8 @@ export interface SetupCalibration {
   avgAdverseExcursionPct: number | null;
   // MFE on losing trades: how much favorable move losers had before stopping out
   avgFavorableOnLossPct: number | null;
+  // Median realized time from generation to target hit (winners only), minutes
+  medianTimeToTargetMin: number | null;
 }
 
 let calibrationCache = new Map<string, SetupCalibration>();
@@ -47,6 +49,13 @@ let refreshInFlight: Promise<void> | null = null;
 
 function key(setupType: string, tradeType: string): string {
   return `${setupType}|${tradeType}`;
+}
+
+function median(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
 }
 
 export async function refreshCalibration(): Promise<void> {
@@ -65,6 +74,8 @@ export async function refreshCalibration(): Promise<void> {
           pnlInr: suggestionsTable.pnlInr,
           highestPrice: suggestionsTable.highestPrice,
           lowestPrice: suggestionsTable.lowestPrice,
+          generatedAt: suggestionsTable.generatedAt,
+          closedAt: suggestionsTable.closedAt,
         })
         .from(suggestionsTable)
         .where(
@@ -86,6 +97,7 @@ export async function refreshCalibration(): Promise<void> {
           maeOnWinCount: number;
           mfeOnLossSum: number;
           mfeOnLossCount: number;
+          winDurationsMin: number[];
         }
       >();
 
@@ -103,11 +115,18 @@ export async function refreshCalibration(): Promise<void> {
             maeOnWinCount: 0,
             mfeOnLossSum: 0,
             mfeOnLossCount: 0,
+            winDurationsMin: [],
           };
 
         const isWin = WIN_STATUSES.has(row.status);
         b.total += 1;
-        if (isWin) b.wins += 1;
+        if (isWin) {
+          b.wins += 1;
+          if (row.closedAt) {
+            const mins = (row.closedAt.getTime() - row.generatedAt.getTime()) / 60_000;
+            if (mins > 0 && mins < 60 * 24 * 30) b.winDurationsMin.push(mins);
+          }
+        }
         const pnl = row.pnlInr != null ? parseFloat(row.pnlInr) : 0;
         b.pnlSum += Number.isFinite(pnl) ? pnl : 0; // guard NaN from malformed rows
 
@@ -143,6 +162,7 @@ export async function refreshCalibration(): Promise<void> {
           avgPnlInr: b.total > 0 ? b.pnlSum / b.total : 0,
           avgAdverseExcursionPct: b.maeOnWinCount > 0 ? b.maeOnWinSum / b.maeOnWinCount : null,
           avgFavorableOnLossPct: b.mfeOnLossCount > 0 ? b.mfeOnLossSum / b.mfeOnLossCount : null,
+          medianTimeToTargetMin: median(b.winDurationsMin),
         });
       }
 
@@ -162,7 +182,7 @@ export async function refreshCalibration(): Promise<void> {
   return refreshInFlight;
 }
 
-async function ensureFresh(): Promise<void> {
+export async function ensureFresh(): Promise<void> {
   if (Date.now() - cacheTime > CACHE_TTL_MS) await refreshCalibration();
 }
 

@@ -17,6 +17,17 @@ function getAiServiceHeaders(): Record<string, string> | undefined {
   return token ? { "X-AI-Service-Token": token } : undefined;
 }
 
+// Real inference latency scales with batch size (Chronos + pattern engine per
+// candidate). A flat budget false-timeouts large batches on slower hosts, which
+// silently drops genuine AI rankings in favour of the deterministic fallback.
+// Mirror the base/per-candidate/cap knobs used by analysis/ai_client.ts.
+function computeInferenceTimeoutMs(candidateCount: number): number {
+  const base = Number(process.env.AI_INFERENCE_TIMEOUT_MS) || 30_000;
+  const perCandidate = Number(process.env.AI_INFERENCE_PER_CANDIDATE_MS) || 500;
+  const cap = Number(process.env.AI_INFERENCE_TIMEOUT_CAP_MS) || 120_000;
+  return Math.min(cap, base + candidateCount * perCandidate);
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 parentPort.on("message", async (msg: { id: string; type: string; payload: any }) => {
   const { id, type, payload } = msg;
@@ -97,7 +108,7 @@ function evaluateCandidateStateless(state: MarketState): CandidateSignal | null 
     reasons.push(`turnover ${turnoverCr.toFixed(1)}cr`);
   }
 
-  if (score < 3) {
+  if (score < 3.5) {
     return null;
   }
 
@@ -132,15 +143,19 @@ function analyzeTechnicalStateless(candidate: CandidateSignal, candles: OHLCV[])
   const trendAligned =
     snap == null ||
     (direction === "BUY" ? snap.ema9 >= snap.ema20 : snap.ema9 <= snap.ema20);
-  
+
+  // Require meaningful trend strength — ADX below 15 means no trend
+  const hasTrendStrength = snap == null || snap.adx14 >= 16;
+
   if (!trendAligned && candidate.score < 5.5) return null;
+  if (!hasTrendStrength && candidate.score < 5.5) return null;
 
   const score = Math.min(
     10,
-    candidate.score + (trendAligned ? 1.2 : -0.6) + (snap?.volumeRatio && snap.volumeRatio > 1.2 ? 0.6 : 0),
+    candidate.score + (trendAligned ? 1.2 : -0.6) + (hasTrendStrength ? 0.3 : -0.5) + (snap?.volumeRatio && snap.volumeRatio > 1.2 ? 0.6 : 0),
   );
 
-  if (score < 5.2) return null;
+  if (score < 5.8) return null;
 
   return {
     instrumentKey: candidate.instrumentKey,
@@ -174,7 +189,7 @@ async function rankAiOpportunities(
     const responsePromise = axios.post<{ results: AiRankResult[] }>(
       `${getAiServiceUrl()}/inference/batch`,
       { candidates },
-      { timeout: 14000, headers: getAiServiceHeaders() },
+      { timeout: computeInferenceTimeoutMs(candidates.length), headers: getAiServiceHeaders() },
     );
 
     const rlPredictionsPromise = Promise.all(
@@ -204,6 +219,9 @@ async function rankAiOpportunities(
       const opp = p.opportunity;
       const aiResult = scoreMap.get(opp.symbol);
       if (aiResult) {
+        // Legacy results may carry the ranking under "kronos" (same coalesce as scoreMap filter above)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const ranking = aiResult.technicalRanking ?? (aiResult as any).kronos;
         let aiScore = Math.min(10, aiResult.composite_score / 10);
         
         // Regime-aware signal filtering
@@ -245,7 +263,7 @@ async function rankAiOpportunities(
           compositeScore: Number((opp.score * 0.4 + aiScore * 0.6).toFixed(2)),
           rankReasoning: [
              `AI Score: ${aiResult.composite_score.toFixed(1)}`,
-             `Technical Ranking Bullish: ${(aiResult.technicalRanking.bullish_probability * 100).toFixed(1)}%`,
+             `Technical Ranking Bullish: ${ranking?.bullish_probability != null ? `${(ranking.bullish_probability * 100).toFixed(1)}%` : "N/A"}`,
              `Chronos Trend: ${aiResult.chronos?.trend ?? "N/A"}`,
              ...(Array.isArray(opp?.reasoning) ? opp.reasoning : [])
           ],
@@ -253,8 +271,9 @@ async function rankAiOpportunities(
       }
       return deterministicFallback(opp, regime);
     }).sort((a, b) => b.compositeScore - a.compositeScore);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any, unused-imports/no-unused-vars, @typescript-eslint/no-unused-vars
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (err: any) {
+    console.error("[intelligence_worker] AI ranking batch failed; falling back to deterministic ranking:", err?.message ?? err);
     return limited.map(p => deterministicFallback(p.opportunity, regime)).sort((a, b) => b.compositeScore - a.compositeScore);
   }
 }

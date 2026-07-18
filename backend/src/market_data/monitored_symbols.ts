@@ -24,6 +24,13 @@ export interface MonitoredStock {
 const manualSymbols = new Set<string>();
 let cachedWatchlistDate: string | null = null;
 
+// Feed subscription cap — separate from MONITORING_MAX_STOCKS (analysis-cycle CPU cap).
+// Upstox WS accepts 100-key batches; connection_manager already chunks by 100.
+const FEED_MAX_STOCKS = Math.max(
+  MONITORING_MAX_STOCKS,
+  Number(process.env["FEED_MAX_STOCKS"] ?? "500"),
+);
+
 export async function addManualMonitoredSymbols(symbols: string[]): Promise<MonitoredStock[]> {
   const results: MonitoredStock[] = [];
   let added = false;
@@ -33,6 +40,8 @@ export async function addManualMonitoredSymbols(symbols: string[]): Promise<Moni
       manualSymbols.add(stock.symbol);
       results.push({ symbol: stock.symbol, key: stock.key, source: "manual" });
       added = true;
+    } else {
+      logger.warn({ symbol }, "subscribe: symbol not in universe, no ticks will flow");
     }
   }
   if (added) {
@@ -78,7 +87,7 @@ export async function addManualMonitoredSymbols(symbols: string[]): Promise<Moni
   return results;
 }
 
-async function loadWatchlistSymbols(limit = MONITORING_MAX_STOCKS): Promise<{
+async function loadWatchlistSymbols(limit = FEED_MAX_STOCKS): Promise<{
   symbols: string[];
   selectedDate: string | null;
 }> {
@@ -128,7 +137,8 @@ export async function getMonitoredSubscriptionStocks(): Promise<MonitoredStock[]
     .where(inArray(suggestionsTable.status, ["ACTIVE", "PENDING"]));
   const suggestionSymbols = activeSuggestions.map(s => s.symbol);
 
-  let ordered = [...new Set([...watchlistSymbols, ...suggestionSymbols, ...manualSymbols])];
+  // Manual (client-requested) symbols first so the cap can never evict what the UI asked for.
+  let ordered = [...new Set([...manualSymbols, ...watchlistSymbols, ...suggestionSymbols])];
 
   if (!ordered.length && isMarketOpen()) {
     const fallback = await getEffectiveUniverse(MONITORING_MAX_STOCKS);
@@ -141,7 +151,13 @@ export async function getMonitoredSubscriptionStocks(): Promise<MonitoredStock[]
     }
   }
 
-  ordered = ordered.slice(0, MONITORING_MAX_STOCKS);
+  if (ordered.length > FEED_MAX_STOCKS) {
+    logger.warn(
+      { total: ordered.length, cap: FEED_MAX_STOCKS, dropped: ordered.slice(FEED_MAX_STOCKS) },
+      "Feed subscription cap exceeded; dropping symbols",
+    );
+    ordered = ordered.slice(0, FEED_MAX_STOCKS);
+  }
 
   const resolved = await Promise.all(
     ordered.map(async (symbol) => {

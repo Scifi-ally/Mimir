@@ -38,7 +38,7 @@ export const GetActiveSuggestionsResponseItem = zod.object({
   validityTill: zod.string(),
   expectedHoldMinutes: zod.number().int().nullish(),
   expiresAt: zod.coerce.date().nullish(),
-  status: zod.enum(["PENDING", "ACTIVE", "TARGET_1_HIT", "TARGET_2_HIT", "STOP_HIT", "EXPIRED", "CLOSED", "REJECTED"]),
+  status: zod.enum(["PENDING", "ACTIVE", "TARGET_1_HIT", "TARGET_2_HIT", "STOP_HIT", "EXPIRED", "MISSED", "CLOSED", "REJECTED"]),
   outcomePrice: zod.number().nullish(),
   pnlInr: zod.number().nullish(),
   currentPrice: zod.number().nullish(),
@@ -71,7 +71,7 @@ export const GetTodaySuggestionsResponseItem = zod.object({
   marketRegime: zod.string(),
   reasoning: zod.string(),
   validityTill: zod.string(),
-  status: zod.enum(["PENDING", "ACTIVE", "TARGET_1_HIT", "TARGET_2_HIT", "STOP_HIT", "EXPIRED", "CLOSED", "REJECTED"]),
+  status: zod.enum(["PENDING", "ACTIVE", "TARGET_1_HIT", "TARGET_2_HIT", "STOP_HIT", "EXPIRED", "MISSED", "CLOSED", "REJECTED"]),
   outcomePrice: zod.number().nullish(),
   pnlInr: zod.number().nullish(),
   currentPrice: zod.number().nullish(),
@@ -93,7 +93,7 @@ export const GetSuggestionHistoryQueryParams = zod.object({
   page: zod.coerce.number().default(getSuggestionHistoryQueryPageDefault),
   limit: zod.coerce.number().default(getSuggestionHistoryQueryLimitDefault),
   status: zod
-    .enum(["PENDING", "ACTIVE", "TARGET_1_HIT", "TARGET_2_HIT", "STOP_HIT", "EXPIRED", "CLOSED", "REJECTED"])
+    .enum(["PENDING", "ACTIVE", "TARGET_1_HIT", "TARGET_2_HIT", "STOP_HIT", "EXPIRED", "MISSED", "CLOSED", "REJECTED"])
     .optional(),
   setup_type: zod.string().trim().min(1).optional(),
   direction: zod.enum(["BUY", "SELL"]).optional(),
@@ -123,7 +123,7 @@ export const GetSuggestionHistoryResponse = zod.object({
       validityTill: zod.string(),
       expectedHoldMinutes: zod.number().int().nullish(),
       expiresAt: zod.coerce.date().nullish(),
-      status: zod.enum(["PENDING", "ACTIVE", "TARGET_1_HIT", "TARGET_2_HIT", "STOP_HIT", "EXPIRED", "CLOSED", "REJECTED"]),
+      status: zod.enum(["PENDING", "ACTIVE", "TARGET_1_HIT", "TARGET_2_HIT", "STOP_HIT", "EXPIRED", "MISSED", "CLOSED", "REJECTED"]),
       outcomePrice: zod.number().nullish(),
       pnlInr: zod.number().nullish(),
       currentPrice: zod.number().nullish(),
@@ -164,7 +164,7 @@ export const GetSuggestionResponse = zod.object({
   validityTill: zod.string(),
   expectedHoldMinutes: zod.number().int().nullish(),
   expiresAt: zod.coerce.date().nullish(),
-  status: zod.enum(["PENDING", "ACTIVE", "TARGET_1_HIT", "TARGET_2_HIT", "STOP_HIT", "EXPIRED", "CLOSED", "REJECTED"]),
+  status: zod.enum(["PENDING", "ACTIVE", "TARGET_1_HIT", "TARGET_2_HIT", "STOP_HIT", "EXPIRED", "MISSED", "CLOSED", "REJECTED"]),
   outcomePrice: zod.number().nullish(),
   pnlInr: zod.number().nullish(),
   currentPrice: zod.number().nullish(),
@@ -493,7 +493,7 @@ export const CreateSuggestionBody = zod.object({
   stopLoss: zod.coerce.number().positive(),
   target1: zod.coerce.number().positive(),
   quantity: zod.coerce.number().int().positive(),
-  status: zod.enum(["PENDING", "ACTIVE", "TARGET_1_HIT", "TARGET_2_HIT", "STOP_HIT", "EXPIRED", "CLOSED", "REJECTED"]).default("PENDING").optional(),
+  status: zod.enum(["PENDING", "ACTIVE", "TARGET_1_HIT", "TARGET_2_HIT", "STOP_HIT", "EXPIRED", "MISSED", "CLOSED", "REJECTED"]).default("PENDING").optional(),
 });
 
 export const ModifyStopLossBody = zod.object({

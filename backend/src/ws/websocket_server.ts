@@ -47,6 +47,23 @@ setInterval(() => {
   }
 }, 60000).unref();
 
+// Single normalization point for all subscribe/unsubscribe symbol paths —
+// mismatched casing here corrupts cross-client eviction decisions.
+function normalizeSymbol(sym: unknown): string {
+  return typeof sym === "string" ? sym.trim().toUpperCase() : "";
+}
+
+// A symbol is still needed if ANY other client watches it via activeSymbol
+// OR batch/watchlist subscribedSymbols — checking only activeSymbol tears
+// down feeds that watchlist clients still depend on.
+function isSymbolStillNeeded(symbol: string, exceptClient: WebSocket): boolean {
+  const allClients = wssInstances.reduce((acc, w) => acc.concat(Array.from(w.clients)), [] as WebSocket[]);
+  return allClients.some((client) => {
+    const tcClient = client as WebSocket & { activeSymbol?: string | null; subscribedSymbols?: Set<string> };
+    return tcClient !== exceptClient && (tcClient.activeSymbol === symbol || tcClient.subscribedSymbols?.has(symbol) === true);
+  });
+}
+
 export function initWebSocketServer(server: Server): void {
   const wssIntelligence = new WebSocketServer({ noServer: true });
   const wssMarketData = new WebSocketServer({ noServer: true });
@@ -85,7 +102,7 @@ export function initWebSocketServer(server: Server): void {
       // Mark alive for heartbeat tracking and initialize default topics and symbol subscription
       const tc = ws as WebSocket & { isAlive: boolean; topics: Set<string>; activeSymbol: string | null; subscribedSymbols: Set<string>; channelName: string; isAuthenticated: boolean };
       tc.isAlive = true;
-      tc.topics = new Set(["suggestions", "alerts"]); // default low-frequency subscription
+      tc.topics = new Set<string>(); // default topics assigned only after auth succeeds
       tc.activeSymbol = null; // no symbol subscription until client specifies
       tc.subscribedSymbols = new Set<string>();
       tc.channelName = name;
@@ -103,6 +120,7 @@ export function initWebSocketServer(server: Server): void {
 
       if (isLocal || isRemoteAuthDisabled) {
         tc.isAuthenticated = true;
+        tc.topics.add("suggestions").add("alerts"); // default low-frequency subscription
       } else {
         // Enforce 5-second auth timeout
         authTimeoutId = setTimeout(() => {
@@ -212,7 +230,8 @@ export function initWebSocketServer(server: Server): void {
               }
               
               tc.isAuthenticated = true;
-              
+              tc.topics.add("suggestions").add("alerts"); // default low-frequency subscription
+
               // Success - reset rate limit tracker
               authAttempts.delete(normalizedIp);
               
@@ -255,18 +274,12 @@ export function initWebSocketServer(server: Server): void {
             tc.topics.delete(topic);
             logger.debug({ topic, channel: tc.channelName }, "Client unsubscribed from topic");
           } else if (clientEvent.event === "unsubscribe_symbol") {
-            const symbol = typeof clientEvent.data.symbol === "string" ? clientEvent.data.symbol.trim() : "";
+            const symbol = normalizeSymbol(clientEvent.data.symbol);
             if (symbol) {
               if (tc.activeSymbol === symbol) tc.activeSymbol = null;
               tc.subscribedSymbols.delete(symbol);
 
-              const allClients = wssInstances.reduce((acc, w) => acc.concat(Array.from(w.clients)), [] as WebSocket[]);
-              const otherSubscribed = allClients.some((client) => {
-                const tcClient = client as WebSocket & { activeSymbol?: string | null; subscribedSymbols?: Set<string> };
-                return tcClient !== ws && (tcClient.activeSymbol === symbol || tcClient.subscribedSymbols?.has(symbol));
-              });
-
-              if (!otherSubscribed) {
+              if (!isSymbolStillNeeded(symbol, ws)) {
                 import("../market_data/monitored_symbols").then(({ removeManualMonitoredSymbol }) => {
                   void removeManualMonitoredSymbol(symbol).catch(() => {});
                 }).catch(() => {});
@@ -274,9 +287,9 @@ export function initWebSocketServer(server: Server): void {
             }
             logger.debug({ symbol, channel: tc.channelName }, "Client unsubscribed from symbol");
           } else if (clientEvent.event === "subscribe_symbol") {
-            const symbol = clientEvent.data.symbol;
+            const symbol = normalizeSymbol(clientEvent.data.symbol);
             const oldSymbol = tc.activeSymbol;
-            tc.activeSymbol = symbol;
+            tc.activeSymbol = symbol || null;
             logger.debug({ symbol, channel: tc.channelName }, "Client subscribed to symbol");
             // Also automatically subscribe to "ticks" topic when symbol is specified
             tc.topics.add("ticks");
@@ -287,15 +300,9 @@ export function initWebSocketServer(server: Server): void {
               }).catch(() => {});
             }
 
-            if (oldSymbol && oldSymbol !== symbol) {
+            if (oldSymbol && oldSymbol !== symbol && !tc.subscribedSymbols.has(oldSymbol)) {
               // Clean up old activeSymbol monitoring if no other client is currently subscribing to it
-              const allClients = wssInstances.reduce((acc, w) => acc.concat(Array.from(w.clients)), [] as WebSocket[]);
-              const otherSubscribed = allClients.some((client) => {
-                const tcClient = client as WebSocket & { activeSymbol?: string | null };
-                return tcClient !== ws && tcClient.activeSymbol === oldSymbol;
-              });
-
-              if (!otherSubscribed) {
+              if (!isSymbolStillNeeded(oldSymbol, ws)) {
                 import("../market_data/monitored_symbols").then(({ removeManualMonitoredSymbol }) => {
                   void removeManualMonitoredSymbol(oldSymbol).catch(() => {});
                 }).catch(() => {});
@@ -303,15 +310,14 @@ export function initWebSocketServer(server: Server): void {
             }
           } else if (clientEvent.event === "subscribe_symbols" || clientEvent.event === "subscribe_watchlist") {
             const symbols = Array.isArray(clientEvent.data.symbols) ? clientEvent.data.symbols : [];
-            symbols.forEach((sym: string) => {
-              if (sym && typeof sym === "string") tc.subscribedSymbols.add(sym.trim());
-            });
+            const normalized = symbols.map((sym: unknown) => normalizeSymbol(sym)).filter((sym: string) => sym.length > 0);
+            normalized.forEach((sym: string) => tc.subscribedSymbols.add(sym));
             tc.topics.add("ticks");
-            logger.debug({ count: symbols.length, channel: tc.channelName }, "Client subscribed to symbol batch/watchlist");
+            logger.debug({ count: normalized.length, channel: tc.channelName }, "Client subscribed to symbol batch/watchlist");
 
-            if (symbols.length > 0) {
+            if (normalized.length > 0) {
               import("../market_data/monitored_symbols").then(({ addManualMonitoredSymbols }) => {
-                void addManualMonitoredSymbols(symbols).catch(() => {});
+                void addManualMonitoredSymbols(normalized).catch(() => {});
               }).catch(() => {});
             }
           }
@@ -331,13 +337,7 @@ export function initWebSocketServer(server: Server): void {
         const oldSymbol = tc.activeSymbol;
         if (oldSymbol) {
           // Clean up old activeSymbol monitoring if no other client is currently subscribing to it
-          const allClients = wssInstances.reduce((acc, w) => acc.concat(Array.from(w.clients)), [] as WebSocket[]);
-          const otherSubscribed = allClients.some((client) => {
-            const tcClient = client as WebSocket & { activeSymbol?: string | null };
-            return tcClient !== ws && tcClient.activeSymbol === oldSymbol;
-          });
-
-          if (!otherSubscribed) {
+          if (!isSymbolStillNeeded(oldSymbol, ws)) {
             import("../market_data/monitored_symbols").then(({ removeManualMonitoredSymbol }) => {
               void removeManualMonitoredSymbol(oldSymbol).catch(() => {});
             }).catch(() => {});
@@ -395,8 +395,8 @@ let broadcastFn = (event: ServerEvent, topic: string = "suggestions"): void => {
     
     wssInstances.forEach((wss) => {
       wss.clients.forEach((client) => {
-        const tc = client as WebSocket & { topics?: Set<string>; activeSymbol?: string | null; channelName?: string; subscribedSymbols?: Set<string> };
-        if (tc.readyState === WebSocket.OPEN) {
+        const tc = client as WebSocket & { topics?: Set<string>; activeSymbol?: string | null; channelName?: string; subscribedSymbols?: Set<string>; isAuthenticated?: boolean };
+        if (tc.readyState === WebSocket.OPEN && tc.isAuthenticated) {
           // Enforce channel routing
           if (isTickEvent && tc.channelName === "intelligence") return;
           if (!isTickEvent && tc.channelName === "market-data" && topic !== "monitoring") return;
@@ -406,8 +406,9 @@ let broadcastFn = (event: ServerEvent, topic: string = "suggestions"): void => {
             // explicitly requested; analysis events remain topic based.
             // MEDIUM FIX (Issue #15): Enhanced tick filtering with validation
             if (isTickEvent && Array.isArray(event.data)) {
-              const requested = new Set<string>(tc.subscribedSymbols ?? []);
-              if (tc.activeSymbol) requested.add(tc.activeSymbol);
+              const requested = new Set<string>();
+              tc.subscribedSymbols?.forEach((s) => requested.add(s.toUpperCase()));
+              if (tc.activeSymbol) requested.add(tc.activeSymbol.toUpperCase());
               if (requested.size === 0) return;
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               const ticks = (event.data as any[]).filter((tick) => {
@@ -415,13 +416,13 @@ let broadcastFn = (event: ServerEvent, topic: string = "suggestions"): void => {
                 if (!tick || (typeof tick !== 'object' && !Array.isArray(tick))) {
                   return false;
                 }
-                
+
                 const symbol = Array.isArray(tick) ? tick[0] : tick.symbol;
-                
+
                 // MEDIUM FIX (Issue #15): Validate symbol is non-empty string
-                return typeof symbol === "string" && 
-                       symbol.length > 0 && 
-                       requested.has(symbol);
+                return typeof symbol === "string" &&
+                       symbol.length > 0 &&
+                       requested.has(symbol.toUpperCase());
               });
               if (ticks.length === 0) return;
               client.send(packr.pack({ ...event, data: ticks }));

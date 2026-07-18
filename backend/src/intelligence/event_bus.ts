@@ -8,8 +8,14 @@ type Handler<K extends EventName> = (payload: InternalEvents[K]) => void | Promi
 
 class InternalEventBus {
   private readonly emitter = new EventEmitter({ captureRejections: true });
+  // Per-event map from the caller's handler to the wrapper we registered.
+  // Keyed by event first: the SAME handler reference can legitimately be
+  // subscribed to multiple events (or the same event twice). A single
+  // WeakMap<handler, wrapper> collapsed all of those to one wrapper, so the
+  // earlier unsubscribe() calls detached the wrong wrapper and silently leaked
+  // listeners. A per-event WeakMap keeps every (event, handler) wrapper distinct.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private readonly handlerMap = new WeakMap<(...args: any[]) => any, (...args: any[]) => void>();
+  private readonly handlerMaps = new Map<EventName, WeakMap<(...args: any[]) => any, (...args: any[]) => void>>();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private errorHandlers: Set<(...args: any[]) => void> = new Set();
 
@@ -27,16 +33,25 @@ class InternalEventBus {
         this.emitter.emit("error", err);
       });
     };
-    
-    // Store mapping for proper cleanup
-    this.handlerMap.set(handler, wrapped);
+
+    // Store mapping per event for correct cleanup even when one handler
+    // reference is bound to several events.
+    let map = this.handlerMaps.get(event);
+    if (!map) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      map = new WeakMap<(...args: any[]) => any, (...args: any[]) => void>();
+      this.handlerMaps.set(event, map);
+    }
+    map.set(handler, wrapped);
     this.emitter.on(event, wrapped);
-    
+
+    let detached = false;
     return () => {
-      const wrappedHandler = this.handlerMap.get(handler);
-      if (wrappedHandler) {
-        this.emitter.off(event, wrappedHandler as any);
-      }
+      // Guard against double-unsubscribe detaching a later re-subscription.
+      if (detached) return;
+      detached = true;
+      this.emitter.off(event, wrapped as any);
+      this.handlerMaps.get(event)?.delete(handler);
     };
   }
 

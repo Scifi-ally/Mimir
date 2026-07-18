@@ -14,12 +14,20 @@ import { resetDivergenceCache } from "../analysis/divergence_engine";
 import { getISTDateStr } from "../lib/ist-time";
 
 const NSE_HOME_URL = "https://www.nseindia.com/";
+const NSE_WARMUP_URL = "https://www.nseindia.com/reports-indices-historical-index-data";
 const NSE_FIIDII_URL = "https://www.nseindia.com/api/fiidiiTradeReact";
+const NSE_REFERER = "https://www.nseindia.com/reports-indices-historical-index-data";
 
+// NSE returns 403 to bare requests. It fingerprints on a full Chrome header set
+// (sec-ch-ua / Sec-Fetch-*) AND requires warmed cookies from a real page visit.
+// These headers replicate a genuine Chrome 124 navigation → API-fetch sequence.
 const BROWSER_HEADERS = {
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
   "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
   "Accept-Language": "en-US,en;q=0.9",
+  "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+  "sec-ch-ua-mobile": "?0",
+  "sec-ch-ua-platform": '"Windows"',
 };
 
 export interface FIIDIISnapshot {
@@ -37,19 +45,46 @@ async function doFetchFIIDIIData(): Promise<FIIDIISnapshot | null> {
   isFetching = true;
 
   try {
-    // 1. Get cookies from NSE homepage
-    const homeResp = await axios.get(NSE_HOME_URL, {
-      headers: BROWSER_HEADERS,
-      timeout: 10_000,
-    });
-    
-    const cookies = homeResp.headers["set-cookie"];
-    const cookieHeader = cookies ? cookies.map(c => c.split(";")[0]).join("; ") : "";
+    // 1. Warm cookies. NSE only issues the full cookie set (needed by the API)
+    // after a navigation to a real content page — the bare homepage is not
+    // always enough, so we hit the homepage then a reports page, accumulating
+    // Set-Cookie from both. Sending the wrong/partial cookie set → 403.
+    const jar = new Map<string, string>();
+    const collectCookies = (resp: { headers: Record<string, unknown> }) => {
+      const setCookie = resp.headers["set-cookie"] as string[] | undefined;
+      if (setCookie) {
+        for (const c of setCookie) {
+          const [pair] = c.split(";");
+          const eq = pair.indexOf("=");
+          if (eq > 0) jar.set(pair.slice(0, eq).trim(), pair.slice(eq + 1).trim());
+        }
+      }
+    };
 
-    // 2. Fetch FII/DII data
+    const homeResp = await axios.get(NSE_HOME_URL, { headers: BROWSER_HEADERS, timeout: 10_000 });
+    collectCookies(homeResp);
+    try {
+      const warmResp = await axios.get(NSE_WARMUP_URL, {
+        headers: { ...BROWSER_HEADERS, Referer: NSE_HOME_URL },
+        timeout: 10_000,
+      });
+      collectCookies(warmResp);
+    } catch {
+      // Warmup page is best-effort; homepage cookies alone sometimes suffice.
+    }
+
+    const cookieHeader = [...jar.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
+
+    // 2. Fetch FII/DII data as an XHR from the reports page (Referer + XHR
+    // marker are part of the fingerprint NSE checks).
     const apiHeaders = {
       ...BROWSER_HEADERS,
-      "Accept": "*/*",
+      "Accept": "application/json, text/plain, */*",
+      "Referer": NSE_REFERER,
+      "X-Requested-With": "XMLHttpRequest",
+      "Sec-Fetch-Site": "same-origin",
+      "Sec-Fetch-Mode": "cors",
+      "Sec-Fetch-Dest": "empty",
       "Cookie": cookieHeader,
     };
 
