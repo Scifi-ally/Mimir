@@ -45,7 +45,7 @@ function OdometerDigit({ digit }: { digit: string }) {
   return (
     <span className="inline-block relative overflow-hidden" style={{ width: "0.62em", height: "1.1em", verticalAlign: "bottom" }}>
       <motion.span
-        className="absolute left-0 tabular-nums"
+        className="absolute left-0 tabular-nums font-mono"
         style={{ y }}
       >
         {digit}
@@ -135,7 +135,7 @@ export const LivePrice = memo(function LivePrice({
     return (
       <span
         ref={containerRef}
-        className={`inline-flex tabular-nums transition-colors duration-100 ${
+        className={`inline-flex tabular-nums font-mono transition-colors duration-100 ${
           colorBySign
             ? value > 0
               ? "text-bull"
@@ -169,7 +169,7 @@ export const LivePrice = memo(function LivePrice({
   return (
     <span
       ref={containerRef}
-      className={`inline-flex tabular-nums transition-colors duration-100 ${signColor} ${className}`}
+      className={`inline-flex tabular-nums font-mono transition-colors duration-100 ${signColor} ${className}`}
     >
       {chars.map((char, i) => (
         <OdometerDigit key={`${i}-${char}`} digit={char} />
