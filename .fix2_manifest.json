@@ -1,0 +1,290 @@
+[
+ {
+  "source": "trace:long-path",
+  "severity": "high",
+  "file": "backend/src/analysis/signal_generator.ts",
+  "line": 372,
+  "summary": "patternScore takes technicalRanking.bullish_probability raw (a 0-1 probability) and feeds it into the 0-100-scale confidence formula, nullifying the 15%-weight pattern component in every AI-mode suggestion.",
+  "evidence": "Python returns a probability: technical_pattern_engine.py:380 `bullish_probability=round(bullish_prob, 4)` (0..1; main.py:481 uses `kr.bullish_probability * 50`), and intelligence_worker.ts:255 multiplies by 100 for display. signal_generator.ts:372 sets `patternScore = aiResult?.technicalRanking.bullish_probability ?? 0` and line 174 computes `patternScore * weights.technicalRanking` (0.15) alongside 0-100 components \u2014 max contribution 0.15 of 100 instead of 15. Line 581 stores `patternScore: Math.round(patternScore)` so the DB/UI value is always 0 or 1. Ranking and slot selection on the demo path systematically ignore the AI pattern model despite reporting 'AI Mode'."
+ },
+ {
+  "source": "trace:long-path",
+  "severity": "high",
+  "file": "backend/src/analysis/signal_generator.ts",
+  "line": 365,
+  "summary": "sentiment_score from the Python service is -1.0..1.0 but is consumed as a 0-100 score: the 10%-weight sentiment component is nullified and every AI-mode suggestion's stored reasoning is prefixed '[SENTIMENT: BEARISH]'.",
+  "evidence": "main.py:384 declares `sentiment_score: float = Field(default=0.0, description=\"News sentiment score -1.0 to 1.0\")`; signal_generator.ts:365 uses it directly (`?? 50`) and computeFinalConfidence adds `sentimentScore * 0.10` (\u00b10.1 points instead of up to 10). generator.ts:1040 then labels the inserted reasoning via `signal.sentimentScore > 60 ? \"BULLISH\" : signal.sentimentScore < 40 ? \"BEARISH\" : \"NEUTRAL\"` \u2014 a rounded -1..1 value is always < 40, so every suggestion generated while the AI service is healthy displays SENTIMENT: BEARISH, even bullish BUYs. Node's fallback (ai_client.ts:383) emits 0-100, masking the bug when the service is down."
+ },
+ {
+  "source": "trace:long-path",
+  "severity": "high",
+  "file": "backend/src/intelligence/orchestrator.ts",
+  "line": 213,
+  "summary": "Realtime path calls ingestSignal directly, which contains no downtrend+VIX>18 long-block \u2014 the regime gate exists only in the batch loop, so BUY suggestions can be inserted into exactly the regime the gate forbids.",
+  "evidence": "generator.ts:661 gates `longBlock && signal.signal === \"BUY\"` only inside generateSuggestionsFromWatchlist's loop; ingestSignal (generator.ts:781-1112) never reads marketState.regime/indiaVix for a long block. checkMarketInternals (market_internals.ts:69-107) only halts on VIX rate-of-change spikes (+8%/1h) and momentum-breadth \u2014 a steady VIX of 19 in TRENDING_DOWN passes. The intelligence_worker's regime handling is a soft aiScore-5 penalty, not a block. Manifest fix 1's vetted note explicitly called for duplicating the check in ingestSignal to protect this exported entry point; it was not applied."
+ },
+ {
+  "source": "trace:long-path",
+  "severity": "high",
+  "file": "backend/src/analysis/intraday_monitor.ts",
+  "line": 727,
+  "summary": "generateIntraDaySuggestion is a third suggestionsTable insert path that bypasses ingestSignal entirely: no F&O-ban, corporate-action, setup-demotion, market-internals, delivery-%, calibration, or regime gates; its duplicate protection is a no-op assessRisk check plus a 2s-TTL cache without the per-symbol lock.",
+  "evidence": "Wired live via the market-open monitoring cycle (intraday_monitor.ts:301, jobs.ts:150). It inserts status ACTIVE directly (line 727-768) after only assessRisk (line 717) \u2014 whose duplicate check `p.symbol === features?.symbol` (risk_engine.ts:274) is always false because features is omitted \u2014 and getActiveSymbolsSet (line 645, 2s cache, no withSymbolLock), so a banned/blacklisted/demoted symbol, or a duplicate racing the scheduler path, can become a live suggestion. Rows also get no expiresAt (expiry only via the 15:35 sweep) and no confidence value."
+ },
+ {
+  "source": "trace:long-path",
+  "severity": "medium",
+  "file": "backend/src/intelligence/orchestrator.ts",
+  "line": 179,
+  "summary": "this.suggestions.generate(opportunity) registers the suggestion in the in-memory ActiveSuggestion map BEFORE any ingest gate runs, so fully-rejected signals are still broadcast and Redis-cached as active intelligence suggestions for 20 minutes.",
+  "evidence": "Line 179 runs before the ingestSignal call at line 213; when ingestSignal returns a rejection (F&O ban, R:R, max positions, corporate action...) the entry remains in SuggestionGenerator.suggestions until its hardcoded 20-min expiry (suggestion_generator.ts:80), and is served to the UI every frontendFlushMs via marketIntelligenceUpdate (orchestrator.ts:349-375) and cached to Redis (line 388). In a demo, gate-rejected trades appear as live suggestions with a different id than any DB row."
+ },
+ {
+  "source": "trace:long-path",
+  "severity": "medium",
+  "file": "backend/src/routes/suggestions.ts",
+  "line": 341,
+  "summary": "POST /suggestions/:id/close writes status EXPIRED with no pnl/outcomePrice and no status guard \u2014 closing a PENDING row creates exactly the phantom calibration loss the MISSED split was built to eliminate, and the CLOSED status that calibration reads is written by nothing.",
+  "evidence": "The route sets `{ status: \"EXPIRED\", closedAt }` unconditionally (lines 339-342): a never-filled PENDING row manually closed becomes EXPIRED, which calibration_engine CLOSED_STATUSES (calibration_engine.ts:25) counts as a closed non-win \u2014 contradicting confidence_engine.ts:5-7's documented invariant that 'EXPIRED = filled trade that timed out; never-filled rows are MISSED'. A profitable ACTIVE position manually closed also books winRate-loss with pnl 0. Meanwhile \"CLOSED\" is in CLOSED_STATUSES and all status enums but no code path writes it to suggestionsTable (only paperPositionsTable uses it) \u2014 statuses read but never written."
+ },
+ {
+  "source": "trace:long-path",
+  "severity": "medium",
+  "file": "backend/src/routes/suggestions.ts",
+  "line": 309,
+  "summary": "POST /suggestions/:id/accept sets status ACTIVE unconditionally \u2014 it can resurrect an already-closed row (STOP_HIT/EXPIRED/MISSED) back into outcome polling, and promotes PENDING without a fill price, violating the honest-fill model.",
+  "evidence": "No WHERE clause on current status (lines 307-310): accepting a closed suggestion re-enters it into checkSuggestionOutcomes' ACTIVE set with stale closedAt/pnl, double-counting it in calibration once re-closed. For PENDING rows it skips the accuracy_tracker promotion path (accuracy_tracker.ts:91-95), so entryPrice remains the untouched planned entry and subsequent PnL is measured from a price the market never traded at."
+ },
+ {
+  "source": "trace:long-path",
+  "severity": "medium",
+  "file": "backend/src/trading/position_tracker.ts",
+  "line": 158,
+  "summary": "position_tracker updates highestPrice/lowestPrice (and stopLoss) via read-modify-write per tick, racing accuracy_tracker's deliberately-atomic GREATEST/LEAST watermark updates \u2014 the atomicity fix is defeated by this second writer.",
+  "evidence": "accuracy_tracker.ts:100-113 was fixed to use `GREATEST/LEAST(...)` specifically because 'concurrent checkers cannot clobber each other's watermarks the way read-modify-write did', but position_tracker reads the row (line 49), awaits, then writes absolute values `.set({ stopLoss, highestPrice: highestPrice.toFixed(2), lowestPrice })` (lines 158-165). An accuracy_tracker watermark or a /modify-stop update landing between read and write is silently regressed, corrupting MFE/MAE inputs to calibration and potentially reverting a user-modified stop."
+ },
+ {
+  "source": "trace:long-path",
+  "severity": "medium",
+  "file": "backend/src/analysis/confidence_engine.ts",
+  "line": 35,
+  "summary": "evaluateAutomationHealth still computes winRate = wins/trades with EXPIRED in the denominator, so routine end-of-day intraday sweeps (ACTIVE\u2192EXPIRED with pnl null) can still trip the winRate<40% auto-pause \u2014 the vetted fix prescribed decided-trades-only and was not applied.",
+  "evidence": "CLOSED_STATUSES (line 8) includes EXPIRED and line 35 divides wins by all rows. expireTodayIntraday (accuracy_tracker.ts:274-282) converts every open intraday position to EXPIRED at 15:35 daily with no pnl, so a normal day of e.g. 4 targets/3 stops/13 expired reads as 20% winRate; with small negative avgPnl monitorAutomationHealth (jobs.ts:404) pauses all generation. Manifest finding 19's vetted fix explicitly specified `decided = wins + STOP_HIT losses; winRate = wins/decided`; the applied fix only excluded MISSED."
+ },
+ {
+  "source": "trace:long-path",
+  "severity": "medium",
+  "file": "backend/src/suggestions/generator.ts",
+  "line": 175,
+  "summary": "SELL asymmetry: 'uptrend_short_block' is categorized in summarizeRejections but no gate anywhere emits it \u2014 there is no counterpart to the downtrend/VIX long-block, so SELL suggestions generate freely into TRENDING_UP regimes on the batch path.",
+  "evidence": "Grep across backend/src: the literal appears only in the summarize list (generator.ts:175). The batch loop blocks only `longBlock && signal.signal === \"BUY\"` (line 661); ingestSignal has neither direction's regime block. The only short-side regime protections are the pipeline's BULLISH_EXPANSION-only hard block (signal_generator.ts:701) and a realtime-only aiScore-5 soft penalty (intelligence_worker.ts:221-224) \u2014 neither mirrors the VIX-conditioned block, and the rejection bucket can never fire."
+ },
+ {
+  "source": "trace:long-path",
+  "severity": "low",
+  "file": "backend/src/suggestions/accuracy_tracker.ts",
+  "line": 160,
+  "summary": "PENDING promotion rewrites entryPrice to the gapped fill but leaves highestPrice/lowestPrice seeded at the old planned entry, so MFE/MAE stats record a phantom adverse excursion equal to the gap.",
+  "evidence": "Insert seeds watermarks with the planned entry (generator.ts:1046-1047, non-null), so accuracy_tracker's COALESCE fallback never applies; promotion (line 160) sets only status+entryPrice. For a BUY promoted at a gap-up fill, lowestPrice remains the lower planned entry, and calibration's advPct = (entry-low)/entry (calibration_engine.ts:139) books adverse movement that never occurred below the fill. Fix 17's applied rationale ('updating entryPrice at promotion also keeps MFE/MAE baselines consistent') is incorrect for non-null watermarks."
+ },
+ {
+  "source": "trace:long-path",
+  "severity": "low",
+  "file": "frontend/src/components/SuggestionsSlider.tsx",
+  "line": 60,
+  "summary": "User-REJECTED suggestions (never trades) fall into the 'Completed' trades bucket because completedTrades is defined by exclusion, rendering dismissed signals as completed trades with a blank outcome in the demo UI.",
+  "evidence": "Line 60 buckets everything not ACTIVE/PENDING/EXPIRED/MISSED as completed \u2014 that includes REJECTED (written by routes/suggestions.ts:325) and CLOSED. A rejected row renders with 'Outcome' from a null outcomePrice and P&L '\u2014' among genuine wins/losses (SuggestionCard lines 336-368), inflating the apparent completed-trade count."
+ },
+ {
+  "source": "trace:long-path",
+  "severity": "low",
+  "file": "backend/src/analysis/post_market.ts",
+  "line": 73,
+  "summary": "Daily performance stats charge slippage for every suggestion row including MISSED/PENDING (never filled) and brokerage for REJECTED rows, understating netPnlAfterCostsInr.",
+  "evidence": "Line 68-70 filters `executed` to exclude ACTIVE/PENDING/MISSED (but includes REJECTED, which never traded), while the slippage term at lines 73-77 sums `entry*qty*slippageBps` over ALL of today's rows unfiltered \u2014 never-filled MISSED and still-open PENDING/ACTIVE rows contribute costs to the day's report."
+ },
+ {
+  "source": "trace:long-path",
+  "severity": "low",
+  "file": "backend/db/src/schema/suggestions.ts",
+  "line": 53,
+  "summary": "suggestionsTable has no unique index, so ingestSignal's .onConflictDoNothing() is a no-op and cross-writer duplicate open suggestions remain possible (in-process lock does not cover intraday_monitor or multi-instance deployments).",
+  "evidence": "Schema defines only non-unique indexes (suggestions_status_idx at line 62); with no conflict target, generator.ts:1050's onConflictDoNothing can never suppress a duplicate, and the 'insert_failed' branch is unreachable via conflict. withSymbolLock serializes only generator-module callers; intraday_monitor.ts:727 inserts outside the lock using a 2s-stale symbol cache, so scheduler+monitor can insert two open rows for one symbol. Fix 33's note deliberately skipped the DB unique index \u2014 leaving this cross-path hole open."
+ },
+ {
+  "source": "trace:data-freshness",
+  "severity": "critical",
+  "file": "backend/src/analysis/multi_timeframe.ts",
+  "line": 130,
+  "summary": "Same-day candles are unobtainable: the code only calls Upstox's historical-candle endpoint (V2/V3), which serves data only up to the previous trading day; the separate /historical-candle/intraday API required for current-day data is never called anywhere in the repo. The new intraday-refresh logic (fix #8) can never deliver same-day data.",
+  "evidence": "upstox-client.ts:558,571 build only /historical-candle/ URLs; no /intraday/ call exists (repo grep). Upstox V3 docs: 'Use the Intraday Candle Data API V3 to retrieve data specific to the current trading day'; 60minute/240minute are V3-only (upstox-client.ts:582-586). During market hours the DB (written only via multi_timeframe.ts:174) never contains today's candles, so intradayStale (multi_timeframe.ts:121-130, requires lastCachedDateStr === toDateStr) is unreachable dead code; the lastCachedDateStr < toDateStr branch (:130-139) re-fetches [yesterday..today] every ~10 min getting nothing new -> tf1h/tf4h permanently end at yesterday 15:15 IST during live sessions. Same for stock_scanner.ts:1098 (toDateStr = getISTDateStr() = today): hourly confirmation and crossover1h/4h in intraday_scanner.ts:50-62 describe yesterday. Post-close: getLastCompletedTradingDayStr (ist-time.ts:18-32) flips at 15:30 but the historical endpoint publishes today's bar only after EOD processing (community-reported lag past 18:00) and nothing detects the returned series ending before toDate."
+ },
+ {
+  "source": "trace:data-freshness",
+  "severity": "high",
+  "file": "backend/src/analysis/multi_timeframe.ts",
+  "line": 232,
+  "summary": "fetchCandles DB-error fallback mutates the Upstox client's cached candle array in place via .reverse(); the second fallback within the 10-min TTL returns candles newest-first, so indicators are computed on a reversed series during DB outages.",
+  "evidence": "multi_timeframe.ts:231-232 does (candles as any[][]).reverse() on the exact array the client stores and returns by reference: upstox-client.ts:670 caches then returns the same array, :522-525 cache hit returns the stored ref (cache.ts:24 returns entry.value uncopied), disk path :543-546 likewise. Call 1 (DB error) reverses cached array A to oldest-first (correct output); call 2 within TTL for the same (instrument|interval|to|from) gets A already oldest-first, reverses again -> newest-first OHLCV fed to buildSnapshot/EMA/RSI. DB outage makes every fetchCandles call fall back repeatedly, hitting this on all instruments. stock_scanner.ts:1051/1109/1149 use the correct copy-first pattern [...candles].reverse()."
+ },
+ {
+  "source": "trace:data-freshness",
+  "severity": "high",
+  "file": "backend/src/analysis/multi_timeframe.ts",
+  "line": 258,
+  "summary": "Weekly timeframe is dead in analyzeMultiTimeframe: 180 days of daily aggregates to ~26 weekly bars, below the 50-bar minimum in analyzeTimeframe, so tfWeekly analysis is always null on the intraday_scanner and post_market_scanner paths.",
+  "evidence": "multi_timeframe.ts:258 fetches 'day',180 (~124 trading days) -> :261 aggregateDailyToWeekly ~26 bars -> :274 `if (candles.length < 50) return null`. Docstring :249 claims 'Weekly: last 5 years = ~260 candles'. Callers intraday_scanner.ts:50 and post_market_scanner.ts:315 therefore always get weeklyTrend 'RANGING'; the weekly BUY/SELL veto at :381-382/:388-389 never engages and weight 2.4 is redistributed. Related: scanStock requests 800 days but fetchDailyCandles silently clamps to 365 (stock_scanner.ts:1028) -> ~52 weekly bars vs the >=50 gate, so symbols with <50 distinct trading weeks in the past year silently lose weekly analysis."
+ },
+ {
+  "source": "trace:data-freshness",
+  "severity": "medium",
+  "file": "backend/src/analysis/stock_scanner.ts",
+  "line": 1212,
+  "summary": "aggregateHourlyTo4h chunks hourly candles by array index with no session awareness: most '4h' bars span the overnight gap (7 hourly bars/day into fixed chunks of 4), and the trailing partial chunk (the 1-3 newest hourly candles) is always dropped.",
+  "evidence": "stock_scanner.ts:1208-1229. From the second bucket onward bars combine e.g. day-N 13:15/14:15/15:15 with day-N+1 09:15 -> open/close bridge the overnight gap and high/low absorb it, distorting 4h EMA order, trend, and crossover4h. Loop guard `i + 3 < sorted.length` (:1212) drops the newest partial chunk so the latest 4h bar lags up to ~3h behind the freshest hourly data. Also inconsistent with analyzeMultiTimeframe, which uses real session-aligned Upstox 240minute bars (multi_timeframe.ts:257). No aggregateDailyToMonthly exists; aggregateDailyToWeekly's IST shift (technical.ts:1134-1139) is correct incl. year/week boundaries."
+ },
+ {
+  "source": "trace:data-freshness",
+  "severity": "medium",
+  "file": "backend/src/market_data/tick_feeder.ts",
+  "line": 80,
+  "summary": "Restart restore has no day boundary: yesterday's Redis-cached ticks (24h TTL) seed sub.volume (yesterday's cumulative day volume), openPrice/highPrice/lowPrice, and tick history as if they were today's; volume ?? sub.volume then stamps the stale cumulative onto every volume-less tick.",
+  "evidence": "tick_feeder.ts:73-90 restores volume/open/high/low from cached ticks with no IST-session check; redis_state.ts:99 keeps them 24h. Index/ltpc feeds and the HTTP LTP fallback always publish volume: null (connection_manager.ts:335, :499), so after a morning restart (and for the duration of any WS outage) tick_feeder.ts:123 carries yesterday's full-day volume into updateSectorFlowFromTick (sector_rotation.ts:70-73 computes priceDelta * volume -> inflated money flow) and getOHLC (tick_feeder.ts:302-312) blends yesterday's open/high/low with today's close. Steady-state the ?? fallback is sound (feed 1d volume is cumulative/monotonic, connection_manager.ts:324-327; nothing sums sub.volume deltas), so no in-session backwards/double-count."
+ },
+ {
+  "source": "trace:data-freshness",
+  "severity": "medium",
+  "file": "backend/src/analysis/stock_scanner.ts",
+  "line": 1470,
+  "summary": "180-candle real-4h threshold is only marginally reachable and silently flips to proxy-4h: today contributes zero hourly candles (historical endpoint excludes current day), and holiday-cluster 40-day windows yield ~25 trading days = 175 candles < 180.",
+  "evidence": "40 calendar days ~ 28.6 weekdays minus 3-4 NSE holidays (Oct-Nov cluster) = 25-26 trading days x 7 candles/day = 175-182, straddling the usedProxy4h threshold at stock_scanner.ts:1481 (also :1713); flip is silent except a debug log. Upstox V3 range cap itself is fine: hours unit allows 1 quarter per request (40 days OK; exceeding errors rather than truncates), but fetchHourlyCandles has no chunking so any future daysBack > ~90 would hard-fail."
+ },
+ {
+  "source": "trace:data-freshness",
+  "severity": "low",
+  "file": "backend/src/analysis/multi_timeframe.ts",
+  "line": 147,
+  "summary": "Head backfill never converges for instruments whose history starts more than 7 days after fromDate (new listings): the head range is re-fetched and re-upserted on every call forever; additionally head/tail checks cannot detect an interior cache hole, which once created is never repaired.",
+  "evidence": "multi_timeframe.ts:145-156: condition earliestCachedDateStr > fromDateStr+7 stays true permanently when the instrument's history simply begins later, causing one redundant API fetch + full head re-upsert per instrument per 10-min client-cache window. Interior gap: downtime longer than the request window triggers the empty-cache full fetch (:110-118) leaving a hole behind the new block; lastCached is fresh and earliestCached (in-window) passes the head check, so the gapped series is returned as if contiguous with no repair path."
+ },
+ {
+  "source": "trace:data-freshness",
+  "severity": "low",
+  "file": "backend/src/analysis/regime_detector.ts",
+  "line": 231,
+  "summary": "VIX latch verified NOT permanently stickable, but a VIX feed outage while latched force-clears the latch and unpauses on fabricated data: indiaVix null is forced to 14.2, which (default threshold 22) satisfies vix <= threshold*0.95 and drops the pause exactly when real VIX is unknown; a configured threshold <= ~14.9 inverts this and holds the pause on fabricated data until real VIX returns.",
+  "evidence": "regime_detector.ts:206 forces indiaVix=14.2 when null past the 5s grace; :231 then clears _vixPauseLatched using the fabricated value (14.2 <= 22*0.95=20.9) and Step 1 (:236) cannot re-pause, so suggestions resume mid-VIX-spike if the feed drops. Latch itself is sound: clear at :231 runs before the gates every cycle, FII relax (:330-340) also clears, module state resets on restart. tick_feeder init chain also verified non-deadlocking (tick_feeder.ts:58 .catch(()=>{}) recovers the chain)."
+ },
+ {
+  "source": "trace:display-truth",
+  "severity": "high",
+  "file": "frontend/src/components/PriceChart.tsx",
+  "line": 768,
+  "summary": "Day-interval live bar volume is floored at the PREVIOUS day's total: `Math.max(lastCandle.volume, cumVol || 0)` is applied even when the live bar opened a NEW day bucket (isOpenNewBar), so on the 1Y chart today's volume bar shows at least yesterday's full-day volume all session.",
+  "evidence": "PriceChart.tsx:767-771: `const barVol = activeTf.interval === \"day\" ? Math.max(lastCandle.volume, cumVol || 0) : ...`. The backend candles route (backend/src/routes/market_history.ts:98 \u2192 upstox-client.ts:511 fetchHistoricalCandles) hits only the Upstox historical endpoint (no intraday merge), so during market hours the newest day candle is yesterday's; PriceChart.tsx:717-721 then computes targetTime = yesterday+86400 = today, isOpenNewBar=true, and volumeRef.update (773-777) writes max(yesterdayTotal, todayCumulative) onto TODAY's bar. At 9:20 IST with yesterday=5M shares and today=200k, today's bar displays 5,000,000 \u2014 inflated until today's turnover naturally exceeds yesterday's. The Math.max floor is only correct in the isOpenNewBar=false case (updating the same bucket the API already returned). Fix: `isOpenNewBar ? (cumVol || 1) : Math.max(lastCandle.volume, cumVol || 0)`."
+ },
+ {
+  "source": "trace:display-truth",
+  "severity": "medium",
+  "file": "backend/src/routes/suggestions.ts",
+  "line": 341,
+  "summary": "Fix-vs-fix gap: POST /suggestions/:id/close stamps status EXPIRED unconditionally \u2014 including on never-filled PENDING rows (which the finding-0 MISSED split promised never count as losses) and even on already-terminal rows (a TARGET_1_HIT can be overwritten to EXPIRED, erasing a recorded win).",
+  "evidence": "suggestions.ts:336-342 updates `.set({ status: \"EXPIRED\", closedAt: new Date() })` with `.where(eq(id))` \u2014 no status predicate. calibration_engine.ts:25 CLOSED_STATUSES includes EXPIRED (not MISSED), so a manually-closed PENDING row re-enters winRate as a phantom loss \u2014 exactly the accounting the accuracy_tracker.ts:246/266 PENDING\u2192MISSED split (finding 0) and finding 5/19 fixes were built to prevent. It also deflates the win-rate strip the SuggestionsSlider header renders from /suggestions/accuracy (suggestions.ts:161-189, fed by getAllCalibrations). Mitigating: the current frontend has no api client method calling /close or /reject, so it's reachable only by direct API use. Fix: split like the expiry helpers \u2014 PENDING\u2192MISSED, ACTIVE\u2192EXPIRED, and add a `WHERE status IN ('PENDING','ACTIVE')` guard."
+ },
+ {
+  "source": "trace:display-truth",
+  "severity": "low",
+  "file": "frontend/src/components/SuggestionsSlider.tsx",
+  "line": 60,
+  "summary": "The negative filter for completedTrades lets REJECTED (dismissed, never traded) rows appear under the \"Completed (n)\" heading, inflating the completed-trade count with P&L rendered as \"\u2014\".",
+  "evidence": "SuggestionsSlider.tsx:60 `completedTrades = history.filter(s => s.status !== 'ACTIVE' && s.status !== 'PENDING' && s.status !== 'EXPIRED' && s.status !== 'MISSED')` \u2014 the backend status enum (backend/src/schemas/api.ts:41) also contains REJECTED (written by suggestions.ts:325 /suggestions/:id/reject) and CLOSED; the history endpoint (suggestions.ts:94-156) applies no status filter, so any REJECTED row lands in \"Completed\". A dismissed signal counted as a completed trade misstates the visible track record. Only manifests via direct API rejection today (no frontend caller); a positive allow-list (TARGET_1_HIT, TARGET_2_HIT, STOP_HIT, CLOSED) is the safe filter."
+ },
+ {
+  "source": "trace:ai-service-truth",
+  "severity": "high",
+  "file": "backend/src/analysis/signal_generator.ts",
+  "line": 372,
+  "summary": "patternScore (bullish_probability, range 0-1) is fed into the 0-100-scale weighted confidence formula, effectively zeroing the documented 15% pattern-quality component on every AI-contributing signal.",
+  "evidence": "signal_generator.ts:372 sets patternScore = aiResult?.technicalRanking.bullish_probability ?? 0 (Python returns sigmoid output 0-1, technical_pattern_engine.py:372,380). computeFinalConfidence (signal_generator.ts:174) computes patternScore * weights.technicalRanking (~0.15) alongside technicalScore/chronosScore/rsNormalized which are all 0-100 \u2014 max contribution ~0.25 of 100 points instead of up to 15. Also stored as Math.round(patternScore) \u2208 {0,1} at :581/:780 versus the interface's documented 0-100 scale at :88."
+ },
+ {
+  "source": "trace:ai-service-truth",
+  "severity": "medium",
+  "file": "backend/ai_service/sentiment.py",
+  "line": 106,
+  "summary": "Word-boundary regex fix regresses keyword recall: plural/inflected headline forms (tariffs, missiles, opec cuts, fed rate cuts, elections) no longer match, though the old substring code matched them.",
+  "evidence": "Empirically verified: patterns at sentiment.py:106-113 fail on 'us imposes new tariffs on steel' (kw 'tariff' :49), 'missiles fired across border' ('missile' :60), 'opec cuts output again' ('opec cut' :53), 'fed rate cuts expected' ('fed rate cut' :74), 'elections announced' ('election' :90). Pre-fix `kw in text_lower` matched all of these; headlines routinely pluralize, so geopolitical/political recall drops materially. The intended fix works ('war' no longer matches 'warns')."
+ },
+ {
+  "source": "trace:ai-service-truth",
+  "severity": "medium",
+  "file": "backend/ai_service/sentiment.py",
+  "line": 297,
+  "summary": "Degraded-mode keyword weighting only covers FinBERT load failure, not runtime inference failure: when the loaded pipeline throws, keyword scores are dampened to 40% and the wrong result is cached market-wide for 300s.",
+  "evidence": "If sentiment_pipeline(headlines) raises (sentiment.py:275-277), finbert_scores become zeros but sentiment_pipeline is not None, so :297-301 blends combined = 0*0.6 + geo_impact*0.4. Empirically verified: keyword-only score -0.3333 becomes -0.1333 (exactly 0.4x) with a raising pipeline. The dampened tuple is stored in _market_cache at :366, poisoning market_wide/india_political/world scores for all symbols for CACHE_TTL_SEC=300."
+ },
+ {
+  "source": "trace:ai-service-truth",
+  "severity": "medium",
+  "file": "backend/ai_service/sentiment.py",
+  "line": 359,
+  "summary": "Shared FinBERT pipeline is invoked concurrently from multiple asyncio.to_thread worker threads; HF fast tokenizers are not thread-safe under concurrent __call__ (RuntimeError 'Already borrowed'), which silently triggers the 40%-dampening/cache-poisoning path.",
+  "evidence": "sentiment.py:359-363 gathers three concurrent to_thread(_score_headlines_advanced,...) calls on the same global sentiment_pipeline, concurrently with per-symbol scoring at :409 across up to 4 batch candidates (main.py:534 Semaphore(4), :544-547). The tokenizer mutates padding/truncation state per call; concurrent use can raise 'Already borrowed', swallowed at :275 -> zeroed FinBERT scores blended at 60% weight and cached for 5 minutes (see companion finding at :297). Fix-vs-fix interaction between the to_thread offloading fix and the degraded-weights fix."
+ },
+ {
+  "source": "trace:ai-service-truth",
+  "severity": "medium",
+  "file": "backend/src/analysis/signal_generator.ts",
+  "line": 365,
+  "summary": "sentiment_score unit mismatch across files: Python returns [-1,1], signal_generator defaults to 50 and ai_client's native fallback produces 0-100; the confidence formula treats it as a 0-100 component so live AI sentiment contributes at most \u00b10.1 of 100.",
+  "evidence": "main.py:384 documents sentiment_score as -1.0..1.0 (symbol_specific_score, sentiment.py:427). signal_generator.ts:365 defaults to 50 (0-100 scale) and ai_client.ts:383 fallback sets Math.round(prob*100) (0-100). computeFinalConfidence :177 multiplies by weights.sentiment=0.10, so a maximally positive live sentiment adds 0.1 confidence points instead of ~10; stored sentimentScore (:584) flips between {-1..1} and 0-100 scales depending on source."
+ },
+ {
+  "source": "trace:ai-service-truth",
+  "severity": "low",
+  "file": "backend/src/analysis/signal_generator.ts",
+  "line": 58,
+  "summary": "Adaptive weights merge re-adds sentiment: 0.10 on top of learning_engine's 6-key weights normalized to sum 1.0, giving an effective weight sum of 1.10 once ADAPTIVE_WEIGHTS is persisted.",
+  "evidence": "learning_engine.ts:357-364 normalizes {tech, technicalRanking, chronos, rs, sector, regime} to sum exactly 1.0 (no sentiment key) and persists via JSON at :372; signal_generator.ts:58 spreads {...defaultWeights, ...JSON.parse(row.insights)} keeping sentiment: 0.10 from :44, so total confidence weights sum to 1.10. Currently masked by the sentiment scale bug (contribution ~nil); would inflate confidence up to ~10 points once that is fixed."
+ },
+ {
+  "source": "partial:finding-6",
+  "severity": "high",
+  "file": "",
+  "line": 0,
+  "summary": "The double-count is gone, but daysBack=40 lands in a dead zone: ~189-196 hourly candles pass the >=180 real-4h threshold yet aggregate to only 47-49 4h bars, below analyzeTimeframe's 50-bar minimum (multi_timeframe.ts:274). So in most scans tf4h analysis is null \u2014 the 4h timeframe silently vanishes from confluence, hourlyConfirm and crossover4h become structurally false (killing the +0.35 quality ",
+  "evidence": "stock_scanner.ts:1470 and :1708 \u2014 both call sites now use fetchHourlyCandles(stock.key, 40, ...); stock_scanner.ts:1481-1490 \u2014 usedProxy4h = hourlyCandles.length < 180, hasStrongHigherTfContext = !usedProxy4h && tf4hEffective.length >= 30 && tfWeeklyEffective.length >= 30, hasUsableHigherTf kept separate; stock_scanner.ts:49-51 \u2014 WEAK_HTF_CONTEXT_PENALTY now reachable; stock_scanner.ts:1620-1622 \u2014 62-point confluence cap now reachable; stock_scanner.ts:1648 \u2014 higherTfReliability 'fallback' now reachable; stock_scanner.ts:1091 \u2014 cache key includes daysBack so no stale-cache collision. Gap evidence: stock_scanner.ts:1208-1229 \u2014 aggregateHourlyTo4h yields floor(len/4) bars, so ~189-196 hourly candles (27-28 trading days x 7 candles from daysBack=40) give only 47-49 4h bars; multi_timeframe.ts:274 \u2014 analyzeTimeframe returns null below 50 bars, so tf4h analysis is null in the common case; multi_timeframe.ts:337-347,395-411 \u2014 null tf4h drops the 1.4 weight from confluence and forces hourlyConfirm=false and crossover4h=false; stock_scanner.ts:1357-1358 and 1392-1398 \u2014 hourlyConfirm bonus and intraday fallback setups structurally degraded while higherTfReliability still reports 'full'. || GAP: The double-count is gone, but daysBack=40 lands in a dead zone: ~189-196 hourly candles pass the >=180 real-4h threshold yet aggregate to only 47-49 4h bars, below analyzeTimeframe's 50-bar minimum (multi_timeframe.ts:274). So in most scans tf4h analysis is null \u2014 the 4h timeframe silently vanishes from confluence, hourlyConfirm and crossover4h become structurally false (killing the +0.35 quality bonus and most INTRADAY_MTF fallback setups) \u2014 while hasStrongHigherTfContext still claims 'full' reliability with no penalty/cap. Minimal fix: raise daysBack to ~55-60 so hourly count >= 200 (>= 50 4h bars), and additionally require the 4h analysis to be non-null (e.g. multiTf.analyses['4h'] != null, or tf4hEffective.length >= 50) before granting hasStrongHigherTfContext; apply the same to diagnoseScanNullReason."
+ },
+ {
+  "source": "partial:finding-13",
+  "severity": "high",
+  "file": "",
+  "line": 0,
+  "summary": "forecast_return_pct is provably unchanged for volatile stocks: rebasing prices by a/s and then recomputing the return against actual_last yields exactly the original smoothed-space return m/s\u22121, so the ranking bias through _compute_composite_score persists. Minimal fix: compute ret_pct = ((smoothed-space median[-1] \u2212 actual_last)/actual_last)*100 BEFORE the rebase block (move chronos_service.py:28",
+  "evidence": "chronos_service.py:251 captures actual_last pre-smoothing; :258-264 EMA-3 smoothing; :278-285 rebases forecasts by actual_last/smoothed_last; :287-290 recomputes ret_pct from the REBASED median \u2014 algebraically (m\u00b7a/s \u2212 a)/a = m/s \u2212 1, identical to the pre-fix smoothed-space return at :134 and :200. main.py:487 sigmoid therefore receives the same biased value as before. Price-space consistency of median/quantile forecasts (second half of impact) IS fixed by :278-285. || GAP: forecast_return_pct is provably unchanged for volatile stocks: rebasing prices by a/s and then recomputing the return against actual_last yields exactly the original smoothed-space return m/s\u22121, so the ranking bias through _compute_composite_score persists. Minimal fix: compute ret_pct = ((smoothed-space median[-1] \u2212 actual_last)/actual_last)*100 BEFORE the rebase block (move chronos_service.py:287-290 above :278, or snapshot median_forecast[-1] pre-rebase), keeping the price rebase for caller consistency."
+ },
+ {
+  "source": "partial:finding-17",
+  "severity": "high",
+  "file": "",
+  "line": 0,
+  "summary": "MFE/MAE baselines remain inconsistent with the modeled fill: generator.ts:1046-1047 seeds highestPrice/lowestPrice non-null with the PLANNED entry for PENDING rows, promotion (accuracy_tracker.ts:160) never resets them, and the COALESCE fallback (accuracy_tracker.ts:109-110) only applies when they are null. For a gapped BUY (planned 100, fill 105) lowestPrice stays 100, so calibration_engine.ts:13",
+  "evidence": "accuracy_tracker.ts:69-96 (touched check, fillPrice = max/min of entry vs price, gapped-past-target \u2192 MISSED with pnlInr null); accuracy_tracker.ts:155-161 (per-row promotion writes status ACTIVE + entryPrice = fillPrice.toFixed(2)); accuracy_tracker.ts:60,123-140 (PnL now computed from stored entryPrice = fill); calibration_engine.ts:25 and confidence_engine.ts:8 (MISSED excluded from winRate); schemas/api.ts:41, suggestionStatus.ts:19, getSuggestionHistoryStatus.ts:19, accuracy_tracker.ts:198 (MISSED in all status enums/casts) || GAP: MFE/MAE baselines remain inconsistent with the modeled fill: generator.ts:1046-1047 seeds highestPrice/lowestPrice non-null with the PLANNED entry for PENDING rows, promotion (accuracy_tracker.ts:160) never resets them, and the COALESCE fallback (accuracy_tracker.ts:109-110) only applies when they are null. For a gapped BUY (planned 100, fill 105) lowestPrice stays 100, so calibration_engine.ts:139-144 books a spurious ~4.8% adverse excursion on wins, inflating avgAdverseExcursionPct (symmetric for SELL via favPct). Minimal fix: promotion update should also set highestPrice and lowestPrice to promo.fillPrice.toFixed(2)."
+ },
+ {
+  "source": "partial:finding-19",
+  "severity": "high",
+  "file": "",
+  "line": 0,
+  "summary": "Filled scratch trades force-expired at close (ACTIVE\u2192EXPIRED, ~0 PnL, never hit stop) still count as non-wins, so the exact impact scenario (expiries + a couple small losers \u2192 winRate&lt;40 &amp; avgPnl&lt;0 \u2192 false auto-pause) remains reproducible. Minimal fix per manifest: in evaluateAutomationHealth compute losses = rows with status \"STOP_HIT\", decided = wins + losses, return no-pause if decide",
+  "evidence": "confidence_engine.ts:8 CLOSED_STATUSES still includes \"EXPIRED\"; confidence_engine.ts:35 winRate = wins/trades with EXPIRED in the denominator; confidence_engine.ts:36 null pnlInr counted as 0; accuracy_tracker.ts:274-282 ACTIVE intraday rows still become EXPIRED at close with no pnl set; jobs.ts:404-412 pause path unchanged. MISSED exclusion itself is correct: accuracy_tracker.ts:244-247, 264-272 (PENDING\u2192MISSED) and confidence_engine.ts:23 query filter. || GAP: Filled scratch trades force-expired at close (ACTIVE\u2192EXPIRED, ~0 PnL, never hit stop) still count as non-wins, so the exact impact scenario (expiries + a couple small losers \u2192 winRate&lt;40 &amp; avgPnl&lt;0 \u2192 false auto-pause) remains reproducible. Minimal fix per manifest: in evaluateAutomationHealth compute losses = rows with status \"STOP_HIT\", decided = wins + losses, return no-pause if decided &lt; 12, and winRate = wins/decided*100. Also: routes/suggestions.ts:341 sets EXPIRED on any row including PENDING, letting never-filled rows re-enter stats."
+ },
+ {
+  "source": "partial:finding-22",
+  "severity": "high",
+  "file": "",
+  "line": 0,
+  "summary": "In subscribe_symbol cleanup (websocket_server.ts:303-310), the helper excludes the requesting client but the requester's own subscribedSymbols is never consulted or cleared (unlike unsubscribe_symbol at :279-280). If a client has oldSymbol in its own watchlist (subscribe_watchlist) and switches activeSymbol away, removeManualMonitoredSymbol tears down a feed that same client still needs \u2014 same sil",
+  "evidence": "websocket_server.ts:59-65 shared isSymbolStillNeeded checks activeSymbol OR subscribedSymbols across all clients; used at :282 (unsubscribe_symbol), :305 (subscribe_symbol old-symbol cleanup), :340 (close handler). All symbol writes normalized via normalizeSymbol (:277, :290, :313), so comparisons are case-consistent. Original cross-client eviction defect no longer reproducible. || GAP: In subscribe_symbol cleanup (websocket_server.ts:303-310), the helper excludes the requesting client but the requester's own subscribedSymbols is never consulted or cleared (unlike unsubscribe_symbol at :279-280). If a client has oldSymbol in its own watchlist (subscribe_watchlist) and switches activeSymbol away, removeManualMonitoredSymbol tears down a feed that same client still needs \u2014 same silent-tick-stoppage impact, self-inflicted. Minimal fix: add `&& !tc.subscribedSymbols.has(oldSymbol)` to the condition at line 303/305."
+ }
+]

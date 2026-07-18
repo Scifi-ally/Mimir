@@ -1,0 +1,15 @@
+Backtesting 2058 instruments, 180d lookback, 8-bar hold, cost 0.05%/side
+
+┌─────────┬──────────────────────────────┬─────────┬──────┬────────┬──────────┬─────────┬────────────┬───────────────┐
+│ (index) │ setup                        │ signals │ wins │ losses │ timeouts │ noFills │ winRatePct │ expectancyPct │
+├─────────┼──────────────────────────────┼─────────┼──────┼────────┼──────────┼─────────┼────────────┼───────────────┤
+│ 0       │ 'MOMENTUM_CONTINUATION'      │ 4236    │ 1247 │ 1994   │ 823      │ 172     │ 38.5       │ -0.144        │
+│ 1       │ 'LIQUIDITY_SWEEP'            │ 2845    │ 779  │ 1689   │ 256      │ 121     │ 31.6       │ -0.372        │
+│ 2       │ 'BREAKOUT'                   │ 205     │ 20   │ 47     │ 126      │ 12      │ 29.9       │ -0.586        │
+│ 3       │ 'BEAR_MOMENTUM'              │ 546     │ 68   │ 241    │ 229      │ 8       │ 22         │ -0.681        │
+│ 4       │ 'BOLLINGER_SQUEEZE_BREAKOUT' │ 823     │ 125  │ 418    │ 246      │ 34      │ 23         │ -1.535        │
+│ 5       │ 'BREAKDOWN'                  │ 197     │ 5    │ 62     │ 126      │ 4       │ 7.5        │ -1.929        │
+└─────────┴──────────────────────────────┴─────────┴──────┴────────┴──────────┴─────────┴────────────┴───────────────┘
+
+winRatePct = wins/(wins+losses), ignores timeouts. expectancyPct = avg net return per filled trade.
+Negative expectancy setups are net losers under honest fills — candidates for removal.
