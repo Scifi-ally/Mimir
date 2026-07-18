@@ -1,5 +1,5 @@
 import React, { useMemo } from "react";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { calculateSRLevels, type SRLevel } from "@/lib/technicalAnalysis";
 import { useSymbolDataSelector } from "@/providers/MarketDataProvider";

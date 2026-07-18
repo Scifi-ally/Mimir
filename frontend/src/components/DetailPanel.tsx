@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useLayoutEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Flame, BarChart3, Cpu, ChevronLeft, Copy, Check } from "lucide-react";
 import { cn, fmtNum, fmtPct, calcPnLPct } from "@/lib/format";
 import { api } from "@/lib/api";
