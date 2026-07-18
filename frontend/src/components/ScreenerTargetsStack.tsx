@@ -104,7 +104,7 @@ export function ScreenerTargetsStack({ selectedSymbol, onSelect, headerLeft }: S
 
   const [activeWatchlist, setActiveWatchlist] = useState<number | null | "GLOBAL">(null);
 
-  const { data: targets = [] } = useQuery<ScreenerTarget[]>({
+  const { data: targets = [], error: targetsError } = useQuery<ScreenerTarget[]>({
     queryKey: ["screener_targets"],
     queryFn: async () => {
       const res = await fetch("/api/screener/targets");
@@ -113,7 +113,7 @@ export function ScreenerTargetsStack({ selectedSymbol, onSelect, headerLeft }: S
     },
   });
 
-  const { data: screeners = [] } = useQuery<ScreenerRule[]>({
+  const { data: screeners = [], error: screenersError } = useQuery<ScreenerRule[]>({
     queryKey: ["screener_rules"],
     queryFn: async () => {
       const res = await fetch("/api/screener");
@@ -122,7 +122,7 @@ export function ScreenerTargetsStack({ selectedSymbol, onSelect, headerLeft }: S
     },
   });
 
-  const { data: matches = [] } = useQuery<ScreenerMatch[]>({
+  const { data: matches = [], error: matchesError } = useQuery<ScreenerMatch[]>({
     queryKey: ["screener_matches"],
     queryFn: async () => {
       const res = await fetch("/api/screener/matches");
@@ -130,6 +130,8 @@ export function ScreenerTargetsStack({ selectedSymbol, onSelect, headerLeft }: S
       return res.json();
     },
   });
+
+  const loadError = targetsError || screenersError || matchesError;
 
   const deleteTargetMutation = useMutation({
     mutationFn: async (id: number) => {
@@ -217,7 +219,7 @@ export function ScreenerTargetsStack({ selectedSymbol, onSelect, headerLeft }: S
     });
   };
 
-  const renderTargetRow = (row: ScreenerTarget, title: string, _index: number) => {
+  const renderTargetRow = (row: ScreenerTarget, title: string) => {
     const selected = selectedSymbol === row.symbol;
     const badges = splitBadges(row.notes);
     return (
@@ -319,7 +321,7 @@ export function ScreenerTargetsStack({ selectedSymbol, onSelect, headerLeft }: S
 
     return (
       <Card className="@container flex h-full min-h-0 flex-col border-0 bg-transparent">
-        <CardHeader className="shrink-0 h-[48px] px-3 py-0 space-y-0 flex flex-row items-center justify-between gap-4 border-b border-border/10 overflow-hidden">
+        <CardHeader className="shrink-0 h-[48px] px-3 py-0 space-y-0 flex flex-row items-center justify-between gap-4 overflow-hidden">
           {headerLeft}
           <div className="flex items-center gap-3 justify-between w-full min-w-0">
             <div className="flex items-center gap-3 min-w-0">
@@ -406,7 +408,21 @@ export function ScreenerTargetsStack({ selectedSymbol, onSelect, headerLeft }: S
               </div>
             </motion.div>
 
-            {activeTargets.length === 0 ? (
+            {loadError ? (
+              <div className="flex flex-col items-center justify-center text-xs font-mono py-10 px-4 text-center gap-3">
+                <p className="text-bear font-bold">Couldn't load watchlists</p>
+                <button
+                  onClick={() => {
+                    void queryClient.invalidateQueries({ queryKey: ["screener_targets"] });
+                    void queryClient.invalidateQueries({ queryKey: ["screener_rules"] });
+                    void queryClient.invalidateQueries({ queryKey: ["screener_matches"] });
+                  }}
+                  className="rounded-lg bg-secondary/30 px-3 py-2 text-[11px] font-bold text-foreground transition-colors hover:bg-secondary/50"
+                >
+                  Try Again
+                </button>
+              </div>
+            ) : activeTargets.length === 0 ? (
               <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col items-center justify-center text-xs text-foreground/50 font-mono py-10 px-4 text-center">
                 <Target className="h-8 w-8 mb-2 opacity-20" />
                 <p>This watchlist is empty.</p>
@@ -429,7 +445,7 @@ export function ScreenerTargetsStack({ selectedSymbol, onSelect, headerLeft }: S
                   <div className="flex flex-col gap-2.5">
                     <div className="px-1 text-[11px] font-bold uppercase tracking-widest text-muted-foreground">Auto matches</div>
                     <div className="grid grid-cols-[repeat(auto-fit,minmax(310px,1fr))] gap-3">
-                      {autoTargets.map((row, index) => renderTargetRow(row, title, index))}
+                      {autoTargets.map((row) => renderTargetRow(row, title))}
                     </div>
                   </div>
                 )}
@@ -437,7 +453,7 @@ export function ScreenerTargetsStack({ selectedSymbol, onSelect, headerLeft }: S
                   <div className="flex flex-col gap-2.5">
                     <div className="px-1 text-[11px] font-bold uppercase tracking-widest text-muted-foreground">Manual stocks</div>
                     <div className="grid grid-cols-[repeat(auto-fit,minmax(310px,1fr))] gap-3">
-                      {manualTargets.map((row, index) => renderTargetRow(row, title, index))}
+                      {manualTargets.map((row) => renderTargetRow(row, title))}
                     </div>
                   </div>
                 )}
@@ -472,7 +488,7 @@ export function ScreenerTargetsStack({ selectedSymbol, onSelect, headerLeft }: S
   if (customWatchlists.length === 0) {
     return (
       <Card className="@container flex h-full min-h-0 flex-col border-0 bg-transparent">
-        <CardHeader className="shrink-0 h-[48px] px-3 py-0 space-y-0 flex flex-row items-center justify-between gap-4 border-b border-border/10 overflow-hidden">
+        <CardHeader className="shrink-0 h-[48px] px-3 py-0 space-y-0 flex flex-row items-center justify-between gap-4 overflow-hidden">
           {headerLeft}
         </CardHeader>
         <div className="flex-1 flex items-center justify-center p-6">
@@ -486,7 +502,7 @@ export function ScreenerTargetsStack({ selectedSymbol, onSelect, headerLeft }: S
 
   return (
     <Card className="@container flex h-full min-h-0 flex-col border-0 bg-transparent">
-      <CardHeader className="shrink-0 h-[48px] px-3 py-0 space-y-0 flex flex-row items-center justify-between gap-4 border-b border-border/10 overflow-hidden">
+      <CardHeader className="shrink-0 h-[48px] px-3 py-0 space-y-0 flex flex-row items-center justify-between gap-4 overflow-hidden">
         {headerLeft}
         <div className="flex items-center justify-between gap-3 w-full min-w-0">
           <div className="flex items-center gap-3 min-w-0">

@@ -1,5 +1,6 @@
 import { useEffect, useState, memo } from "react";
 import { AnimatePresence, motion } from "framer-motion";
+import { SPRING_GENTLE } from "@/lib/motion";
 
 interface ScanClockPanelProps {
   scanning?: boolean;
@@ -18,7 +19,7 @@ const SingleDigit = memo(function SingleDigit({ char }: { char: string }) {
           initial={{ y: "100%" }}
           animate={{ y: "0%" }}
           exit={{ y: "-100%" }}
-          transition={{ type: "spring", stiffness: 200, damping: 25 }}
+          transition={SPRING_GENTLE}
           className="absolute inset-0 flex items-center justify-center text-7xl sm:text-8xl md:text-9xl font-mono font-black text-foreground tabular-nums select-none"
         >
           {char}

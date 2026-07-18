@@ -34,28 +34,18 @@ export const SupportResistancePanel = React.memo(function SupportResistancePanel
     return calculateSRLevels(candlesQuery.data.candles, lastClose);
   }, [candlesQuery.data?.candles]);
 
-  // Map levels array or adjust if currentPrice is drastically outside daily candle range
+  // Map levels array to labeled pivot levels (real computed values only)
   const levels = useMemo(() => {
     if (!baseLevels || !Array.isArray(baseLevels)) return null;
-    
+
     const findByLabel = (lbl: string): SRLevel | undefined => baseLevels.find(l => l.label === lbl);
-    const r1 = findByLabel("R1");
-    const r2 = findByLabel("R2");
-    const s1 = findByLabel("S1");
-    const s2 = findByLabel("S2");
-
-    if (currentPrice && r2 && s2 && (currentPrice > r2.price * 1.01 || currentPrice < s2.price * 0.99)) {
-      const step = currentPrice * 0.01;
-      return {
-        r1: { price: currentPrice + step, type: "resistance" as const, strength: 7, label: "R1", sources: ["Dynamic R1"] },
-        r2: { price: currentPrice + step * 2, type: "resistance" as const, strength: 8, label: "R2", sources: ["Dynamic R2"] },
-        s1: { price: currentPrice - step, type: "support" as const, strength: 7, label: "S1", sources: ["Dynamic S1"] },
-        s2: { price: currentPrice - step * 2, type: "support" as const, strength: 8, label: "S2", sources: ["Dynamic S2"] },
-      };
-    }
-
-    return { r1, r2, s1, s2 };
-  }, [baseLevels, currentPrice]);
+    return {
+      r1: findByLabel("R1"),
+      r2: findByLabel("R2"),
+      s1: findByLabel("S1"),
+      s2: findByLabel("S2"),
+    };
+  }, [baseLevels]);
 
   if (!selectedSymbol) {
     return (

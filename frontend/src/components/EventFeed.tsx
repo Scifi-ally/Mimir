@@ -1,7 +1,8 @@
 import { memo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Bell, Info, CheckCircle2, AlertTriangle, XCircle, Trash2 } from "lucide-react";
+import { Info, CheckCircle2, AlertTriangle, XCircle, Trash2 } from "lucide-react";
 import { useStore, type AppEvent } from "@/store/useStore";
+import { SPRING_SNAPPY } from "@/lib/motion";
 
 const typeConfig: Record<AppEvent["type"], { icon: typeof Info; color: string }> = {
   info:    { icon: Info,          color: "text-blue-400" },
@@ -27,30 +28,30 @@ function EventItem({ event }: { event: AppEvent }) {
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, height: 0, y: -8 }}
-      transition={{ duration: 0.18, ease: "easeOut" }}
-      className="flex items-start gap-3 py-3.5 first:pt-1 last:pb-1"
+      initial={{ opacity: 0, y: 6, scale: 0.98 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, height: 0, y: -4, scale: 0.96 }}
+      transition={SPRING_SNAPPY}
+      className="flex items-start gap-2.5 py-3 first:pt-0.5 last:pb-0.5"
     >
-      <div className={`shrink-0 mt-0.5 ${config.color}`}>
-        <Icon className="h-4 w-4 stroke-[2.2]" />
+      <div className={`shrink-0 mt-0.5 ${config.color} opacity-80`}>
+        <Icon className="h-3.5 w-3.5 stroke-[2]" />
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-baseline justify-between gap-2">
-          <span className="text-[13px] font-semibold text-foreground tracking-tight truncate">
+          <span className="text-[12px] font-semibold text-foreground/90 tracking-tight truncate leading-tight">
             {event.symbol && (
-              <span className="font-bold text-primary mr-1.5">{event.symbol}</span>
+              <span className="font-bold text-primary mr-1">{event.symbol}</span>
             )}
             {event.title}
           </span>
-          <span className="text-[11px] font-medium text-muted-foreground/70 shrink-0 tabular-nums">
+          <span className="text-[10px] font-medium text-muted-foreground/50 shrink-0 tabular-nums">
             {formatRelativeTime(event.timestamp)}
           </span>
         </div>
         {event.message && (
-          <p 
-            className="text-[12px] font-normal text-foreground/80 mt-1 leading-relaxed break-words line-clamp-3"
+          <p
+            className="text-[11px] text-foreground/60 mt-0.5 leading-snug break-words line-clamp-2"
             title={event.message}
           >
             {event.message}
@@ -68,39 +69,29 @@ export const EventFeed = memo(function EventFeed() {
   const clearEvents = useStore((s) => s.clearEvents);
 
   return (
-    <div className="flex flex-col w-full text-left" style={{ width: 340, maxHeight: 420 }}>
-      {/* Header */}
-      <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-border/30">
+    <div className="flex flex-col w-full text-left" style={{ width: 320, maxHeight: 400 }}>
+      <div className="shrink-0 flex items-center justify-between px-4 py-3">
         <div>
-          <h2 className="text-[15px] font-semibold text-foreground tracking-tight">Activity Feed</h2>
-          <p className="text-[11px] font-medium text-muted-foreground mt-0.5">
+          <h2 className="text-[13px] font-semibold text-foreground tracking-tight">Activity</h2>
+          <p className="text-[10px] text-muted-foreground/60 mt-0.5">
             {events.length} event{events.length !== 1 ? "s" : ""}
           </p>
         </div>
-        <div className="flex items-center gap-1">
-          {events.length > 0 && (
-            <button
-              onClick={clearEvents}
-              className="p-1.5 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-              title="Clear all events"
-            >
-              <Trash2 className="h-4 w-4" />
-            </button>
-          )}
-        </div>
+        {events.length > 0 && (
+          <button
+            onClick={clearEvents}
+            className="p-1.5 rounded-lg text-muted-foreground/40 hover:text-destructive hover:bg-destructive/10 transition-all duration-200"
+            title="Clear all events"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        )}
       </div>
 
-      {/* Event List without boxes */}
-      <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 py-2 divide-y divide-border/30" style={{ maxHeight: 360 }}>
+      <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 pb-3 space-y-0.5" style={{ maxHeight: 350 }}>
         {events.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12 text-center">
-            <div className="p-3 rounded-full bg-white/[0.03] mb-3">
-              <Bell className="h-6 w-6 text-muted-foreground/40" />
-            </div>
-            <p className="text-[13px] font-semibold text-muted-foreground">No activity yet</p>
-            <p className="text-[11px] font-medium text-muted-foreground/60 mt-1">
-              Events will appear here as the system runs
-            </p>
+            <p className="text-[11px] font-medium text-muted-foreground/50">No events yet</p>
           </div>
         ) : (
           <AnimatePresence initial={false}>

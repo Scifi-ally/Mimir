@@ -15,9 +15,26 @@ export function calculateSRLevels(
   const candidateLevels: SRLevel[] = [];
   if (!dailyCandles || dailyCandles.length < 2) return candidateLevels;
 
-  // Filter out today's incomplete candle if it exists (assuming today is last)
-  // For safety, just take the second to last as "prevDay" assuming real-time data
-  const prevDay = dailyCandles[dailyCandles.length - 2];
+  // Classic pivots use the PREVIOUS completed session's H/L/C. The last element
+  // is today's live (incomplete) bar only during market hours; after close (or in
+  // any caller that passes only completed candles) the last element is already a
+  // finished session. Blindly taking length-2 shifted every pivot/PDH/PDL by one
+  // session in that case. Decide by comparing the last candle's IST date to today:
+  // if it IS today, it's the live bar → use length-2; otherwise it's the last
+  // completed session → use length-1.
+  const istDate = (ts: string): string =>
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Kolkata",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date(ts));
+  const todayIST = istDate(new Date().toISOString());
+  const last = dailyCandles[dailyCandles.length - 1];
+  const lastIsToday = last?.ts ? istDate(last.ts) === todayIST : true;
+  const prevDay = lastIsToday
+    ? dailyCandles[dailyCandles.length - 2]
+    : dailyCandles[dailyCandles.length - 1];
   const H = prevDay.high;
   const L = prevDay.low;
   const C = prevDay.close;

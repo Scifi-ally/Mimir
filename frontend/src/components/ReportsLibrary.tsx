@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { api } from "@/lib/api";
+import { FADE_FAST, FADE_SLOW } from "@/lib/motion";
 
 interface ReportsLibraryProps {
   isOpen: boolean;
@@ -35,7 +36,7 @@ export function ReportsLibrary({ isOpen, onClose }: ReportsLibraryProps) {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
+            transition={FADE_FAST}
             className="fixed inset-0 z-[60] bg-background/80"
             onClick={onClose}
           />
@@ -45,7 +46,7 @@ export function ReportsLibrary({ isOpen, onClose }: ReportsLibraryProps) {
             initial={{ y: "100%", x: "-50%" }}
             animate={{ y: 0, x: "-50%" }}
             exit={{ y: "100%", x: "-50%" }}
-            transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
+            transition={FADE_SLOW}
             className="fixed left-1/2 bottom-0 z-[70] flex flex-col bg-background text-foreground overflow-hidden h-[86vh] w-full max-w-4xl rounded-t-3xl shadow-[0_-8px_40px_rgba(0,0,0,0.08)] dark:shadow-[0_-8px_40px_rgba(0,0,0,0.4)] border border-b-0 border-foreground/5 ring-0 outline-none"
           >
             {/* Header */}
@@ -79,7 +80,7 @@ export function ReportsLibrary({ isOpen, onClose }: ReportsLibraryProps) {
                 </div>
               ) : reports.length === 0 ? (
                 <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground">
-                  <p className="text-base font-semibold text-foreground">No reports available yet.</p>
+                  <p className="text-sm font-medium text-foreground/60">No reports generated yet</p>
                 </div>
               ) : (
                 <div className="flex flex-col">

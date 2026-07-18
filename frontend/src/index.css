@@ -1,10 +1,19 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
-@import "@fontsource/geist-mono";
+/* Geist Sans for proportional UI text (labels, buttons, headings, body) —
+   Apple-inspired design from Vercel. Geist Mono reserved for numeric/tabular
+   data (prices, P&L). On Apple devices, -apple-system gives native SF Pro. */
+@import "@fontsource/geist-sans/400.css";
+@import "@fontsource/geist-sans/500.css";
+@import "@fontsource/geist-sans/600.css";
+@import "@fontsource/geist-sans/700.css";
+@import "@fontsource/geist-mono/400.css";
+@import "@fontsource/geist-mono/500.css";
+@import "@fontsource/geist-mono/600.css";
 
 @theme {
-  --font-sans: "Geist Mono", ui-monospace, monospace;
-  --font-mono: "Geist Mono", ui-monospace, monospace;
+  --font-sans: "Geist Sans", -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", system-ui, sans-serif;
+  --font-mono: "Geist Mono", "SF Mono", ui-monospace, monospace;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   
@@ -104,21 +113,49 @@
   * {
     @apply border-border;
     box-sizing: border-box;
-    font-family: "Geist Mono", monospace !important;
   }
-  
+
   html,
   body,
   #root {
     height: 100%;
     overflow: hidden;
   }
-  
+
   body {
     margin: 0;
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground font-sans;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    /* Inter reads best with a hair of negative tracking at UI sizes. */
+    letter-spacing: -0.011em;
+    /* Enable contextual alternates + kerning for crisper proportional text. */
+    font-feature-settings: "cv11", "ss01", "kern";
+  }
+
+  /* Numeric data uses monospace with tabular, lining figures so live-updating
+     prices and P&L never shift width as digits change — a core "crafted" detail.
+     Apply .font-mono (or the .tnum utility) to any number that ticks. */
+  .font-mono,
+  code,
+  kbd,
+  samp,
+  pre {
+    font-family: var(--font-mono);
+    font-feature-settings: "tnum", "lnum", "zero";
+    letter-spacing: 0;
+  }
+
+  /* Utility: tabular figures without forcing the mono family (for sans numbers
+     that still need to not jitter, e.g. inline counts). */
+  .tnum {
+    font-variant-numeric: tabular-nums lining-nums;
+  }
+
+  /* Headings get slightly tighter tracking, the way SF Pro Display does at size. */
+  h1, h2, h3, h4 {
+    letter-spacing: -0.02em;
   }
 
   .scrollbar-none::-webkit-scrollbar {
@@ -153,10 +190,9 @@
 
 @layer components {
   .glass-panel {
-    background: rgba(10, 10, 10, 0.65);
-    backdrop-filter: blur(12px) saturate(160%);
-    -webkit-backdrop-filter: blur(12px) saturate(160%);
-    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+    background: rgba(10, 10, 10, 0.7);
+    backdrop-filter: blur(16px) saturate(140%);
+    -webkit-backdrop-filter: blur(16px) saturate(140%);
   }
 
 
@@ -213,15 +249,15 @@
   
   /* Rotators */
   button:hover .lucide-plus, button:hover .lucide-x {
-    transform: rotate(90deg) scale(1.1);
+    transform: rotate(90deg);
   }
   button:hover .lucide-moon, button:hover .lucide-key, button:hover .lucide-key-round {
-    transform: rotate(-15deg);
+    transform: rotate(-12deg);
   }
 
   /* Pop / Scale */
   button:hover .lucide-play, button:hover .lucide-target, button:hover .lucide-check-circle, button:hover .lucide-check-circle-2, button:hover .lucide-wallet {
-    transform: scale(1.15);
+    transform: scale(1.08);
   }
 
   /* Sparkles */
@@ -365,18 +401,18 @@ html {
 /* Breathe — subtle idle "alive" pulse */
 @keyframes breathe {
   0%, 100% { transform: scale(1); opacity: 1; }
-  50% { transform: scale(1.012); opacity: 0.95; }
+  50% { transform: scale(1.005); opacity: 0.97; }
 }
 
 /* Slide up with fade — content entry */
 @keyframes slide-up-fade {
-  from { transform: translateY(8px); opacity: 0; filter: blur(4px); }
+  from { transform: translateY(6px); opacity: 0; filter: blur(2px); }
   to { transform: translateY(0); opacity: 1; filter: blur(0px); }
 }
 
 /* Scale in — card/modal entry */
 @keyframes scale-in {
-  from { transform: scale(0.96); opacity: 0; filter: blur(6px); }
+  from { transform: scale(0.97); opacity: 0; filter: blur(3px); }
   to { transform: scale(1); opacity: 1; filter: blur(0px); }
 }
 
@@ -391,11 +427,11 @@ html {
 }
 
 .animate-slide-up-fade {
-  animation: slide-up-fade 0.5s var(--apple-ease) both;
+  animation: slide-up-fade 0.35s var(--apple-ease) both;
 }
 
 .animate-scale-in {
-  animation: scale-in 0.4s var(--apple-spring) both;
+  animation: scale-in 0.3s var(--apple-spring) both;
 }
 
 .animate-shimmer {
@@ -407,21 +443,19 @@ html {
 /* Apple-style hover interaction */
 .apple-hover {
   transition:
-    transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275),
-    box-shadow 0.4s ease-out,
-    background-color 0.3s ease,
-    opacity 0.2s ease;
+    transform 0.25s cubic-bezier(0.25, 0.46, 0.45, 0.94),
+    background-color 0.2s ease,
+    opacity 0.15s ease;
   will-change: transform;
 }
 
 .apple-hover:hover {
-  transform: scale(1.04) translateY(-1px);
-  box-shadow: 0 12px 30px -10px rgba(0, 0, 0, 0.5), 0 0 20px -5px rgba(255,255,255,0.05);
+  transform: scale(1.02);
 }
 
 .apple-hover:active {
-  transform: scale(0.98);
-  transition-duration: 0.1s;
+  transform: scale(0.97);
+  transition-duration: 0.08s;
 }
 
 /* Smooth color/background transitions */

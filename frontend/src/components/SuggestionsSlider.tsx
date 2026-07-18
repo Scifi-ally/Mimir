@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { X, Copy, Check } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn, fmtNum, calcPnLPct, toFixed } from '@/lib/format';
@@ -7,6 +7,7 @@ import { api } from '@/lib/api';
 import { useSymbolDataSelector } from '@/providers/MarketDataProvider';
 import { LivePrice } from '@/components/atoms/LivePrice';
 import { AnimatedNumber } from '@/components/atoms/AnimatedNumber';
+import { FADE_STANDARD, SPRING_GENTLE } from "@/lib/motion";
 
 
 
@@ -40,8 +41,15 @@ export function SuggestionsSlider({ isOpen, onClose, onSelectSymbol, activeSugge
   const { data: suggestionsData, isPending, error } = useQuery({
     queryKey: ['suggestions', 'history'],
     queryFn: () => api.historySuggestions(),
-    refetchInterval: isOpen ? 5000 : false,
+    refetchInterval: isOpen ? 30000 : false, // closed history changes rarely
     staleTime: 0,
+    enabled: isOpen,
+  });
+
+  const { data: accuracy } = useQuery({
+    queryKey: ['suggestions', 'accuracy'],
+    queryFn: () => api.suggestionsAccuracy(),
+    staleTime: 5 * 60_000,
     enabled: isOpen,
   });
 
@@ -49,48 +57,62 @@ export function SuggestionsSlider({ isOpen, onClose, onSelectSymbol, activeSugge
 
   const historySuggestions = suggestionsData?.data || [];
   const activeTrades = (activeSuggestions || []).filter(s => s.status === 'ACTIVE' || s.status === 'PENDING');
-  const expiredTrades = historySuggestions.filter((s: import("@/types/api").Suggestion) => s.status === 'EXPIRED');
-  const completedTrades = historySuggestions.filter((s: import("@/types/api").Suggestion) => s.status !== 'ACTIVE' && s.status !== 'EXPIRED');
+  const expiredTrades = historySuggestions.filter((s: import("@/types/api").Suggestion) => s.status === 'EXPIRED' || s.status === 'MISSED');
+  // Allow-list of terminal traded outcomes — REJECTED (dismissed, never traded) must not appear in any bucket
+  const completedTrades = historySuggestions.filter((s: import("@/types/api").Suggestion) => s.status === 'TARGET_1_HIT' || s.status === 'TARGET_2_HIT' || s.status === 'STOP_HIT' || s.status === 'CLOSED');
 
   return (
     <AnimatePresence>
       {isOpen && (
         <>
           {/* Backdrop */}
-          <motion.div 
+          <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="fixed inset-0 z-[60] bg-background/80"
+            transition={FADE_STANDARD}
+            className="fixed inset-0 z-[60] bg-background/70 backdrop-blur-sm"
             onClick={onClose}
           />
 
           {/* Modal Panel */}
-          <motion.div 
+          <motion.div
             initial={{ y: "100%", x: "-50%" }}
             animate={{ y: 0, x: "-50%" }}
             exit={{ y: "100%", x: "-50%" }}
-            transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
-            className="fixed left-1/2 bottom-0 z-[70] flex flex-col bg-background text-foreground overflow-hidden h-[86vh] w-full max-w-4xl rounded-t-3xl shadow-[0_-8px_40px_rgba(0,0,0,0.08)] dark:shadow-[0_-8px_40px_rgba(0,0,0,0.4)] border border-b-0 border-foreground/5 ring-0 outline-none"
+            transition={SPRING_GENTLE}
+            className="fixed left-1/2 bottom-0 z-[70] flex flex-col bg-background text-foreground overflow-hidden h-[86vh] w-full max-w-4xl rounded-t-3xl shadow-[0_-8px_40px_rgba(0,0,0,0.4)] ring-0 outline-none"
           >
             {/* Header */}
-            <div className="relative px-8 pr-12 pt-6 pb-4 flex flex-col sm:flex-row items-center justify-between gap-4 shrink-0 border-b border-border/10">
-              <h2 className="text-[10px] font-mono font-bold tracking-widest uppercase text-muted-foreground flex items-center gap-2">
-                Active Signals Generated
+            <div className="relative px-8 pr-12 pt-6 pb-4 flex flex-col sm:flex-row items-center justify-between gap-4 shrink-0">
+              <h2 className="text-[9px] font-mono font-bold tracking-[0.15em] uppercase text-muted-foreground/80">
+                Active Signals
               </h2>
 
-              {/* Tabs removed as requested */}
-
-              <button 
+              <button
                 onClick={onClose}
-                className="absolute right-6 top-6 z-10 p-2 rounded-full hover:bg-secondary/60 text-muted-foreground hover:text-foreground transition-all duration-200"
+                className="absolute right-6 top-6 z-10 p-2 rounded-full hover:bg-foreground/[0.06] text-muted-foreground/60 hover:text-foreground transition-colors duration-150"
               >
-                <X className="w-5 h-5" />
+                <X className="w-4.5 h-4.5" />
               </button>
             </div>
 
-            {/* Essential Stats Row removed as requested */}
+            {/* Realized track record — measured outcomes, not projections */}
+            {accuracy && accuracy.closedTrades >= 10 && accuracy.winRate != null && (
+              <div className="px-8 pb-3 shrink-0 flex flex-wrap items-center gap-x-6 gap-y-1 text-[11px] font-mono text-muted-foreground">
+                <span>
+                  <span className={cn("font-bold", accuracy.winRate >= 55 ? "text-bull" : accuracy.winRate >= 45 ? "text-amber-500" : "text-bear")}>{accuracy.winRate}%</span>
+                  {" "}win rate
+                </span>
+                <span>
+                  <span className={cn("font-bold", accuracy.totalPnlInr >= 0 ? "text-bull" : "text-bear")}>
+                    {accuracy.totalPnlInr >= 0 ? "+" : "-"}₹{fmtNum(Math.abs(accuracy.totalPnlInr))}
+                  </span>
+                  {" "}net P&L
+                </span>
+                <span>{accuracy.closedTrades} closed trades · last {accuracy.lookbackDays} days</span>
+              </div>
+            )}
 
             {/* Scrollable Content */}
             <div className="flex-1 overflow-y-auto p-8 flex flex-col gap-10">
@@ -107,16 +129,14 @@ export function SuggestionsSlider({ isOpen, onClose, onSelectSymbol, activeSugge
                   {error instanceof Error ? error.message : "Failed to load signals"}
                 </div>
               ) : activeTrades.length === 0 && completedTrades.length === 0 && expiredTrades.length === 0 ? (
-                <div className="flex flex-col items-center justify-center p-12 text-center text-muted-foreground gap-3">
-                  <p className="text-base font-semibold text-foreground mt-4">No signals active or generated right now.</p>
-                  <p className="text-xs mt-1">Intraday signals will appear here automatically when market scans trigger.</p>
+                <div className="flex flex-col items-center justify-center p-12 text-center text-muted-foreground">
+                  <p className="text-sm font-semibold text-foreground">No signals generated yet</p>
                 </div>
               ) : (
                 <>
                   {activeTrades.length === 0 && (
-                    <div className="flex flex-col items-center justify-center p-8 text-center gap-2">
-                      <p className="text-sm font-semibold text-foreground">0 Active BUY/SELL Signals Right Now</p>
-                      <p className="text-xs text-muted-foreground max-w-md">Our intraday AI scanner is actively monitoring the market for new setups. Signals will appear here when triggered.</p>
+                    <div className="flex flex-col items-center justify-center p-8 text-center">
+                      <p className="text-sm font-semibold text-foreground">No active signals — scanner monitoring</p>
                     </div>
                   )}
                   {activeTrades.length > 0 && (
@@ -126,12 +146,36 @@ export function SuggestionsSlider({ isOpen, onClose, onSelectSymbol, activeSugge
                           <h3 className="text-[10px] font-bold tracking-widest uppercase text-bull flex items-center gap-2">
                             Active Trades ({activeTrades.length})
                           </h3>
-                          <div className="grid border-l-2 border-border/10 pl-4 ml-1">
+                          <div className="grid pl-4 ml-1">
                             {activeTrades.map((s: import("@/types/api").Suggestion) => (
                               <SuggestionCard key={s.id} s={s} onSelectSymbol={onSelectSymbol} onClose={onClose} />
                             ))}
                           </div>
                         </div>
+                      </div>
+                    </div>
+                  )}
+                  {completedTrades.length > 0 && (
+                    <div className="flex flex-col gap-3 pl-2">
+                      <h3 className="text-[10px] font-bold tracking-widest uppercase text-muted-foreground flex items-center gap-2">
+                        Completed ({completedTrades.length})
+                      </h3>
+                      <div className="grid pl-4 ml-1">
+                        {completedTrades.map((s: import("@/types/api").Suggestion) => (
+                          <SuggestionCard key={s.id} s={s} onSelectSymbol={onSelectSymbol} onClose={onClose} />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {expiredTrades.length > 0 && (
+                    <div className="flex flex-col gap-3 pl-2">
+                      <h3 className="text-[10px] font-bold tracking-widest uppercase text-muted-foreground/60 flex items-center gap-2">
+                        Expired ({expiredTrades.length})
+                      </h3>
+                      <div className="grid pl-4 ml-1">
+                        {expiredTrades.map((s: import("@/types/api").Suggestion) => (
+                          <SuggestionCard key={s.id} s={s} onSelectSymbol={onSelectSymbol} onClose={onClose} />
+                        ))}
                       </div>
                     </div>
                   )}
@@ -159,21 +203,46 @@ function SuggestionCard({ s, onSelectSymbol, onClose }: {
   const currentPrice = isActive && ltp ? ltp : (s.currentPrice || s.outcomePrice);
 
   const pnlRaw = calcPnLPct(currentPrice, s.entryPrice);
-  const pnlFromCurrent = isActive && pnlRaw != null
+  // PENDING = entry never touched — no position exists, so never show a live P&L for it
+  const pnlFromCurrent = !isPending && isActive && pnlRaw != null
     ? s.direction === 'BUY' ? pnlRaw : -pnlRaw
     : null;
 
   let targetTimeStr = "N/A";
   if (isActive && currentPrice) {
-    const distanceToTargetPct = (Math.abs(currentPrice - s.target1) / currentPrice) * 100;
-    targetTimeStr = `${toFixed(distanceToTargetPct, 2)}%`;
+    // For unfilled signals the relevant distance is to ENTRY, not target
+    const refPrice = isPending ? s.entryPrice : s.target1;
+    const distancePct = (Math.abs(currentPrice - refPrice) / currentPrice) * 100;
+    targetTimeStr = `${toFixed(distancePct, 2)}%`;
   }
 
-  const expectedHold = s.expectedHoldMinutes != null
-    ? s.expectedHoldMinutes >= 60
-      ? `~${Math.floor(s.expectedHoldMinutes / 60)}h ${s.expectedHoldMinutes % 60}m`
-      : `~${s.expectedHoldMinutes}m`
-    : null;
+  const fmtMinutes = (m: number) =>
+    m >= 390 ? `~${Math.round(m / 390)}d` : m >= 60 ? `~${Math.floor(m / 60)}h ${m % 60 ? `${m % 60}m` : ""}`.trim() : `~${m}m`;
+
+  const expectedHold = s.expectedHoldMinutes != null ? fmtMinutes(s.expectedHoldMinutes) : null;
+
+  // Realized attainability for this setup type (from closed-trade calibration)
+  const stats = s.setupStats;
+  const medianToTarget = stats?.medianTimeToTargetMin != null ? fmtMinutes(stats.medianTimeToTargetMin) : null;
+
+  // Time remaining before the signal's time-stop; render must stay pure, so the
+  // clock lives in state and ticks via an interval instead of calling Date.now() inline
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!isActive || !s.expiresAt) return;
+    const id = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(id);
+  }, [isActive, s.expiresAt]);
+  let expiresIn: string | null = null;
+  if (isActive && s.expiresAt) {
+    const msLeft = new Date(s.expiresAt).getTime() - now;
+    if (msLeft > 0) {
+      const mins = Math.round(msLeft / 60_000);
+      expiresIn = mins >= 24 * 60 ? `${Math.round(mins / (24 * 60))}d` : mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`;
+    } else {
+      expiresIn = "expiring";
+    }
+  }
 
   return (
     <div
@@ -183,7 +252,7 @@ function SuggestionCard({ s, onSelectSymbol, onClose }: {
           onClose();
         }
       }}
-      className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 py-4 border-b border-border/5 hover:border-border/30 active:scale-[0.995] transition-all duration-200 cursor-pointer group"
+      className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 py-4 active:scale-[0.998] transition-all duration-150 ease-out cursor-pointer group hover:bg-foreground/[0.02] rounded-xl px-3 -mx-3"
     >
       <div className="flex items-start sm:items-center gap-4">
         {/* Status indicator pill */}
@@ -236,13 +305,38 @@ function SuggestionCard({ s, onSelectSymbol, onClose }: {
             {isActive && (
               <>
                 <span className="text-border/40">•</span>
-                <span className="flex items-center gap-1">
-                  <span className="text-foreground/40 text-[10px] uppercase tracking-wider">DIST</span>
+                <span className="flex items-center gap-1" title={isPending ? "Distance from current price to entry" : "Distance from current price to target"}>
+                  <span className="text-foreground/40 text-[10px] uppercase tracking-wider">{isPending ? "TO EN" : "DIST"}</span>
                   <span className="font-mono font-medium text-foreground/80">{targetTimeStr}</span>
                 </span>
               </>
             )}
+            {expiresIn && (
+              <>
+                <span className="text-border/40">•</span>
+                <span className="flex items-center gap-1" title="Time remaining before this signal's time-stop">
+                  <span className="text-foreground/40 text-[10px] uppercase tracking-wider">EXP</span>
+                  <span className={cn("font-mono font-medium", expiresIn === "expiring" ? "text-amber-500" : "text-foreground/80")}>{expiresIn}</span>
+                </span>
+              </>
+            )}
           </div>
+          {stats && (
+            <div className="flex items-center gap-2 mt-1.5" title={`Realized outcomes for ${s.setupType} over last 120 days (${stats.samples} closed trades)`}>
+              <span className={cn(
+                "text-[10px] font-bold px-1.5 py-0.5 rounded font-mono",
+                stats.winRate >= 60 ? "bg-bull/10 text-bull" : stats.winRate >= 45 ? "bg-amber-500/10 text-amber-500" : "bg-bear/10 text-bear"
+              )}>
+                {stats.winRate}% hit rate
+              </span>
+              {medianToTarget && (
+                <span className="text-[10px] font-mono text-muted-foreground">
+                  target typically reached in {medianToTarget}
+                </span>
+              )}
+              <span className="text-[10px] font-mono text-muted-foreground/50">n={stats.samples}</span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -284,7 +378,7 @@ function SuggestionCard({ s, onSelectSymbol, onClose }: {
         </div>
 
         {/* Copy Button */}
-        <div className="flex items-center border-l border-border/10 pl-4 ml-2">
+        <div className="flex items-center pl-4 ml-2">
           <CopyButton text={formatSuggestionText(s)} tooltip="Copy signal" />
         </div>
       </div>

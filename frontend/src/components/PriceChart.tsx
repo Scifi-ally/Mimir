@@ -16,6 +16,7 @@ import { Card, CardHeader, CardContent } from "@/components/mimir/card";
 import { api } from "@/lib/api";
 import { marketDataStore } from "@/providers/MarketDataProvider";
 import type { Candle, SymbolForecast, Suggestion } from "@/types/api";
+import { FADE_FAST, SPRING_SNAPPY } from "@/lib/motion";
 
 const TIMEFRAMES = [
   { label: "1D", days: 5, interval: "1minute" }, // 5 days to ensure we hit a trading session even on long weekends
@@ -75,13 +76,24 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
       if (i > 0 && Date.parse(c.ts) === Date.parse(sorted[i - 1]!.ts)) continue;
       
       if (!Number.isFinite(c.close) || c.close <= 0 || !Number.isFinite(c.open) || c.open <= 0) continue;
-      
+
+      // Clamp outlier wicks (bad exchange prints) to the body so one bad high/low can't blow up y-axis autoscale
+      const bodyHigh = Math.max(c.open, c.close);
+      const bodyLow = Math.min(c.open, c.close);
+      const hi = Number.isFinite(c.high) ? c.high : bodyHigh;
+      const lo = Number.isFinite(c.low) ? c.low : bodyLow;
+      if (hi <= 0 || lo <= 0 || hi > c.close * 1.5 || lo < c.close * 0.5) {
+        clean.push({ ...c, high: bodyHigh, low: bodyLow });
+        continue;
+      }
 
       clean.push(c);
     }
     return clean;
   }, [candleData?.candles]);
   const forecast = forecastData?.available ? forecastData : null;
+  // Backend sends isFallback on the forecast payload; frontend SymbolForecast type doesn't declare it yet.
+  const forecastIsFallback = Boolean((forecast as (SymbolForecast & { isFallback?: boolean }) | null)?.isFallback);
   const loading = isCandlesLoading;
   const error = isCandlesError ? "Unavailable" : null;
   
@@ -631,15 +643,17 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
     if (forecast && (!forecast.symbol || forecast.symbol === symbol) && forecast.forecastReturnPct !== undefined && chartMode === "forecast") {
       const targetPrice = basePrice * (1 + (forecast.forecastReturnPct || 0) / 100);
       const fReturn = forecast.forecastReturnPct || 0;
-      
+
+      if (isInRange(targetPrice)) {
         aiTargetLineRef.current = candleRef.current.createPriceLine({
           price: targetPrice,
           color: fReturn > 0 ? 'rgba(34, 197, 94, 0.8)' : fReturn < 0 ? 'rgba(239, 68, 68, 0.8)' : 'rgba(163, 163, 163, 0.8)',
           lineWidth: 2,
           lineStyle: 1, // Solid line to distinguish from dashed current price line
           axisLabelVisible: true,
-          title: `AI TGT (${fReturn > 0 ? '+' : ''}${fReturn.toFixed(1)}%)`,
+          title: `AI TGT (${fmtPct(fReturn, 1)})${forecastIsFallback ? " · HEURISTIC" : ""}`,
         });
+      }
     }
   }, [candles, suggestion, position, forecast, symbol, chartMode]);
 
@@ -676,7 +690,12 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
   useEffect(() => {
     if (candles.length === 0 || !symbol) return;
     let prevLtp: number | null = null;
-    
+    // Tick feed's `volume` is the cumulative DAILY total — track the per-bar delta
+    // (cumulative at bar open vs now), never write the day total into an intraday bar.
+    let barVolBase: number | null = null;
+    let barVolTime: number | null = null;
+    let lastCumVol: number | null = null;
+
     const unsub = marketDataStore.subscribe(symbol, () => {
       const data = marketDataStore.get(symbol);
       const tickLtp = data?.ltp;
@@ -685,30 +704,38 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
       const lastCandle = candles[candles.length - 1];
       if (!lastCandle || lastCandle.close <= 0) return;
 
-      // Ignore bad exchange ticks, spikes (>10% move in 1 tick), or ticks during symbol transition that distort chart scaling
-      if (Math.abs(tickLtp - lastCandle.close) / lastCandle.close > 0.10) return;
+      // Ignore bad exchange ticks/spikes (>10% move in 1 tick). Compare against the freshest
+      // known close (live bar if present) so a legit trending move never wedges the chart.
+      const refClose = liveBarRef.current?.close ?? lastCandle.close;
+      if (Math.abs(tickLtp - refClose) / refClose > 0.10) return;
       prevLtp = tickLtp;
 
       const lastCandleSec = Math.floor(Date.parse(lastCandle.ts) / 1000);
       const nowSec = Math.floor(Date.now() / 1000);
       const intervalSec = activeTf.interval === "1minute" ? 60 : activeTf.interval === "15minute" ? 900 : activeTf.interval === "60minute" ? 3600 : 86400;
-      
+
+      // Align to the historical candle grid (IST for daily) — never local midnight,
+      // which mismatches Upstox IST buckets and gaps/kills daily live updates.
       let targetTime = lastCandleSec;
-      if (activeTf.interval === "day") {
-        const lastDate = new Date(lastCandleSec * 1000).toDateString();
-        const nowDate = new Date().toDateString();
-        if (lastDate !== nowDate) {
-          const d = new Date();
-          d.setHours(0, 0, 0, 0);
-          targetTime = Math.floor(d.getTime() / 1000);
-        }
-      } else if (nowSec - lastCandleSec >= intervalSec) {
+      if (nowSec - lastCandleSec >= intervalSec) {
         targetTime = lastCandleSec + Math.floor((nowSec - lastCandleSec) / intervalSec) * intervalSec;
       }
       const time = targetTime as Time;
       const isOpenNewBar = targetTime > lastCandleSec;
-      
+
       if (!liveBarRef.current || liveBarRef.current.time !== time) {
+        // Flush previous live bar and fill any skipped empty buckets so no gap appears
+        const prev = liveBarRef.current;
+        if (prev && (prev.time as number) < targetTime) {
+          candleRef.current.update({ ...prev });
+          // Fill small intra-session gaps only; big jumps (overnight/weekend) left to the 60s refetch
+          const missed = (targetTime - (prev.time as number)) / intervalSec - 1;
+          if (missed > 0 && missed <= 10) {
+            for (let t = (prev.time as number) + intervalSec; t < targetTime; t += intervalSec) {
+              candleRef.current.update({ time: t as Time, open: prev.close, high: prev.close, low: prev.close, close: prev.close });
+            }
+          }
+        }
         const barOpen = isOpenNewBar ? tickLtp : lastCandle.open;
         liveBarRef.current = {
           time,
@@ -731,9 +758,26 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
         close: liveBarRef.current.close,
       });
 
+      const cumVol = Number.isFinite(data.volume) ? (data.volume as number) : null;
+      if (cumVol != null) {
+        // Reset the base at each new bar (or when the daily counter resets on a new session)
+        if (barVolTime !== targetTime || (lastCumVol != null && cumVol < lastCumVol)) {
+          barVolTime = targetTime;
+          barVolBase = isOpenNewBar ? cumVol : cumVol - lastCandle.volume;
+        }
+        lastCumVol = cumVol;
+      }
+      // A fresh day bucket starts from today's cumulative volume only — flooring it at the
+      // previous day's total (lastCandle.volume) is correct solely when updating that same bar.
+      const barVol = activeTf.interval === "day"
+        ? (isOpenNewBar ? (cumVol || 1) : Math.max(lastCandle.volume, cumVol || 0))
+        : cumVol != null && barVolBase != null
+          ? Math.max(cumVol - barVolBase, 1)
+          : (isOpenNewBar ? 1 : lastCandle.volume);
+
       volumeRef.current.update({
         time: liveBarRef.current.time,
-        value: isOpenNewBar ? (data.volume || 1) : Math.max(lastCandle.volume, data.volume || 0),
+        value: barVol,
         color: tickLtp >= liveBarRef.current.open ? "rgba(34,197,94,0.3)" : "rgba(239,68,68,0.3)",
       });
     });
@@ -752,7 +796,7 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
           {projMeta && (
             <span className="text-xs font-medium text-foreground/70">
               {forecast!.trend}{" "}
-              <strong className={(forecast!.forecastReturnPct ?? 0) >= 0 ? "text-bull" : "text-bear"}>
+              <strong className={`font-mono tabular-nums ${(forecast!.forecastReturnPct ?? 0) >= 0 ? "text-bull" : "text-bear"}`}>
                 {fmtPct(forecast!.forecastReturnPct ?? null)}
               </strong>
             </span>
@@ -778,7 +822,7 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
                     <motion.div
                       layoutId={`activeTimeframe-${chartId}`}
                       className="absolute inset-0 bg-foreground rounded-full"
-                      transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
+                      transition={SPRING_SNAPPY}
                     />
                   )}
                   <span className="relative z-10">{tf.label}</span>
@@ -828,7 +872,7 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
                 <motion.div
                   layoutId={`activeChartMode-${chartId}`}
                   className="absolute inset-0 bg-foreground rounded-full"
-                  transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
+                  transition={SPRING_SNAPPY}
                 />
               )}
               <span className="relative z-10">Price</span>
@@ -849,7 +893,7 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
                 <motion.div
                   layoutId={`activeChartMode-${chartId}`}
                   className="absolute inset-0 bg-foreground rounded-full"
-                  transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
+                  transition={SPRING_SNAPPY}
                 />
               )}
               <span className="relative z-10">Projection</span>
@@ -879,7 +923,10 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
             animate={{ opacity: 1, y: 0 }}
             className="absolute bottom-6 left-6 z-10 flex flex-col gap-1.5 text-xs font-mono bg-background/90 backdrop-blur-md px-3 py-2 border border-border/20 rounded shadow-lg pointer-events-none min-w-[160px]"
           >
-            <div className="font-bold border-b border-border/20 pb-1 mb-1 text-foreground/90 uppercase tracking-widest text-[10px]">Chronos Projection</div>
+            <div className="font-bold border-b border-border/20 pb-1 mb-1 text-foreground/90 uppercase tracking-widest text-[10px]">
+              Chronos Projection
+              {forecastIsFallback && <span className="text-yellow-500"> · Heuristic</span>}
+            </div>
             <div className="flex justify-between gap-4">
               <span className="text-muted-foreground">Est Return</span>
               <span className={cn("font-bold", (forecast.forecastReturnPct ?? 0) > 0 ? "text-bull" : (forecast.forecastReturnPct ?? 0) < 0 ? "text-bear" : "text-foreground")}>
@@ -901,7 +948,7 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 0.15 }}
+            transition={FADE_FAST}
           >
             <motion.div 
               className="flex flex-col items-center gap-2"
@@ -927,7 +974,7 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
 
         {!loading && candles.length === 0 && (
           <div className="absolute inset-0 flex flex-col items-center justify-center z-10 p-6 text-center gap-3 bg-background/80 backdrop-blur-md">
-            <div className="w-12 h-12 rounded-2xl bg-secondary/30 border border-border/20 flex items-center justify-center text-foreground/70 shadow-inner">
+            <div className="w-12 h-12 rounded-2xl bg-secondary/30 flex items-center justify-center text-foreground/70">
               <svg className="h-6 w-6 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
               </svg>
@@ -979,7 +1026,10 @@ function calcVwap(candles: Candle[]) {
   let cumVolPrice = 0;
   let prevDay = -1;
   return candles.map((c) => {
-    const day = new Date(c.ts).getDate();
+    // Session VWAP resets on the IST trading day, not the viewer's local day.
+    // 19800000 ms = +05:30; IST has no DST so a fixed offset is safe.
+    const d = new Date(Date.parse(c.ts) + 19800000);
+    const day = d.getUTCFullYear() * 10000 + (d.getUTCMonth() + 1) * 100 + d.getUTCDate();
     if (day !== prevDay) {
       cumVol = 0;
       cumVolPrice = 0;

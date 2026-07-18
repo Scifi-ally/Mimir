@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { AlertCircle, ArrowRight, Plus, X } from "lucide-react";
+import { AlertCircle, ArrowRight, Plus, X, Loader2 } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/format";
 import { useStore } from "@/store/useStore";
@@ -208,7 +208,7 @@ function CustomSelect({ value, onChange, options, editable = false, placeholder 
                 exit={{ opacity: 0, y: 3, scale: 0.98 }}
                 transition={{ duration: 0.14 }}
                 style={{ top: coords.top, left: coords.left }}
-                className="fixed z-[10001] flex max-h-[300px] min-w-[140px] flex-col overflow-y-auto rounded-lg border border-border/50 bg-popover p-1 shadow-2xl backdrop-blur-xl text-popover-foreground"
+                className="fixed z-[10001] flex max-h-[300px] min-w-[140px] flex-col overflow-y-auto rounded-lg border border-border/20 bg-popover p-1 shadow-2xl backdrop-blur-xl text-popover-foreground"
               >
                 {filteredOptions.length ? filteredOptions.map((option, index) => (
                   <button
@@ -529,8 +529,8 @@ export function AdvancedRuleBuilder({ onComplete, initialRule }: { onComplete: (
       <div className="flex items-center justify-between pt-1 pb-1 px-2">
         <button type="button" onClick={onComplete} className="rounded-xl px-4 py-2.5 text-xs font-semibold text-muted-foreground hover:bg-foreground/5 hover:text-foreground transition-colors">Cancel</button>
         <button type="button" onClick={handleSave} disabled={createRuleMutation.isPending} className="group flex h-10 items-center gap-2 rounded-xl bg-primary px-5 text-xs font-semibold text-primary-foreground transition-all hover:opacity-90 disabled:opacity-50 active:scale-[0.98]">
-          Review & Save
-          <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
+          {createRuleMutation.isPending ? "Saving..." : "Review & Save"}
+          {createRuleMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />}
         </button>
       </div>
     </div>

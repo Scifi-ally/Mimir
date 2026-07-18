@@ -1,6 +1,6 @@
-import { memo, useEffect, useRef, useState, useMemo } from 'react';
-import { cn } from '@/lib/format';
-import { useSymbolDataSelector, marketDataStore } from '@/providers/MarketDataProvider';
+import { memo, useEffect, useRef, useMemo } from 'react';
+import { cn, fmtPct } from '@/lib/format';
+import { useSymbolDataSelector } from '@/providers/MarketDataProvider';
 import { useStore } from '@/store/useStore';
 
 interface LiveChangePctProps {
@@ -30,10 +30,6 @@ export const LiveChangePct = memo(({ symbol, className, decimals = 2, fallback }
   const flashTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   useEffect(() => {
-    if (changePct == null && fallback != null) {
-      marketDataStore.updateFromRest(symbol, { change_pct: fallback });
-    }
-
     if (!changePct || changePct === prevChange.current || !spanRef.current) return;
     if (prevChange.current) {
       const el = spanRef.current;
@@ -52,18 +48,18 @@ export const LiveChangePct = memo(({ symbol, className, decimals = 2, fallback }
       return () => { if (flashTimeout.current) clearTimeout(flashTimeout.current); };
     }
     prevChange.current = changePct;
-  }, [symbol, changePct, fallback]);
+  }, [symbol, changePct]);
   
   const displayChange = changePct ?? fallback;
 
   const formattedChange = useMemo(() => {
     if (displayChange == null) return null;
-    const sign = displayChange > 0 ? '+' : '';
-    return `${sign}${displayChange.toFixed(decimals)}%`;
+    return fmtPct(displayChange, decimals);
   }, [displayChange, decimals]);
 
+  // No data → render nothing; a lone dash under a dash-price just doubles the noise
   if (displayChange == null || formattedChange == null) {
-    return <span className={`text-muted-foreground ${className || ''}`}>—</span>;
+    return null;
   }
 
   const isPositive = displayChange > 0;

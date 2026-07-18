@@ -18,8 +18,12 @@ export const WatchlistCard = memo(({ row, selected, onSelect }: WatchlistCardPro
 
   const topTag = row.signalTags && row.signalTags.length > 0 ? row.signalTags[0] : null;
   // Strip scanner-internal prefixes like "REPEAT [100/100]:" — machine noise, not signal
-  const statusText = (row.indicatorStatus || row.condition || "Monitored")
+  let statusText = (row.indicatorStatus || row.condition || "Monitored")
     .replace(/^(REPEAT|PERSISTENT)\s*\[\d+\/\d+\]:\s*/i, "");
+  // Scanner boilerplate reads as noise in a 1-line row — collapse to short human labels
+  if (/no qualified setup|candle data unavailable/i.test(statusText)) statusText = "Awaiting setup";
+  else if (/^analyzing/i.test(statusText)) statusText = "Analyzing";
+  else if (/^error|failed/i.test(statusText)) statusText = "Data unavailable";
 
   return (
     <button
@@ -28,10 +32,10 @@ export const WatchlistCard = memo(({ row, selected, onSelect }: WatchlistCardPro
       aria-selected={selected}
       onClick={() => onSelect(row.symbol)}
       className={cn(
-        "flex flex-col justify-center rounded-md px-3 py-1.5 text-left transition-all duration-200 relative overflow-hidden group border-0 h-[58px] w-full min-w-0 font-mono shadow-none",
+        "flex flex-col justify-center rounded-lg px-3 py-1.5 text-left transition-colors duration-150 relative overflow-hidden group h-[56px] w-full min-w-0 font-mono",
         selected
-          ? "bg-secondary/50 text-foreground"
-          : "bg-transparent hover:bg-secondary/20 text-foreground/85 hover:text-foreground"
+          ? "bg-foreground/[0.06] text-foreground"
+          : "bg-transparent hover:bg-foreground/[0.03] text-foreground/85 hover:text-foreground"
       )}
     >
       <div className="grid grid-cols-[1fr_auto] gap-2.5 relative z-10 min-w-0 w-full h-full items-center">

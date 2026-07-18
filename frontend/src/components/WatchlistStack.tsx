@@ -1,18 +1,17 @@
 import { useState, useMemo, useRef, useEffect, memo } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { motion, AnimatePresence } from "framer-motion";
-import { Sparkles } from "lucide-react";
 import { cn } from "@/lib/format";
 import { Card, CardHeader } from "@/components/mimir/card";
 import { ScrollArea } from "@/components/mimir/scroll-area";
 import type { StockRow } from "@/lib/watchlist";
 import { buildStockRows } from "@/lib/watchlist";
 import { useStore } from "@/store/useStore";
-import { marketDataStore } from "@/providers/MarketDataProvider";
 import { WatchlistCard } from "@/components/WatchlistCard";
 import { LivePrice } from "@/components/atoms/LivePrice";
 import { LiveChangePct } from "@/components/atoms/LiveChangePct";
 import type { WatchlistItem, MonitoredStock, Suggestion } from "@/types/api";
+import { SPRING_STANDARD } from "@/lib/motion";
 
 interface WatchlistStackProps {
   items: WatchlistItem[];
@@ -225,8 +224,13 @@ export const WatchlistStack = memo(function WatchlistStack({ items, monitored, s
 
   return (
     <Card ref={cardRef} onWheel={handleWheel} className="@container flex h-full min-h-0 flex-col border-0 bg-transparent">
-      <CardHeader className="shrink-0 h-[48px] px-3 py-0 space-y-0 flex flex-row items-center justify-between gap-4 border-b border-border/10 overflow-hidden">
+      <CardHeader className="shrink-0 h-[48px] px-3 py-0 space-y-0 flex flex-row items-center justify-between gap-4 overflow-hidden">
         {headerLeft}
+        {watchlistMetadata?.isFallback && (
+          <span className="shrink-0 whitespace-nowrap rounded-full bg-secondary/40 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-muted-foreground">
+            Showing {watchlistMetadata.forDate} (previous session)
+          </span>
+        )}
         {rows.length > 0 ? (
           <div className="flex overflow-x-auto whitespace-nowrap flex-nowrap gap-4 text-[10px] font-bold uppercase tracking-wider [&::-webkit-scrollbar]:hidden pb-1 justify-end w-full items-center">
             <button
@@ -274,24 +278,9 @@ export const WatchlistStack = memo(function WatchlistStack({ items, monitored, s
         )}
       </CardHeader>
 
-      {watchlistMetadata?.isFallback && rows.length > 0 && (
-        <div className="px-3 py-1.5 mx-2 my-1 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-between text-xs font-mono text-amber-500/90 shrink-0">
-          <span>Showing fallback scan from {watchlistMetadata.forDate}</span>
-          <span className="text-[10px] uppercase opacity-75 font-bold">No scan today</span>
-        </div>
-      )}
-
       {filteredRows.length === 0 ? (
-        <div className="flex-1 w-full h-full min-h-[180px] flex flex-col items-center justify-center text-center p-6 gap-3">
-          <div className="w-12 h-12 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shadow-inner">
-            <Sparkles className="w-6 h-6 animate-pulse" />
-          </div>
-          <div className="space-y-1">
-            <h3 className="text-sm font-bold tracking-tight text-foreground">No prior scan</h3>
-            <p className="text-xs text-muted-foreground/80 max-w-[280px] leading-relaxed mx-auto">
-              There are no previous scan results available for today. Run a live market scan or select <strong className="text-foreground">Screener</strong> above to pick stocks manually.
-            </p>
-          </div>
+        <div className="flex-1 w-full h-full min-h-[180px] flex flex-col items-center justify-center text-center p-6">
+          <p className="text-xs font-medium text-muted-foreground">No scan yet — run one or pick from Screener.</p>
         </div>
       ) : (
         <>
@@ -308,7 +297,7 @@ export const WatchlistStack = memo(function WatchlistStack({ items, monitored, s
                 initial={{ opacity: 0, scale: 0.98 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.98 }}
-                transition={{ type: "spring", stiffness: 450, damping: 32 }}
+                transition={SPRING_STANDARD}
                 style={{ willChange: "transform, opacity", width: `${virtualizer.getTotalSize()}px`, height: '100%', minHeight: '160px' }}
               >
                 {virtualizer.getVirtualItems().map((virtualItem) => {
@@ -360,10 +349,10 @@ export const WatchlistStack = memo(function WatchlistStack({ items, monitored, s
                       id={`watchlist-item-mobile-${row.symbol}`}
                       onClick={() => safeOnSelect(row.symbol)}
                       className={cn(
-                        "flex items-center justify-between rounded-xl px-4 py-3 w-full h-full text-left transition-all relative overflow-hidden group border will-change-transform",
+                        "flex items-center justify-between rounded-xl px-4 py-3 w-full h-full text-left transition-all relative overflow-hidden group will-change-transform",
                         selected
-                          ? "bg-foreground text-background border-foreground shadow-md"
-                          : "bg-secondary/10 border-transparent text-foreground hover:bg-secondary/20"
+                          ? "bg-foreground text-background"
+                          : "bg-secondary/10 text-foreground hover:bg-secondary/20"
                       )}
                     >
                       <div className="flex flex-col gap-1.5 min-w-0 flex-1">

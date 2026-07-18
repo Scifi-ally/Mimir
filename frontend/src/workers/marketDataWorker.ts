@@ -131,10 +131,19 @@ function processTick(inputTick: unknown): void {
 
   // Clean symbol name if prefixed
   const cleanSymbol = tick.symbol.split(":").pop() || tick.symbol;
-  const rawPrice = tick.ltp ?? tick.price ?? 0;
+  const existing = tickBatch.get(cleanSymbol);
+
+  // A tick may arrive carrying only a volume/bid/ask/change update and no price.
+  // Previously we coerced a missing price to 0 (`tick.ltp ?? tick.price ?? 0`),
+  // which then overwrote the last good price — the provider's `?? existing.ltp`
+  // chain can't recover because 0 is not nullish — and the UI flashed ₹0.00 red
+  // as if the stock had crashed. Carry the last known price instead; if we have
+  // never seen a price for this symbol, drop the tick rather than publish a fake 0.
+  const incomingPrice = tick.ltp ?? tick.price;
+  const rawPrice = incomingPrice ?? existing?.ltp;
+  if (rawPrice == null) return; // no price now and none previously — nothing to emit
   const ltp = Math.round(rawPrice * 100) / 100;
 
-  const existing = tickBatch.get(cleanSymbol);
   const prevLtp = existing?.ltp ?? ltp;
   const direction = ltp > prevLtp ? "up" : ltp < prevLtp ? "down" : existing?.direction ?? "none";
 

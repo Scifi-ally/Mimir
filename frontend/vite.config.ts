@@ -4,11 +4,13 @@ import tailwindcss from "@tailwindcss/vite";
 import { VitePWA } from "vite-plugin-pwa";
 import { fileURLToPath, URL } from "node:url";
 
+const isTauri = !!process.env.TAURI_ENV_PLATFORM;
+
 export default defineConfig({
   plugins: [
     react(),
     tailwindcss(),
-    VitePWA({
+    !isTauri && VitePWA({
       registerType: 'autoUpdate',
       devOptions: { enabled: false },
       manifest: {
@@ -78,13 +80,19 @@ export default defineConfig({
     },
   },
   build: {
+    target: "esnext",
+    minify: "esbuild",
+    cssMinify: true,
     rollupOptions: {
       output: {
-        manualChunks: {
-          react: ["react", "react-dom"],
-          motion: ["framer-motion"],
-          charts: ["lightweight-charts"],
-          vendor: ["@tanstack/react-query", "zustand"],
+        manualChunks(id) {
+          if (/node_modules[\\/](react|react-dom|scheduler)[\\/]/.test(id)) return "react";
+          if (/node_modules[\\/]framer-motion[\\/]/.test(id)) return "motion";
+          if (/node_modules[\\/]lightweight-charts[\\/]/.test(id)) return "charts";
+          if (/node_modules[\\/]@tanstack[\\/]react-query[\\/]/.test(id)) return "query";
+          if (/node_modules[\\/]zustand[\\/]/.test(id)) return "state";
+          if (/node_modules[\\/]lucide-react[\\/]/.test(id)) return "icons";
+          if (/node_modules[\\/]react-markdown[\\/]/.test(id)) return "markdown";
         },
       },
     },

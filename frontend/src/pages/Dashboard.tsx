@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState, startTransition, lazy, Suspense, useRef } from "react";
+import { useCallback, useEffect, useMemo, useState, lazy, Suspense, useRef } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { useHotkeys } from "react-hotkeys-hook";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -9,10 +10,11 @@ import { ScreenerTargetsStack } from "@/components/ScreenerTargetsStack";
 import { DetailPanel } from "@/components/DetailPanel";
 import { ScanClockPanel } from "@/components/ScanClockPanel";
 import { StatusBar } from "@/components/StatusBar";
-import { SuggestionsSlider } from "@/components/SuggestionsSlider";
-import { PaperTradingPanel } from "@/components/PaperTradingPanel";
-import { ReportsLibrary } from "@/components/ReportsLibrary";
-import { SettingsDialog } from "@/components/SettingsDialog";
+
+const SuggestionsSlider = lazy(() => import("@/components/SuggestionsSlider").then(m => ({ default: m.SuggestionsSlider })));
+const PaperTradingPanel = lazy(() => import("@/components/PaperTradingPanel").then(m => ({ default: m.PaperTradingPanel })));
+const ReportsLibrary = lazy(() => import("@/components/ReportsLibrary").then(m => ({ default: m.ReportsLibrary })));
+const SettingsDialog = lazy(() => import("@/components/SettingsDialog").then(m => ({ default: m.SettingsDialog })));
 
 import { useWebSocket, subscribeWsSymbols } from "@/hooks/useWebSocket";
 import { useStore } from "@/store/useStore";
@@ -21,6 +23,7 @@ import { fmtNum } from "@/lib/format";
 import { marketDataStore } from "@/providers/MarketDataProvider";
 
 import type { WatchlistItem, Suggestion } from "@/types/api";
+import { FADE_FAST, FADE_STANDARD, SPRING_GENTLE, SPRING_SNAPPY } from "@/lib/motion";
 
 export default function Dashboard() {
 
@@ -30,10 +33,12 @@ export default function Dashboard() {
   const selectedSymbol = useStore((s) => s.selectedSymbol);
   const setSelectedSymbol = useStore((s) => s.setSelectedSymbol);
   const wsConnected = useStore((s) => s.wsConnected);
-  const scanState = useStore((s) => s.scanState);
+  // Shallow-select only the rendered fields — setScanState churns updatedAt/message on
+  // every status message, which would otherwise re-render the whole dashboard.
+  const scanState = useStore(useShallow((s) => ({ scanning: s.scanState.scanning, current: s.scanState.current, total: s.scanState.total })));
   const setScanState = useStore((s) => s.setScanState);
 
-  const sessionQuery = useQuery({ queryKey: ["session"], queryFn: api.sessionState, refetchInterval: scanState.scanning ? 10000 : 60000, placeholderData: (prev) => prev });
+  const sessionQuery = useQuery({ queryKey: ["session"], queryFn: api.sessionState, refetchInterval: scanState.scanning ? 10000 : 60000, staleTime: 30000, placeholderData: (prev) => prev });
 
   useEffect(() => {
     if (sessionQuery.data && !sessionQuery.data.scanRunning && scanState.scanning) {
@@ -49,21 +54,21 @@ export default function Dashboard() {
   const [isReportsOpen, setIsReportsOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<"watchlist" | "screener">("watchlist");
-  const statusQuery = useQuery({ queryKey: ["status"], queryFn: api.systemStatus, refetchInterval: 10000, placeholderData: (prev) => prev });
-  const watchlistQuery = useQuery({ 
-    queryKey: ["watchlist"], 
-    queryFn: api.watchlistToday, 
-    refetchInterval: 60000, // Reduced frequency - ticks come via WebSocket anyway
-    staleTime: 55000, // Consider data fresh for 55s
-    gcTime: 120000, // Keep in cache for 2 minutes
-    placeholderData: (previousData) => previousData, // Keep showing old data while fetching
+  const statusQuery = useQuery({ queryKey: ["status"], queryFn: api.systemStatus, refetchInterval: 30000, staleTime: 25000, placeholderData: (prev) => prev });
+  const watchlistQuery = useQuery({
+    queryKey: ["watchlist"],
+    queryFn: api.watchlistToday,
+    refetchInterval: 120000,
+    staleTime: 110000,
+    gcTime: 300000,
+    placeholderData: (previousData) => previousData,
   });
-  const suggestionsQuery = useQuery<Suggestion[]>({ queryKey: ["suggestions"], queryFn: () => api.activeSuggestions(), refetchInterval: 10000, placeholderData: (prev) => prev });
-  const positionsQuery = useQuery({ queryKey: ["positions"], queryFn: () => api.paper.positions(), refetchInterval: 10000, placeholderData: (prev) => prev });
+  const suggestionsQuery = useQuery<Suggestion[]>({ queryKey: ["suggestions"], queryFn: () => api.activeSuggestions(), refetchInterval: 30000, staleTime: 25000, placeholderData: (prev) => prev });
+  const positionsQuery = useQuery({ queryKey: ["positions"], queryFn: () => api.paper.positions(), refetchInterval: 30000, staleTime: 25000, placeholderData: (prev) => prev });
   const indicesQuery = useQuery({ queryKey: ["indices"], queryFn: api.dashboardIndices, staleTime: Infinity, placeholderData: (prev) => prev });
-  const regimeQuery = useQuery({ queryKey: ["regime"], queryFn: api.marketRegime, refetchInterval: 60000, placeholderData: (prev) => prev });
-  const monitoringQuery = useQuery({ queryKey: ["monitoring"], queryFn: api.intradayMonitoring, refetchInterval: 30000, placeholderData: (prev) => prev });
-  const indianContextQuery = useQuery({ queryKey: ["indian-context"], queryFn: api.indianContext, refetchInterval: 300000, placeholderData: (prev) => prev });
+  const regimeQuery = useQuery({ queryKey: ["regime"], queryFn: api.marketRegime, refetchInterval: 120000, staleTime: 110000, placeholderData: (prev) => prev });
+  const monitoringQuery = useQuery({ queryKey: ["monitoring"], queryFn: api.intradayMonitoring, refetchInterval: 60000, staleTime: 55000, placeholderData: (prev) => prev });
+  const indianContextQuery = useQuery({ queryKey: ["indian-context"], queryFn: api.indianContext, refetchInterval: 300000, staleTime: 290000, placeholderData: (prev) => prev });
   const scanning = scanState.scanning || Boolean(sessionQuery.data?.scanRunning);
   const isScanActive = scanning;
   const scanLogs = useStore((s) => s.scanLogs);
@@ -316,7 +321,14 @@ export default function Dashboard() {
     }
   }, [status?.upstoxAuthenticated, showIsland]);
 
-  const authorizeUpstox = async (type: "trading" | "data" = "trading") => {
+  // Stable handlers so memo()'d TopBar doesn't re-render on every query refetch
+  const openSuggestions = useCallback(() => setIsSuggestionsOpen(true), []);
+  const openPaperTrading = useCallback(() => setIsPaperTradingOpen(true), []);
+  const openReports = useCallback(() => setIsReportsOpen(true), []);
+  const openSettings = useCallback(() => setIsSettingsOpen(true), []);
+  const openEventFeed = useCallback(() => useStore.getState().setEventFeedOpen(true), []);
+
+  const authorizeUpstox = useCallback(async (type: "trading" | "data" = "trading") => {
     setAuthorizing(true);
     setAuthError(null);
     try {
@@ -338,9 +350,64 @@ export default function Dashboard() {
       setAuthError(error instanceof Error ? error.message : "Authorization failed");
       setAuthorizing(false);
     }
-  };
+  }, [showIsland]);
 
   const apiError = authError || sessionQuery.error?.message || watchlistQuery.error?.message || null;
+
+  // Memoized tab-switcher headers (keyed only on sidebarTab; setSidebarTab is a stable
+  // setter) so memo()'d WatchlistStack isn't re-rendered by unrelated query refetches.
+  const desktopTabHeader = useMemo(() => (
+    <div className="flex items-center p-0.5 bg-foreground/5 rounded-full relative shrink-0 h-8">
+      <button
+        type="button"
+        onClick={() => setSidebarTab("watchlist")}
+        className={`relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors ${sidebarTab === "watchlist" ? "text-background" : "text-muted-foreground hover:text-foreground"}`}
+      >
+        {sidebarTab === "watchlist" && <motion.div layoutId="desktopTabIndicator" className="absolute inset-0 bg-foreground rounded-full" transition={SPRING_SNAPPY} />}
+        <span className="relative z-10">Watchlist</span>
+      </button>
+      <button
+        type="button"
+        onClick={() => setSidebarTab("screener")}
+        className={`relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors ${sidebarTab === "screener" ? "text-background" : "text-muted-foreground hover:text-foreground"}`}
+      >
+        {sidebarTab === "screener" && <motion.div layoutId="desktopTabIndicator" className="absolute inset-0 bg-foreground rounded-full" transition={SPRING_SNAPPY} />}
+        <span className="relative z-10">Screener</span>
+      </button>
+    </div>
+  ), [sidebarTab]);
+
+  const mobileTabHeader = useMemo(() => (
+    <div className="flex items-center p-0.5 bg-foreground/5 rounded-full relative shrink-0 mr-4">
+      <button
+        type="button"
+        onClick={() => setSidebarTab("watchlist")}
+        className={`relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors ${sidebarTab === "watchlist" ? "text-background" : "text-muted-foreground hover:text-foreground"}`}
+      >
+        {sidebarTab === "watchlist" && <motion.div layoutId="mobileTabIndicator" className="absolute inset-0 bg-foreground rounded-full" transition={SPRING_SNAPPY} />}
+        <span className="relative z-10">Watchlist</span>
+      </button>
+      <button
+        type="button"
+        onClick={() => setSidebarTab("screener")}
+        className={`relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors ${sidebarTab === "screener" ? "text-background" : "text-muted-foreground hover:text-foreground"}`}
+      >
+        {sidebarTab === "screener" && <motion.div layoutId="mobileTabIndicator" className="absolute inset-0 bg-foreground rounded-full" transition={SPRING_SNAPPY} />}
+        <span className="relative z-10">Screener</span>
+      </button>
+    </div>
+  ), [sidebarTab]);
+
+  // First load: hold a clean splash until system status resolves so the UI never
+  // paints default/unauthorized states that flip a second later.
+  if (statusQuery.isPending) {
+    return (
+      <div className="flex h-[100dvh] flex-col items-center justify-center gap-4 bg-background text-foreground">
+        <span className="font-mono text-2xl font-bold tracking-[0.3em]">MIMIR</span>
+        <span className="h-1.5 w-1.5 rounded-full bg-foreground/60 animate-pulse" />
+      </div>
+    );
+  }
 
   return (
     <div className="relative flex h-[100dvh] flex-col overflow-hidden bg-background text-foreground font-sans">
@@ -350,7 +417,7 @@ export default function Dashboard() {
         <motion.div
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.25, ease: "easeOut" }}
+          transition={FADE_STANDARD}
         >
           <TopBar
             indices={indicesQuery.data ?? null}
@@ -368,12 +435,12 @@ export default function Dashboard() {
                   ? (sessionQuery.data.scanProgress.current / Math.max(sessionQuery.data.scanProgress.total, 1)) * 100 
                   : undefined
             }
-            onOpenSuggestions={() => setIsSuggestionsOpen(true)}
-            onOpenPaperTrading={() => setIsPaperTradingOpen(true)}
-            onOpenReports={() => setIsReportsOpen(true)}
-            onOpenSettings={() => setIsSettingsOpen(true)}
-            onOpenEventFeed={() => useStore.getState().setEventFeedOpen(true)}
-            onSelectSymbol={(s: string) => setSelectedSymbol(s)}
+            onOpenSuggestions={openSuggestions}
+            onOpenPaperTrading={openPaperTrading}
+            onOpenReports={openReports}
+            onOpenSettings={openSettings}
+            onOpenEventFeed={openEventFeed}
+            onSelectSymbol={setSelectedSymbol}
           />
         </motion.div>
 
@@ -383,7 +450,7 @@ export default function Dashboard() {
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: "auto" }}
               exit={{ opacity: 0, height: 0 }}
-              transition={{ type: "spring", stiffness: 300, damping: 30 }}
+              transition={SPRING_GENTLE}
               className="shrink-0 px-2 py-0.5 overflow-hidden"
             >
               <p className="text-xs font-medium text-destructive">{apiError}</p>
@@ -399,7 +466,7 @@ export default function Dashboard() {
                     className="flex-[65] w-full min-h-0 min-w-0 rounded-2xl mb-3 relative z-10"
                     initial={{ opacity: 0, y: 15 }}
                     animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.3, ease: "easeOut", delay: 0.05 }}
+                    transition={{ ...FADE_STANDARD, delay: 0.05 }}
                   >
                   <AnimatePresence mode="wait">
                     {showClock ? (
@@ -409,7 +476,7 @@ export default function Dashboard() {
                         initial={{ opacity: 0, scale: 0.95 }}
                         animate={{ opacity: 1, scale: 1 }}
                         exit={{ opacity: 0, scale: 0.95 }}
-                        transition={{ duration: 0.3 }}
+                        transition={FADE_STANDARD}
                       >
                         <ScanClockPanel 
                           scanProgress={scanState.total > 0 ? (scanState.current / scanState.total) * 100 : undefined}
@@ -421,7 +488,7 @@ export default function Dashboard() {
                         className="w-full h-full"
                         initial={{ opacity: 0, scale: 0.98 }}
                         animate={{ opacity: 1, scale: 1 }}
-                        transition={{ duration: 0.2 }}
+                        transition={FADE_FAST}
                       >
                         <PriceChart 
                           symbol={activeSymbol} 
@@ -441,62 +508,26 @@ export default function Dashboard() {
                     className="flex-[35] w-full min-h-0 min-w-0 pt-2 flex flex-col"
                     initial={{ opacity: 0, y: 15 }}
                     animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.3, ease: "easeOut", delay: 0.1 }}
+                    transition={{ ...FADE_STANDARD, delay: 0.1 }}
                   >
                     <div className="flex-1 min-h-0 relative">
                       {sidebarTab === "watchlist" ? (
-                        <WatchlistStack 
-                          headerLeft={
-                            <div className="flex items-center p-0.5 bg-foreground/5 rounded-full relative shrink-0 h-8">
-                              <button
-                                type="button"
-                                onClick={() => setSidebarTab("watchlist")}
-                                className="relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors text-background"
-                              >
-                                <motion.div layoutId="desktopTabIndicator" className="absolute inset-0 bg-foreground rounded-full" transition={{ type: "spring", bounce: 0.2, duration: 0.6 }} />
-                                <span className="relative z-10">Watchlist</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setSidebarTab("screener")}
-                                className="relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors text-muted-foreground hover:text-foreground"
-                              >
-                                <span className="relative z-10">Screener</span>
-                              </button>
-                            </div>
-                          }
-                          items={watchlistItems} 
-                          monitored={monitoring?.monitoredStocks} 
-                          suggestions={suggestions} 
-                          selectedSymbol={activeSymbol} 
+                        <WatchlistStack
+                          headerLeft={desktopTabHeader}
+                          items={watchlistItems}
+                          monitored={monitoring?.monitoredStocks}
+                          suggestions={suggestions}
+                          selectedSymbol={activeSymbol}
                           sparklines={sparklinesQuery.data}
                           watchlistMetadata={watchlistMetadata}
-                          onSelect={(s) => setSelectedSymbol(s)} 
+                          onSelect={setSelectedSymbol}
                         />
                       ) : (
-                        <ScreenerTargetsStack 
-                          headerLeft={
-                            <div className="flex items-center p-0.5 bg-foreground/5 rounded-full relative shrink-0 h-8">
-                              <button
-                                type="button"
-                                onClick={() => setSidebarTab("watchlist")}
-                                className="relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors text-muted-foreground hover:text-foreground"
-                              >
-                                <span className="relative z-10">Watchlist</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setSidebarTab("screener")}
-                                className="relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors text-background"
-                              >
-                                <motion.div layoutId="desktopTabIndicator" className="absolute inset-0 bg-foreground rounded-full" transition={{ type: "spring", bounce: 0.2, duration: 0.6 }} />
-                                <span className="relative z-10">Screener</span>
-                              </button>
-                            </div>
-                          }
-                          selectedSymbol={activeSymbol} 
-                          sparklines={sparklinesQuery.data} 
-                          onSelect={(s) => setSelectedSymbol(s)} 
+                        <ScreenerTargetsStack
+                          headerLeft={desktopTabHeader}
+                          selectedSymbol={activeSymbol}
+                          sparklines={sparklinesQuery.data}
+                          onSelect={setSelectedSymbol}
                         />
                       )}
                     </div>
@@ -509,7 +540,7 @@ export default function Dashboard() {
                 className="h-full w-full min-h-0 min-w-0 rounded-2xl relative z-10 overflow-hidden"
                 initial={{ opacity: 0, x: 10 }}
                 animate={{ opacity: 1, x: 0 }}
-                transition={{ duration: 0.3, ease: "easeOut", delay: 0.12 }}
+                transition={{ ...FADE_STANDARD, delay: 0.12 }}
               >
                 <DetailPanel
                   suggestions={suggestions}
@@ -532,7 +563,7 @@ export default function Dashboard() {
                     initial={{ opacity: 0, scale: 0.95 }}
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.95 }}
-                    transition={{ duration: 0.3 }}
+                    transition={FADE_STANDARD}
                   >
                     <ScanClockPanel 
                       scanProgress={
@@ -548,7 +579,7 @@ export default function Dashboard() {
                     className="w-full h-full"
                     initial={{ opacity: 0, scale: 0.98 }}
                     animate={{ opacity: 1, scale: 1 }}
-                    transition={{ duration: 0.2 }}
+                    transition={FADE_FAST}
                   >
                     <PriceChart 
                       symbol={activeSymbol} 
@@ -566,50 +597,14 @@ export default function Dashboard() {
             <div className="h-[400px] flex flex-col">
               <div className="flex-1 min-h-0 relative">
                 {sidebarTab === "watchlist" ? (
-                  <WatchlistStack 
-                    headerLeft={
-                      <div className="flex items-center p-0.5 bg-foreground/5 rounded-full relative shrink-0 mr-4">
-                        <button
-                          type="button"
-                          onClick={() => setSidebarTab("watchlist")}
-                          className="relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors text-background"
-                        >
-                          <motion.div layoutId="mobileTabIndicator" className="absolute inset-0 bg-foreground rounded-full" transition={{ type: "spring", bounce: 0.2, duration: 0.6 }} />
-                          <span className="relative z-10">Watchlist</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setSidebarTab("screener")}
-                          className="relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors text-muted-foreground hover:text-foreground"
-                        >
-                          <span className="relative z-10">Screener</span>
-                        </button>
-                      </div>
-                    }
-                    items={watchlistItems} monitored={monitoring?.monitoredStocks} suggestions={suggestions} selectedSymbol={activeSymbol} sparklines={sparklinesQuery.data} watchlistMetadata={watchlistMetadata} onSelect={(s) => setSelectedSymbol(s)} 
+                  <WatchlistStack
+                    headerLeft={mobileTabHeader}
+                    items={watchlistItems} monitored={monitoring?.monitoredStocks} suggestions={suggestions} selectedSymbol={activeSymbol} sparklines={sparklinesQuery.data} watchlistMetadata={watchlistMetadata} onSelect={setSelectedSymbol}
                   />
                 ) : (
-                  <ScreenerTargetsStack 
-                    headerLeft={
-                      <div className="flex items-center p-0.5 bg-foreground/5 rounded-full relative shrink-0 mr-4">
-                        <button
-                          type="button"
-                          onClick={() => setSidebarTab("watchlist")}
-                          className="relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors text-muted-foreground hover:text-foreground"
-                        >
-                          <span className="relative z-10">Watchlist</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setSidebarTab("screener")}
-                          className="relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors text-background"
-                        >
-                          <motion.div layoutId="mobileTabIndicator" className="absolute inset-0 bg-foreground rounded-full" transition={{ type: "spring", bounce: 0.2, duration: 0.6 }} />
-                          <span className="relative z-10">Screener</span>
-                        </button>
-                      </div>
-                    }
-                    selectedSymbol={activeSymbol} sparklines={sparklinesQuery.data} onSelect={(s) => setSelectedSymbol(s)} 
+                  <ScreenerTargetsStack
+                    headerLeft={mobileTabHeader}
+                    selectedSymbol={activeSymbol} sparklines={sparklinesQuery.data} onSelect={setSelectedSymbol}
                   />
                 )}
               </div>
@@ -628,10 +623,12 @@ export default function Dashboard() {
         />
       </div>
       
-      <SuggestionsSlider isOpen={isSuggestionsOpen} onClose={() => setIsSuggestionsOpen(false)} onSelectSymbol={(s) => setSelectedSymbol(s)} activeSuggestions={suggestions} />
-      <PaperTradingPanel isOpen={isPaperTradingOpen} onClose={() => setIsPaperTradingOpen(false)} />
-      <ReportsLibrary isOpen={isReportsOpen} onClose={() => setIsReportsOpen(false)} />
-      <SettingsDialog isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
+      <Suspense fallback={null}>
+        <SuggestionsSlider isOpen={isSuggestionsOpen} onClose={() => setIsSuggestionsOpen(false)} onSelectSymbol={(s) => setSelectedSymbol(s)} activeSuggestions={suggestions} />
+        <PaperTradingPanel isOpen={isPaperTradingOpen} onClose={() => setIsPaperTradingOpen(false)} />
+        <ReportsLibrary isOpen={isReportsOpen} onClose={() => setIsReportsOpen(false)} />
+        <SettingsDialog isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
+      </Suspense>
     </div>
     );
   }

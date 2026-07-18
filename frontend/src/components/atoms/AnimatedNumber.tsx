@@ -69,11 +69,11 @@ export const AnimatedNumber = memo(function AnimatedNumber({
   }, [value, decimals, showSign, formatFn, flashColor]);
 
   if (value == null) {
-    return <span className={`tabular-nums ${className}`}>—</span>;
+    return <span className={`font-mono tabular-nums ${className}`}>—</span>;
   }
 
   return (
-    <span ref={containerRef} className={`inline-flex items-center tabular-nums ${className}`}>
+    <span ref={containerRef} className={`inline-flex items-center font-mono tabular-nums ${className}`}>
       {prefix && <span className="mr-[0.1em]">{prefix}</span>}
       <span ref={nodeRef} />
       {suffix && <span className="ml-[0.1em]">{suffix}</span>}

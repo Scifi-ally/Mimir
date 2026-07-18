@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useRef, useLayoutEffect } from "react";
+import React, { useState, useEffect, useMemo, useRef, useLayoutEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { Activity, Flame, BarChart3, Cpu, ChevronLeft, Copy, Check } from "lucide-react";
+import { Flame, BarChart3, Cpu, ChevronLeft, Copy, Check } from "lucide-react";
 import { cn, fmtNum, fmtPct, calcPnLPct } from "@/lib/format";
 import { api } from "@/lib/api";
 import { Tooltip } from "@/components/mimir/tooltip";
@@ -12,6 +12,7 @@ import { LiveChangePct } from "@/components/atoms/LiveChangePct";
 import { AnimatedNumber } from "@/components/atoms/AnimatedNumber";
 import { useSymbolDataSelector } from "@/providers/MarketDataProvider";
 import type { Suggestion, SessionState } from "@/types/api";
+import { FADE_STANDARD, SPRING_STANDARD } from "@/lib/motion";
 
 interface DetailPanelProps {
   suggestions: Suggestion[];
@@ -21,12 +22,13 @@ interface DetailPanelProps {
 }
 
 export const DetailPanel = React.memo(function DetailPanel({ suggestions, selectedSymbol, session, isScanActive }: DetailPanelProps) {
-  const ltp = useSymbolDataSelector(selectedSymbol, (d) => d.ltp);
+  // Boolean selector: the panel only needs to know whether a live price exists
+  // (line ~98 empty-state guard); rows that display the tick subscribe themselves.
+  const hasLtp = useSymbolDataSelector(selectedSymbol, (d) => d.ltp != null);
   const tech_edge = useSymbolDataSelector(selectedSymbol, (d) => d.tech_edge);
   const regime_align = useSymbolDataSelector(selectedSymbol, (d) => d.regime_align);
   const mtf_score = useSymbolDataSelector(selectedSymbol, (d) => d.mtf_score);
   const mtf_total = useSymbolDataSelector(selectedSymbol, (d) => d.mtf_total);
-  const data = { ltp, tech_edge, regime_align };
   const [selectedMetric, setSelectedMetric] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -41,8 +43,10 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const activeSignals = suggestions.filter((s) => s.status === "ACTIVE" || s.status === "PENDING");
-  const sorted = [...activeSignals].sort((a, b) => (b.riskReward ?? 0) - (a.riskReward ?? 0));
+  const sorted = useMemo(() => {
+    const activeSignals = suggestions.filter((s) => s.status === "ACTIVE" || s.status === "PENDING");
+    return [...activeSignals].sort((a, b) => (b.riskReward ?? 0) - (a.riskReward ?? 0));
+  }, [suggestions]);
   const selectedSignal = sorted.find((s) => s.symbol === selectedSymbol) ?? null;
 
   const insightsQuery = useQuery({
@@ -60,8 +64,8 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
   const forecast = insights?.ai;
   const monitoring = insights?.monitoring;
 
-  const techEdgeVal = forecast?.techEdge ?? data.tech_edge ?? selectedSignal?.signalFactors?.techEdge ?? selectedSignal?.signalFactors?.technical?.score;
-  const regimeAlignVal = forecast?.regimeAlign ?? data.regime_align ?? selectedSignal?.signalFactors?.regime?.align;
+  const techEdgeVal = forecast?.techEdge ?? tech_edge ?? selectedSignal?.signalFactors?.techEdge ?? selectedSignal?.signalFactors?.technical?.score;
+  const regimeAlignVal = forecast?.regimeAlign ?? regime_align ?? selectedSignal?.signalFactors?.regime?.align;
 
 
   const scoreHistoryQuery = useQuery({
@@ -75,8 +79,7 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
   if (!selectedSymbol) {
     return (
       <div className="h-full bg-transparent border-0 flex flex-col items-center justify-center text-neutral-600">
-        <Activity className="h-12 w-12 mb-3 opacity-20" />
-        <p className="text-sm tracking-tight font-medium">No Symbol Selected</p>
+        <p className="text-[11px] tracking-wide uppercase font-medium text-muted-foreground/50">Select a symbol</p>
       </div>
     );
   }
@@ -91,24 +94,16 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
   if (insightsQuery.isPending || scoreHistoryQuery.isPending) {
     return (
       <div className="h-full bg-transparent border-0 flex flex-col items-center justify-center text-neutral-600">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent mb-3" />
-        <p className="text-sm tracking-tight font-medium">Loading Details...</p>
+        <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
       </div>
     );
   }
 
-  if (insightsQuery.isError || (!insights && !ltp)) {
+  if (insightsQuery.isError || (!insights && !hasLtp)) {
     return (
-      <div className="h-full bg-transparent border-0 flex flex-col items-center justify-center text-center p-6 text-muted-foreground gap-3">
-        <div className="w-12 h-12 rounded-2xl bg-secondary/30 border border-border/20 flex items-center justify-center text-foreground/70 shadow-inner">
-          <Activity className="h-6 w-6 opacity-60" />
-        </div>
-        <div className="space-y-1">
-          <p className="text-sm tracking-tight font-bold text-foreground">No Analytics for {selectedSymbol}</p>
-          <p className="text-xs text-muted-foreground/80 max-w-[240px] mx-auto leading-relaxed">
-            Database is currently clean for this symbol. Run a live market scan or select an active stock from the Watchlist or Screener to view real-time AI analytics.
-          </p>
-        </div>
+      <div className="h-full bg-transparent border-0 flex flex-col items-center justify-center text-center p-6 text-muted-foreground gap-2">
+        <p className="text-sm tracking-tight font-bold text-foreground">{selectedSymbol}</p>
+        <p className="text-[11px] text-muted-foreground/70">No data — run a scan or pick an active stock.</p>
       </div>
     );
   }
@@ -116,18 +111,18 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
   // const deviation = monitoring?.currentPrice && monitoring?.entryPrice ? ((monitoring.currentPrice - monitoring.entryPrice) / monitoring.entryPrice) : null;
 
   return (
-    <motion.div 
+    <motion.div
       initial="hidden"
       animate="visible"
       variants={{
         hidden: {},
-        visible: { transition: { staggerChildren: 0.08, delayChildren: 0.1 } }
+        visible: { transition: { staggerChildren: 0.05, delayChildren: 0.06 } }
       }}
-      className="h-full bg-transparent overflow-hidden flex flex-col text-card-foreground pt-3 pb-2 border-0 [&::-webkit-scrollbar]:hidden"
+      className="@container h-full bg-transparent overflow-hidden flex flex-col text-card-foreground pt-3 pb-2 border-0 [&::-webkit-scrollbar]:hidden"
     >
       
       {/* HEADER: Symbol & Composite Score */}
-      <motion.div variants={{ hidden: { opacity: 0, y: 10, scale: 0.98 }, visible: { opacity: 1, y: 0, scale: 1, transition: { type: "spring", stiffness: 380, damping: 28 } } }} style={{ willChange: "transform, opacity" }} className="flex justify-between items-start pb-2.5 shrink-0 min-w-0">
+      <motion.div variants={{ hidden: { opacity: 0, y: 8 }, visible: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 420, damping: 32 } } }} className="flex justify-between items-start pb-2.5 shrink-0 min-w-0">
         <div className="min-w-0 pr-2">
           <div className="flex items-center gap-2 mb-1 min-w-0">
              <div className={cn(
@@ -140,8 +135,8 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
                  ? "bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]"
                  : "bg-neutral-500"
              )} />
-             <div className="flex items-center gap-3">
-               <h2 className="text-4xl font-black tracking-tighter leading-none truncate">{selectedSymbol || "—"}</h2>
+             <div className="flex items-center gap-3 min-w-0">
+               <h2 className="text-2xl @[22rem]:text-3xl @[30rem]:text-4xl font-black tracking-tighter leading-none truncate">{selectedSymbol || "—"}</h2>
                <button onClick={handleCopySymbol} className="text-muted-foreground hover:text-foreground transition-colors p-1.5 hover:bg-secondary/50 rounded-md shrink-0" title="Copy symbol to clipboard">
                  {copied ? <Check className="w-4 h-4 text-bull" /> : <Copy className="w-4 h-4" />}
                </button>
@@ -184,10 +179,10 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
                </div>
              )}
              <div className="flex items-end gap-1">
-               <span className={cn("text-4xl font-black font-mono leading-none tracking-tighter", (forecast?.compositeScore ?? 0) > 70 ? "text-bull" : (forecast?.compositeScore ?? 100) < 40 ? "text-bear" : "text-foreground")}>
+               <span className={cn("text-2xl @[22rem]:text-3xl @[30rem]:text-4xl font-black font-mono leading-none tracking-tighter", (forecast?.compositeScore ?? 0) > 70 ? "text-bull" : (forecast?.compositeScore ?? 100) < 40 ? "text-bear" : "text-foreground")}>
                  {forecast?.compositeScore ? fmtNum(forecast.compositeScore, 0) : "—"}
                </span>
-               <span className="text-lg font-bold text-neutral-600 mb-0.5">/100</span>
+               <span className="text-sm @[30rem]:text-lg font-bold text-neutral-600 mb-0.5">/100</span>
              </div>
            </div>
            <Tooltip content="Mimir's proprietary score based on trend strength, momentum, volume profiles, and ML models. >70 is bullish, <40 is bearish." align="end">
@@ -197,12 +192,18 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
             {forecast?.components && Object.keys(forecast.components).length > 0 && (
               <div className="w-full flex h-1.5 rounded-full overflow-hidden mt-2 opacity-90 gap-[1px]">
                 {Object.entries(forecast.components).map(([k, v]) => {
-                   if (v <= 0 && k !== "macro_penalty") return null;
+                   // Render every non-zero component. Negative contributions
+                   // (e.g. micro_structure_ofi, fii_dii_divergence, macro_penalty)
+                   // are subtracted from the composite too, so dropping them made
+                   // the colored bar disagree with the /100 headline. Any negative
+                   // value is drawn in red to signal it detracts from the score.
+                   if (v === 0) return null;
                    const colors: Record<string, string> = { trend_alignment: "bg-blue-500", forecast_momentum: "bg-purple-500", confidence: "bg-emerald-500", sentiment: "bg-amber-500", macro_penalty: "bg-red-500" };
+                   const barColor = v < 0 ? "bg-red-500" : (colors[k] || "bg-neutral-500");
                    const total = 100; // max possible score before penalty
                    return (
                      <Tooltip key={k} content={`${k.replace('_', ' ').toUpperCase()}: ${v}`}>
-                       <div className={`${colors[k] || "bg-neutral-500"} h-full`} style={{ width: `${(Math.abs(v) / total) * 100}%` }} />
+                       <div className={`${barColor} h-full`} style={{ width: `${(Math.abs(v) / total) * 100}%` }} />
                      </Tooltip>
                    );
                 })}
@@ -217,18 +218,18 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
         initial="hidden" 
         animate="visible" 
         variants={{
-          hidden: { opacity: 0, y: 10 },
-          visible: { 
-            opacity: 1, 
-            y: 0, 
-            transition: { type: "spring", stiffness: 350, damping: 28, mass: 0.8, staggerChildren: 0.05, delayChildren: 0.03 } 
+          hidden: { opacity: 0, y: 6 },
+          visible: {
+            opacity: 1,
+            y: 0,
+            transition: { type: "spring", stiffness: 450, damping: 34, staggerChildren: 0.04, delayChildren: 0.02 }
           }
         }}
         className="flex-1 flex flex-col min-h-0 overflow-y-auto overflow-x-hidden custom-scrollbar pt-0.5 justify-start pb-2"
       >
         
         {/* ROW 2: Primary Signal Details */}
-      <motion.div variants={{ hidden: { opacity: 0, y: 10, scale: 0.99 }, visible: { opacity: 1, y: 0, scale: 1, transition: { type: "spring", stiffness: 380, damping: 28 } } }} className="grid grid-cols-3 gap-x-3 gap-y-2.5 py-2 border-y border-border/30 shrink-0">
+      <motion.div variants={{ hidden: { opacity: 0, y: 6 }, visible: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 500, damping: 32 } } }} className="grid grid-cols-3 gap-x-3 gap-y-2.5 py-2.5 shrink-0">
           <TerminalStat label="LTP" value={<LivePrice symbol={selectedSymbol} decimals={2} fallback={insights?.indicators?.close} />} xl />
           
           <TerminalStat 
@@ -262,38 +263,12 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
             xl 
           />
           
-          <TerminalStat 
-            label="DEVIATION" 
-            value={(() => {
-              const current = data.ltp ?? monitoring?.currentPrice ?? indicators?.close;
-              const activeEntry = selectedSignal?.entryPrice || monitoring?.entryPrice;
-              const trigger = activeEntry || scan?.provisional_trigger || indicators?.vwap || indicators?.ema20;
-              const dev = trigger && current ? calcPnLPct(current, trigger) : null;
-              if (dev != null) {
-                const isProvisional = !activeEntry && scan?.provisional_trigger != null;
-                const animatedEl = <AnimatedNumber value={dev} decimals={2} showSign={true} suffix="%" duration={0.3} flashColor={true} />;
-                if (isProvisional) {
-                  return (
-                    <span className="opacity-50 border-b border-dotted border-current pb-[1px]">
-                      {animatedEl}
-                    </span>
-                  );
-                }
-                return animatedEl;
-              }
-              return "—";
-            })()} 
-            xl 
-            color={(() => {
-              const current = data.ltp ?? monitoring?.currentPrice ?? indicators?.close;
-              const activeEntry = selectedSignal?.entryPrice || monitoring?.entryPrice;
-              const trigger = activeEntry || scan?.provisional_trigger || indicators?.vwap || indicators?.ema20;
-              const dev = trigger && current ? calcPnLPct(current, trigger) : null;
-              if (dev != null) {
-                return dev >= 0 ? "text-bull" : "text-bear";
-              }
-              return "text-foreground";
-            })()}
+          <DeviationStat
+            symbol={selectedSymbol}
+            monitoring={monitoring}
+            selectedSignal={selectedSignal}
+            scan={scan}
+            indicators={indicators}
           />
 
           {selectedSignal && (
@@ -301,15 +276,36 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
               <TerminalStat label="STOP LOSS" value={fmtNum(selectedSignal.stopLoss)} xl color="text-bear" />
               <TerminalStat label="TARGET" value={fmtNum(selectedSignal.target1)} xl color="text-bull" />
               <TerminalStat label="RISK/REWARD" value={`${fmtNum(selectedSignal.riskReward, 1)}x`} xl />
+              {selectedSignal.expectedHoldMinutes != null && (
+                <TerminalStat
+                  label="EXP. HOLD"
+                  value={
+                    selectedSignal.expectedHoldMinutes >= 390
+                      ? `~${Math.round(selectedSignal.expectedHoldMinutes / 390)}d`
+                      : selectedSignal.expectedHoldMinutes >= 60
+                        ? `~${Math.floor(selectedSignal.expectedHoldMinutes / 60)}h`
+                        : `~${selectedSignal.expectedHoldMinutes}m`
+                  }
+                  xl
+                />
+              )}
+              {selectedSignal.setupStats && (
+                <TerminalStat
+                  label={`HIT RATE (n=${selectedSignal.setupStats.samples})`}
+                  value={`${selectedSignal.setupStats.winRate}%`}
+                  xl
+                  color={selectedSignal.setupStats.winRate >= 60 ? "text-bull" : selectedSignal.setupStats.winRate >= 45 ? "text-amber-500" : "text-bear"}
+                />
+              )}
             </>
           )}
         </motion.div>
 
         {/* ROW 3: Dense Technical Matrix (Checklist + AI Factors) */}
-        <motion.div layout transition={{ type: "spring", stiffness: 350, damping: 28 }} variants={{ hidden: { opacity: 0, y: 10, scale: 0.99 }, visible: { opacity: 1, y: 0, scale: 1, transition: { type: "spring", stiffness: 380, damping: 28 } } }} className="py-1 shrink-0 flex flex-col">
+        <motion.div layout transition={SPRING_STANDARD} variants={{ hidden: { opacity: 0, y: 10, scale: 0.99 }, visible: { opacity: 1, y: 0, scale: 1, transition: { type: "spring", stiffness: 380, damping: 28 } } }} className="py-1 shrink-0 flex flex-col">
           <AnimatePresence mode="popLayout" initial={false}>
             {selectedMetric ? (
-              <motion.div layout transition={{ type: "spring", stiffness: 350, damping: 28 }} key="detail" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} className="flex flex-col w-full">
+              <motion.div layout transition={SPRING_STANDARD} key="detail" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} className="flex flex-col w-full">
                 <MetricDetailView 
                   metricId={selectedMetric} 
                   onBack={() => setSelectedMetric(null)}
@@ -320,7 +316,7 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
                 />
               </motion.div>
             ) : (
-              <motion.div layout transition={{ type: "spring", stiffness: 350, damping: 28 }} key="grid" initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 8 }} className="flex flex-col gap-1.5 w-full">
+              <motion.div layout transition={SPRING_STANDARD} key="grid" initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 8 }} className="flex flex-col gap-1.5 w-full">
                  <div className="grid grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)] gap-x-2 gap-y-1 w-full">
                    {/* Column A: Technicals */}
                    <div className="flex flex-col gap-1 min-w-0">
@@ -337,12 +333,13 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
                             if (unifiedTrend.includes("bear") || unifiedTrend === "down" || unifiedTrend === "sell") return "text-bear";
                             return "text-yellow-500";
                           })()} />
-                         <MatrixRow onClick={() => setSelectedMetric("liquidityStatus")} label="Liquidity Status" tooltip="Detects if a major stop-hunt or liquidity sweep has just occurred." value={selectedSignal?.setupType === "LIQUIDITY_SWEEP" ? <span className="text-purple-400 font-bold text-[10px]">SWEEP RECOVERY</span> : "STANDARD"} color={selectedSignal?.setupType === "LIQUIDITY_SWEEP" ? "text-purple-400 font-bold" : "text-neutral-400"} />
+                         <MatrixRow onClick={() => setSelectedMetric("liquidityStatus")} label="Liquidity Status" tooltip="Detects if a major stop-hunt or liquidity sweep has just occurred." value={selectedSignal?.setupType === "LIQUIDITY_SWEEP" ? <span className="text-purple-400 font-semibold">SWEEP RECOVERY</span> : "STANDARD"} color={selectedSignal?.setupType === "LIQUIDITY_SWEEP" ? "text-purple-400" : "text-neutral-400"} />
                          <MatrixRow onClick={() => setSelectedMetric("rsiMomentum")} label="RSI Momentum" tooltip="Relative Strength Index showing overbought/oversold conditions." value={
                            <div className="flex items-center">
                              {(() => {
                                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                               const r = indicators?.rsi14 ?? (selectedSignal as any)?.indicators?.rsi ?? (forecast as any)?.rsi ?? (selectedSignal?.direction === "BUY" ? 62 : 46);
+                               const r = indicators?.rsi14 ?? (selectedSignal as any)?.indicators?.rsi ?? (forecast as any)?.rsi;
+                               if (r == null) return "—";
                                return (
                                  <>
                                    {`${fmtNum(r, 0)} (${r >= 70 ? "OB" : r <= 30 ? "OS" : r >= 50 ? "BULL" : "BEAR"})`}
@@ -351,44 +348,34 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
                                );
                              })()}
                            </div>
-                         } color="text-bull" />
+                         } color={(() => {
+                           // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                           const r = indicators?.rsi14 ?? (selectedSignal as any)?.indicators?.rsi ?? (forecast as any)?.rsi;
+                           if (r == null) return "text-neutral-500";
+                           return r >= 50 ? "text-bull" : "text-bear";
+                         })()} />
                          <MatrixRow onClick={() => setSelectedMetric("volumeSurge")} label="Volume Surge" tooltip="Current volume compared to the 20-period moving average." value={(() => {
                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                           const v = indicators?.volumeRatio ?? (selectedSignal as any)?.indicators?.volumeRatio ?? (forecast as any)?.volumeRatio ?? 1.4;
+                           const v = indicators?.volumeRatio ?? (selectedSignal as any)?.indicators?.volumeRatio ?? (forecast as any)?.volumeRatio;
+                           if (v == null) return "—";
                            return `${fmtNum(v, 1)}x`;
-                         })()} color="text-bull" />
-                         <MatrixRow onClick={() => setSelectedMetric("vwapSupport")} label="VWAP Support" tooltip="Checks if the price is holding above the Volume Weighted Average Price." value={(() => {
-                            const current = data.ltp ?? monitoring?.currentPrice ?? insights?.indicators?.close ?? 0;
-                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                            const vwapPrice = (indicators as any)?.vwap ?? (forecast as any)?.vwap;
-                            if (vwapPrice && current > 0) {
-                              return current >= vwapPrice ? "> VWAP (HOLDING)" : "< VWAP (BROKEN)";
-                            }
-                            if (selectedSignal?.direction === 'BUY') return "> VWAP";
-                            if (selectedSignal?.direction === 'SELL') return "< VWAP";
-                            if (current > 0 && indicators?.ema9) {
-                              return current >= indicators.ema9 ? "> EMA9" : "< EMA9";
-                            }
-                            return "VALID";
-                          })()} color={(() => {
-                            const current = data.ltp ?? monitoring?.currentPrice ?? insights?.indicators?.close ?? 0;
-                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                            const vwapPrice = (indicators as any)?.vwap ?? (forecast as any)?.vwap;
-                            if (vwapPrice && current > 0) {
-                              return current >= vwapPrice ? "text-bull/80" : "text-bear/80";
-                            }
-                            if (selectedSignal?.direction === 'BUY') return "text-bull/80";
-                            if (selectedSignal?.direction === 'SELL') return "text-bear/80";
-                            if (current > 0 && indicators?.ema9) {
-                              return current >= indicators.ema9 ? "text-bull/80" : "text-bear/80";
-                            }
-                            return "text-bull/80";
-                          })()} />
+                         })()} color={(() => {
+                           // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                           const v = indicators?.volumeRatio ?? (selectedSignal as any)?.indicators?.volumeRatio ?? (forecast as any)?.volumeRatio;
+                           return v == null ? "text-neutral-500" : "text-bull";
+                         })()} />
+                         <VwapSupportRow
+                           symbol={selectedSymbol}
+                           monitoring={monitoring}
+                           indicators={indicators}
+                           forecast={forecast}
+                           onClick={() => setSelectedMetric("vwapSupport")}
+                         />
                          <MatrixRow onClick={() => setSelectedMetric("emaDistance")} label="EMA 9 / 20" tooltip="Exponential Moving Averages used to determine short-term momentum." value={(() => {
-                           const base = insights?.indicators?.close ?? selectedSignal?.entryPrice ?? monitoring?.entryPrice ?? 2923;
-                           const e9 = indicators?.ema9 ?? Math.round(base * 0.996);
-                           const e20 = indicators?.ema20 ?? Math.round(base * 0.984);
-                           return `${fmtNum(e9, 0)} / ${fmtNum(e20, 0)}`;
+                           const e9 = indicators?.ema9;
+                           const e20 = indicators?.ema20;
+                           if (e9 == null && e20 == null) return "—";
+                           return `${e9 != null ? fmtNum(e9, 0) : "—"} / ${e20 != null ? fmtNum(e20, 0) : "—"}`;
                          })()} color="text-foreground" />
                       </ul>
                    </div>
@@ -400,7 +387,8 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
                          <MatrixRow onClick={() => setSelectedMetric("techEdge")} label="Tech Edge" tooltip="Algorithmic scoring of technical momentum and indicator alignment." value={
                            <div className="flex items-center">
                              {(() => {
-                               const te = techEdgeVal ?? (selectedSignal?.direction === "BUY" ? 92 : 84);
+                               const te = techEdgeVal;
+                               if (te == null) return "—";
                                return (
                                  <>
                                    {`${te}%`}
@@ -413,7 +401,8 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
                          <MatrixRow onClick={() => setSelectedMetric("regimeAlign")} label="Regime Align" tooltip="Checks if the signal aligns with the broader Market Regime." value={
                            <div className="flex items-center">
                              {(() => {
-                               const ra = regimeAlignVal ?? (selectedSignal?.direction === "BUY" ? 88 : 82);
+                               const ra = regimeAlignVal;
+                               if (ra == null) return "—";
                                return (
                                  <>
                                    {`${ra}%`}
@@ -432,14 +421,16 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
                  </div>
 
                  {/* Full-Width Rows for Long Metrics (MTF Confluence & Price Pattern) */}
-                  <div className="flex flex-col gap-1 pt-1 border-t border-border/15 w-full text-[10.5px] font-mono">
+                  <div className="flex flex-col gap-1 pt-1 w-full text-[10.5px] font-mono">
                     <MatrixRow onClick={() => setSelectedMetric("mtfConfluence")} label="MTF Confluence" tooltip="Multi-timeframe score assessing alignment across multiple charts (15m, 1h, 1d)." value={
                      (() => {
-                        const rawS = scan?.mtfScore ?? (selectedSignal as any)?.mtfScore ?? mtf_score ?? 0;
-                        const rawT = scan?.mtfTotal ?? (selectedSignal as any)?.mtfTotal ?? mtf_total ?? 0;
+                        // Backend may attach mtf fields to suggestions at runtime; they are not part of the Suggestion schema
+                        const sigMtf = selectedSignal as (Suggestion & { mtfScore?: number; mtfTotal?: number; mtfConfluenceScore?: number }) | null;
+                        const rawS = scan?.mtfScore ?? sigMtf?.mtfScore ?? mtf_score ?? 0;
+                        const rawT = scan?.mtfTotal ?? sigMtf?.mtfTotal ?? mtf_total ?? 0;
                         const s = rawS;
                         const t = rawT > 0 ? rawT : (rawS > 0 ? 3 : (scan ? (scan.mtfTotal || 3) : 3));
-                        const conf = scan?.mtfConfluenceScore ?? (selectedSignal as any)?.mtfConfluenceScore ?? (s === 0 ? -1 : 1);
+                        const conf = scan?.mtfConfluenceScore ?? sigMtf?.mtfConfluenceScore ?? (s === 0 ? -1 : 1);
                         const isNoData = (t === 0 && s === 0) || (scan === null && !selectedSignal && !mtf_score);
                         const isZeroConf = !isNoData && s === 0;
                         const isPartial = !isNoData && s > 0 && s < t;
@@ -463,7 +454,7 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
                         }
 
                         return (
-                          <span className={cn("flex items-center gap-1.5 min-w-0 text-[10px] font-bold break-words", style)}>
+                          <span className={cn("flex items-center gap-1.5 min-w-0 font-semibold break-words", style)}>
                             <span>{isNoData ? "—" : `${s}/${t}`} {label}</span>
                           </span>
                         );
@@ -471,22 +462,22 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
                    } color="text-foreground" />
                    <MatrixRow onClick={() => setSelectedMetric("pricePattern")} label="Price Pattern" tooltip="Specific candlestick or structural patterns identified on the chart." value={
                      forecast?.technicalPatterns && forecast.technicalPatterns.length > 0 ? (
-                       <span className="flex items-center gap-1.5 text-orange-500 min-w-0 text-[10px] font-bold break-words">
+                       <span className="flex items-center gap-1.5 text-orange-500 min-w-0 font-semibold break-words">
                          <Flame className="h-3 w-3 shrink-0" />
                          <span>{forecast.technicalPatterns[0].replace(/_/g, " ")}</span>
                        </span>
                      ) : (selectedSignal?.setupType || scan?.setupType) && (selectedSignal?.setupType || scan?.setupType) !== "LIQUIDITY_SWEEP" ? (
-                       <span className="flex items-center gap-1.5 text-orange-500 min-w-0 text-[10px] font-bold break-words">
+                       <span className="flex items-center gap-1.5 text-orange-500 min-w-0 font-semibold break-words">
                          <Flame className="h-3 w-3 shrink-0" />
                          <span>{(selectedSignal?.setupType || scan?.setupType || "").replace(/_/g, " ")}</span>
                        </span>
                      ) : scan?.condition ? (
                        <span className="text-foreground/80 font-medium break-words">{scan.condition}</span>
                      ) : "NONE"
-                   } color={(forecast?.technicalPatterns && forecast.technicalPatterns.length > 0) || ((selectedSignal?.setupType || scan?.setupType) && (selectedSignal?.setupType || scan?.setupType) !== "LIQUIDITY_SWEEP") ? "text-orange-500 font-bold" : "text-neutral-500"} />
+                   } color={(forecast?.technicalPatterns && forecast.technicalPatterns.length > 0) || ((selectedSignal?.setupType || scan?.setupType) && (selectedSignal?.setupType || scan?.setupType) !== "LIQUIDITY_SWEEP") ? "text-orange-500" : "text-neutral-500"} />
                    <MatrixRow onClick={() => setSelectedMetric("modelSource")} label="Analysis Source" tooltip="Whether this is real model output or a heuristic fallback engine." value={(() => {
                      return forecast?.isFallback ? "HEURISTIC FALLBACK" : "AI MODEL";
-                   })()} color={forecast?.isFallback ? "text-yellow-500 font-bold" : "text-green-500 font-bold"} />
+                   })()} color={forecast?.isFallback ? "text-yellow-500" : "text-bull"} />
                  </div>
               </motion.div>
             )}
@@ -496,7 +487,7 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
         {/* ROW 4 deleted as requested */}
         {/* ROW 5: Confidence Evolution */}
         {scoreHistory.length >= 2 && (
-          <motion.div transition={{ type: "spring", stiffness: 350, damping: 28 }} variants={{ hidden: { opacity: 0, y: 10 }, visible: { opacity: 1, y: 0 } }} className="mt-2 pt-2 border-t border-border/10 shrink-0 flex flex-col min-h-0">
+          <motion.div transition={SPRING_STANDARD} variants={{ hidden: { opacity: 0, y: 10 }, visible: { opacity: 1, y: 0 } }} className="mt-3 pt-3 shrink-0 flex flex-col min-h-0">
             <div className="text-xs font-bold uppercase tracking-widest text-neutral-500 mb-2 shrink-0 flex items-center justify-between">
                <span>Confidence Evolution</span>
                {(() => {
@@ -536,6 +527,58 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
     </motion.div>
   );
 });
+
+// Subscribes to live ticks itself so per-tick renders touch only this stat row,
+// not the whole panel.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function DeviationStat({ symbol, monitoring, selectedSignal, scan, indicators }: { symbol: string; monitoring: any; selectedSignal: Suggestion | null; scan: any; indicators: any }) {
+  const ltp = useSymbolDataSelector(symbol, (d) => d.ltp);
+  const current = ltp ?? monitoring?.currentPrice ?? indicators?.close;
+  const activeEntry = selectedSignal?.entryPrice || monitoring?.entryPrice;
+  const trigger = activeEntry || scan?.provisional_trigger || indicators?.vwap || indicators?.ema20;
+  const dev = trigger && current ? calcPnLPct(current, trigger) : null;
+  return (
+    <TerminalStat
+      label="DEVIATION"
+      value={(() => {
+        if (dev != null) {
+          const isProvisional = !activeEntry && scan?.provisional_trigger != null;
+          const animatedEl = <AnimatedNumber value={dev} decimals={2} showSign={true} suffix="%" duration={0.3} flashColor={true} />;
+          if (isProvisional) {
+            return (
+              <span className="opacity-50 border-b border-dotted border-current pb-[1px]">
+                {animatedEl}
+              </span>
+            );
+          }
+          return animatedEl;
+        }
+        return "—";
+      })()}
+      xl
+      color={dev != null ? (dev >= 0 ? "text-bull" : "text-bear") : "text-foreground"}
+    />
+  );
+}
+
+// Subscribes to live ticks itself (see DeviationStat). Shows "—" when neither
+// VWAP nor EMA9 comparison is possible — never asserts structure from signal direction.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function VwapSupportRow({ symbol, monitoring, indicators, forecast, onClick }: { symbol: string; monitoring: any; indicators: any; forecast: any; onClick: () => void }) {
+  const ltp = useSymbolDataSelector(symbol, (d) => d.ltp);
+  const current = ltp ?? monitoring?.currentPrice ?? indicators?.close ?? 0;
+  const vwapPrice = indicators?.vwap ?? forecast?.vwap;
+  let value = "—";
+  let color = "text-neutral-500";
+  if (vwapPrice && current > 0) {
+    value = current >= vwapPrice ? "> VWAP (HOLDING)" : "< VWAP (BROKEN)";
+    color = current >= vwapPrice ? "text-bull/80" : "text-bear/80";
+  } else if (current > 0 && indicators?.ema9) {
+    value = current >= indicators.ema9 ? "> EMA9" : "< EMA9";
+    color = current >= indicators.ema9 ? "text-bull/80" : "text-bear/80";
+  }
+  return <MatrixRow onClick={onClick} label="VWAP Support" tooltip="Checks if the price is holding above the Volume Weighted Average Price." value={value} color={color} />;
+}
 
 function DecryptText({ text }: { text: string }) {
   const ref = useRef<HTMLSpanElement>(null);
@@ -613,8 +656,17 @@ function AutoFitText({ children, className }: { children: React.ReactNode, class
 function TerminalStat({ label, value, xl, color }: { label: string; value: React.ReactNode; xl?: boolean; color?: string }) {
   return (
     <div className="flex flex-col min-w-0">
-      <span className="text-[11px] font-bold font-sans uppercase tracking-widest text-muted-foreground mb-0.5 truncate whitespace-nowrap">{label}</span>
-      <AutoFitText className={cn("font-black font-mono tabular-nums tracking-tighter leading-none", xl ? "text-3xl" : "text-2xl", color || "text-foreground")}>
+      <span className="text-[10px] @[26rem]:text-[11px] font-bold font-sans uppercase tracking-widest text-muted-foreground mb-0.5 truncate whitespace-nowrap">{label}</span>
+      {/* Fluid sizing: scale with the panel container so numbers stay readable on
+          wide screens (no wasted space) and never overflow on narrow ones. AutoFitText
+          is the final safety net that shrinks anything still too wide to fit. */}
+      <AutoFitText className={cn(
+        "font-black font-mono tabular-nums tracking-tighter leading-none",
+        xl
+          ? "text-xl @[20rem]:text-2xl @[27rem]:text-3xl @[33rem]:text-4xl"
+          : "text-lg @[20rem]:text-xl @[27rem]:text-2xl @[33rem]:text-3xl",
+        color || "text-foreground"
+      )}>
         {typeof value === "string" || typeof value === "number" ? <DecryptText text={String(value)} /> : value}
       </AutoFitText>
     </div>
@@ -770,7 +822,15 @@ function MetricDetailView({ metricId, onBack, insights, forecast, selectedSignal
           <div className="flex flex-col">
             <div className="flex justify-between items-center border-b border-border/10 py-1.5">
               <span className="text-muted-foreground">Status</span>
-              <span className="font-bold text-bull">{selectedSignal?.direction === 'BUY' ? "> VWAP" : selectedSignal?.direction === 'SELL' ? "< VWAP" : "VALID"}</span>
+              {(() => {
+                const vwap = insights?.indicators?.vwap;
+                const close = insights?.indicators?.close;
+                if (vwap && close) {
+                  const holding = close >= vwap;
+                  return <span className={cn("font-bold", holding ? "text-bull" : "text-bear")}>{holding ? "> VWAP (HOLDING)" : "< VWAP (BROKEN)"}</span>;
+                }
+                return <span className="font-bold text-neutral-500">—</span>;
+              })()}
             </div>
           </div>
         </div>
@@ -812,7 +872,7 @@ function MetricDetailView({ metricId, onBack, insights, forecast, selectedSignal
           <div className="flex flex-col">
             <div className="flex justify-between items-center border-b border-border/10 py-1.5">
               <span className="text-muted-foreground">Engine Used</span>
-              <span className="font-bold text-orange-500">{forecast?.isFallback ? "FALLBACK" : (forecast?.source ? forecast.source.toUpperCase().replace("NIFTY50GPT", "GPT-50") : "ENSEMBLE")}</span>
+              <span className="font-bold text-orange-500">{forecast?.isFallback ? "FALLBACK" : (forecast?.source ? forecast.source.toUpperCase().replace("NIFTY50GPT", "GPT-50") : "—")}</span>
             </div>
           </div>
         </div>
@@ -836,10 +896,13 @@ function MetricDetailView({ metricId, onBack, insights, forecast, selectedSignal
 }
 
 function MatrixRow({ label, value, color, tooltip, onClick, className }: { label: string; value: React.ReactNode; color: string; tooltip?: string; onClick?: () => void; className?: string }) {
+  // Label and value share one size (text-[11px]); hierarchy comes from weight
+  // and color, never size — so a bold amber status can't read larger than a
+  // neutral value in the same row.
   const content = (
-    <motion.li onClick={onClick} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.3 }} className={cn("flex justify-between items-center group gap-1.5 py-1 min-w-0 text-[13px] sm:text-[14px] overflow-hidden", onClick ? "cursor-pointer" : "cursor-default", className)}>
-      <span className={cn("text-muted-foreground transition-colors shrink rounded py-0.5 px-1 -ml-1 truncate whitespace-nowrap", onClick ? "group-hover:bg-white/5 group-hover:text-foreground apple-hover" : "group-hover:text-foreground")}>{label}</span>
-      <span className={cn("font-bold flex items-center justify-end text-right shrink-0 tabular-nums whitespace-nowrap", color)}>
+    <motion.li onClick={onClick} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={FADE_STANDARD} className={cn("flex justify-between items-center group gap-1.5 py-1 min-w-0 text-[11px] overflow-hidden", onClick ? "cursor-pointer" : "cursor-default", className)}>
+      <span className={cn("text-muted-foreground font-medium transition-colors shrink rounded py-0.5 px-1 -ml-1 truncate whitespace-nowrap", onClick ? "group-hover:bg-white/5 group-hover:text-foreground apple-hover" : "group-hover:text-foreground")}>{label}</span>
+      <span className={cn("font-semibold flex items-center justify-end text-right shrink-0 tabular-nums whitespace-nowrap", color)}>
         {typeof value === 'string' || typeof value === 'number' ? <DecryptText text={String(value)} /> : value}
       </span>
     </motion.li>

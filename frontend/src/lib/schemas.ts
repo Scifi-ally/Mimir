@@ -56,8 +56,17 @@ export const SuggestionSchema = z.object({
   currentPrice: z.number().nullable(),
   generatedAt: z.string(),
   closedAt: z.string().nullable(),
-   
+
   signalFactors: z.any().nullable().optional(),
+  // Realized per-setup track record (null until >=10 closed samples)
+  setupStats: z
+    .object({
+      samples: z.number(),
+      winRate: z.number(),
+      medianTimeToTargetMin: z.number().nullable(),
+    })
+    .nullable()
+    .optional(),
 });
 
 export const MarketRegimeSchema = z.object({

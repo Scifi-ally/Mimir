@@ -1,10 +1,11 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, type ChangeEvent } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import type { SystemConfig, UpdateSystemConfig } from "@/types/api";
 import { cn } from "@/lib/format";
 import { Tooltip } from "@/components/mimir/tooltip";
+import { FADE_SLOW, FADE_STANDARD } from "@/lib/motion";
 
 interface SettingsDialogProps {
   isOpen: boolean;
@@ -29,6 +30,9 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
   
   // Local form state
   const [formData, setFormData] = useState<Partial<SystemConfig>>({});
+  // Raw text for number fields being edited, so typing "2.5" or clearing a
+  // field doesn't get re-parsed and clobbered mid-keystroke.
+  const [numberDrafts, setNumberDrafts] = useState<Record<string, string>>({});
   const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({});
   const [adminTokenInput, setAdminTokenInput] = useState("");
   const [tokenSavedToast, setTokenSavedToast] = useState(false);
@@ -78,6 +82,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
   useEffect(() => {
     if (config) {
       setFormData({ ...config });
+      setNumberDrafts({});
     }
     // Also load admin token from local storage
     setAdminTokenInput(localStorage.getItem("mimir_admin_token") || "");
@@ -91,6 +96,16 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
       return formData[key] !== config[key];
     });
   }, [formData, config]);
+
+  // Escape closes the dialog (matches every other overlay in the app).
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isOpen, onClose]);
 
   // Mutation to save settings
   const saveMutation = useMutation({
@@ -144,10 +159,9 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
   };
 
   const handleNumberChange = (key: keyof SystemConfig, valStr: string, isFloat = true) => {
-    if (valStr === "") {
-      setFormData((prev) => ({ ...prev, [key]: 0 }));
-      return;
-    }
+    // Keep whatever the user typed visible; only commit valid parses to formData.
+    setNumberDrafts((prev) => ({ ...prev, [key]: valStr }));
+    if (valStr === "" || valStr === "-" || valStr === ".") return;
     const parsed = isFloat ? parseFloat(valStr) : parseInt(valStr, 10);
     if (!isNaN(parsed)) {
       setFormData((prev) => ({ ...prev, [key]: parsed }));
@@ -176,7 +190,10 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
   };
 
   const handleReset = () => {
-    if (config) setFormData({ ...config });
+    if (config) {
+      setFormData({ ...config });
+      setNumberDrafts({});
+    }
   };
 
   const saveAdminToken = () => {
@@ -199,16 +216,19 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
   };
 
   const renderField = (
-    label: string, 
-    tooltip: string, 
-    type: "text" | "number" | "password", 
-    value: string | number | undefined, 
-    onChange: (e: any) => void,
+    label: string,
+    tooltip: string,
+    type: "text" | "number" | "password",
+    value: string | number | undefined,
+    onChange: (e: ChangeEvent<HTMLInputElement>) => void,
     placeholder?: string,
-    secretKey?: string
+    secretKey?: string,
+    draftKey?: keyof SystemConfig
   ) => {
     const isSecret = type === "password";
     const currentType = isSecret && secretKey && showSecrets[secretKey] ? "text" : type;
+    // Number fields show the raw draft while typing so partial input isn't clobbered.
+    const displayValue = draftKey && numberDrafts[draftKey] !== undefined ? numberDrafts[draftKey] : value;
 
     return (
       <div className="flex flex-col">
@@ -224,11 +244,13 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
           )}
           <input
             type={currentType}
-            value={value ?? ""}
+            inputMode={type === "number" ? "decimal" : undefined}
+            value={displayValue ?? ""}
             onChange={onChange}
             placeholder={placeholder}
             autoComplete="new-password"
-            className="w-full bg-transparent text-sm font-mono text-foreground outline-none ring-0 border-0 focus:border-0 px-0 py-2.5 transition-colors shadow-none rounded-none placeholder:text-muted-foreground/30"
+            spellCheck={false}
+            className="w-full bg-transparent text-sm font-mono text-foreground outline-none ring-0 border-0 border-b border-foreground/10 focus:border-primary hover:border-foreground/25 px-0 py-2.5 transition-colors shadow-none rounded-none placeholder:text-muted-foreground/30"
             style={{ paddingRight: isSecret ? "4rem" : "0" }}
           />
           {isSecret && secretKey && (
@@ -245,6 +267,23 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
     );
   };
 
+  const renderNumberField = (
+    label: string,
+    tooltip: string,
+    key: keyof SystemConfig,
+    isFloat = true
+  ) =>
+    renderField(
+      label,
+      tooltip,
+      "number",
+      formData[key] as number | undefined,
+      (e) => handleNumberChange(key, e.target.value, isFloat),
+      undefined,
+      undefined,
+      key
+    );
+
   return (
     <AnimatePresence>
       {isOpen && (
@@ -254,7 +293,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 0.3 }}
+            transition={FADE_STANDARD}
             className="fixed inset-0 bg-background/80 backdrop-blur-sm z-[80]"
             onClick={onClose}
           />
@@ -264,19 +303,26 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
             initial={{ y: "100%", x: "-50%", scale: 0.98 }}
             animate={{ y: 0, x: "-50%", scale: 1 }}
             exit={{ y: "100%", x: "-50%", scale: 0.98 }}
-            transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
-            className="fixed left-1/2 bottom-0 z-[90] flex flex-col bg-background text-foreground overflow-hidden h-[86vh] w-full max-w-5xl rounded-t-3xl shadow-[0_-8px_40px_rgba(0,0,0,0.08)] dark:shadow-[0_-8px_40px_rgba(0,0,0,0.4)] border border-b-0 border-foreground/5 ring-0 outline-none"
+            transition={FADE_SLOW}
+            className="fixed left-1/2 bottom-0 z-[90] flex flex-col bg-background text-foreground overflow-hidden h-[86vh] w-full max-w-5xl rounded-t-3xl shadow-[0_-8px_40px_rgba(0,0,0,0.4)] ring-0 outline-none"
           >
             {/* Header */}
             <div className="flex items-center justify-between px-8 pt-8 pb-4 shrink-0">
               <div className="flex items-center gap-3">
                 <h2 className="text-xl font-black tracking-tight text-foreground">System Settings</h2>
                 {isDirty && (
-                  <span className="text-[10px] font-extrabold text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                  <span className="text-[10px] font-extrabold text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded">
                     UNSAVED
                   </span>
                 )}
               </div>
+              <button
+                onClick={onClose}
+                aria-label="Close settings"
+                className="w-8 h-8 flex items-center justify-center rounded-full text-muted-foreground hover:text-foreground hover:bg-foreground/5 transition-colors text-lg leading-none"
+              >
+                ✕
+              </button>
             </div>
 
             <div className="flex flex-1 overflow-hidden">
@@ -317,7 +363,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                             <span className="text-[10px] text-muted-foreground/60 hover:text-primary cursor-help">ⓘ</span>
                           </Tooltip>
                         </div>
-                        <div className="flex items-center gap-6 py-2 border-b border-foreground/15">
+                        <div className="flex items-center gap-6 py-2 border-b border-foreground/8">
                           <label className="flex items-center gap-2 cursor-pointer">
                             <input
                               type="radio"
@@ -406,7 +452,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                             onChange={(e) => setAdminTokenInput(e.target.value)}
                             placeholder="Set custom token..."
                             autoComplete="new-password"
-                            className="w-full bg-transparent text-sm font-mono text-foreground outline-none ring-0 border-0 border-b border-foreground/15 focus:border-primary px-0 py-2.5 transition-colors shadow-none rounded-none pr-14 placeholder:text-muted-foreground/30"
+                            className="w-full bg-transparent text-sm font-mono text-foreground outline-none ring-0 border-0 border-b border-foreground/8 focus:border-primary px-0 py-2.5 transition-colors shadow-none rounded-none pr-14 placeholder:text-muted-foreground/30"
                           />
                           <button
                             type="button"
@@ -455,32 +501,32 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                   {/* TAB 3: CAPITAL LIMITS */}
                   {activeTab === "capital" && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-6">
-                      {renderField("Trading Capital (₹)", "Total dedicated capital available to the trading engine. Engine scales positions based on this.", "number", formData.tradingCapital, (e) => handleNumberChange("tradingCapital", e.target.value))}
-                      {renderField("Max Deployed Capital (%)", "Maximum percentage of Trading Capital allowed to be tied up in positions at any time.", "number", formData.maxDeployedCapitalPct, (e) => handleNumberChange("maxDeployedCapitalPct", e.target.value))}
-                      {renderField("Max Risk Per Trade (%)", "Risk tolerance per trade (Loss if Stop Loss hits). Determines position sizing.", "number", formData.maxRiskPerTradePct, (e) => handleNumberChange("maxRiskPerTradePct", e.target.value))}
-                      {renderField("Max Daily Loss (%)", "Global kill switch. Stops taking new trades if account loses this percentage in a day.", "number", formData.maxDailyLossPct, (e) => handleNumberChange("maxDailyLossPct", e.target.value))}
-                      {renderField("Weekly Loss Limit (%)", "System pauses for the remainder of the week if this threshold is hit.", "number", formData.weeklyLossLimitPct, (e) => handleNumberChange("weeklyLossLimitPct", e.target.value))}
-                      {renderField("Rolling Drawdown Limit (%)", "Hard system pause if drawdown from peak hits this mark.", "number", formData.rollingDrawdownPct, (e) => handleNumberChange("rollingDrawdownPct", e.target.value))}
+                      {renderNumberField("Trading Capital (₹)", "Total dedicated capital available to the trading engine. Engine scales positions based on this.", "tradingCapital")}
+                      {renderNumberField("Max Deployed Capital (%)", "Maximum percentage of Trading Capital allowed to be tied up in positions at any time.", "maxDeployedCapitalPct")}
+                      {renderNumberField("Max Risk Per Trade (%)", "Risk tolerance per trade (Loss if Stop Loss hits). Determines position sizing.", "maxRiskPerTradePct")}
+                      {renderNumberField("Max Daily Loss (%)", "Global kill switch. Stops taking new trades if account loses this percentage in a day.", "maxDailyLossPct")}
+                      {renderNumberField("Weekly Loss Limit (%)", "System pauses for the remainder of the week if this threshold is hit.", "weeklyLossLimitPct")}
+                      {renderNumberField("Rolling Drawdown Limit (%)", "Hard system pause if drawdown from peak hits this mark.", "rollingDrawdownPct")}
                     </div>
                   )}
 
                   {/* TAB 4: POSITION LIMITS */}
                   {activeTab === "exposure" && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-6">
-                      {renderField("Max Open Positions", "Absolute limit on concurrent open trades.", "number", formData.maxOpenPositions, (e) => handleNumberChange("maxOpenPositions", e.target.value, false))}
-                      {renderField("Max Same Direction Positions", "Limits market exposure by preventing too many parallel longs or shorts.", "number", formData.maxSameDirectionOpenPositions, (e) => handleNumberChange("maxSameDirectionOpenPositions", e.target.value, false))}
-                      {renderField("Max Sector Exposure", "Prevents overconcentration in a single sector.", "number", formData.maxSectorExposure, (e) => handleNumberChange("maxSectorExposure", e.target.value, false))}
-                      {renderField("Min Risk:Reward Ratio", "Filter out trades that don't offer at least this reward ratio (e.g. 2.0).", "number", formData.minRiskReward, (e) => handleNumberChange("minRiskReward", e.target.value))}
+                      {renderNumberField("Max Open Positions", "Absolute limit on concurrent open trades.", "maxOpenPositions", false)}
+                      {renderNumberField("Max Same Direction Positions", "Limits market exposure by preventing too many parallel longs or shorts.", "maxSameDirectionOpenPositions", false)}
+                      {renderNumberField("Max Sector Exposure", "Prevents overconcentration in a single sector.", "maxSectorExposure", false)}
+                      {renderNumberField("Min Risk:Reward Ratio", "Filter out trades that don't offer at least this reward ratio (e.g. 2.0).", "minRiskReward")}
                     </div>
                   )}
 
                   {/* TAB 5: STRATEGY RULES */}
                   {activeTab === "strategy" && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-6">
-                      {renderField("Min Suggestion Score (/100)", "Mimir's AI Composite Score threshold. Higher means stricter trade filtering.", "number", formData.minSuggestionScore, (e) => handleNumberChange("minSuggestionScore", e.target.value))}
-                      {renderField("Min AI Confidence (%)", "Machine Learning prediction confidence threshold (0-100).", "number", formData.minAutoConfidencePct, (e) => handleNumberChange("minAutoConfidencePct", e.target.value))}
-                      {renderField("Min MTF Confluence (%)", "Percentage of multiple timeframes (5m, 15m, 1h, 1d) that must agree with the trend.", "number", formData.minMtfConfluencePct, (e) => handleNumberChange("minMtfConfluencePct", e.target.value))}
-                      {renderField("VIX Pause Threshold", "If India VIX exceeds this number, the engine halts new position entries.", "number", formData.vixPauseThreshold, (e) => handleNumberChange("vixPauseThreshold", e.target.value))}
+                      {renderNumberField("Min Suggestion Score (/100)", "Mimir's AI Composite Score threshold. Higher means stricter trade filtering.", "minSuggestionScore")}
+                      {renderNumberField("Min AI Confidence (%)", "Machine Learning prediction confidence threshold (0-100).", "minAutoConfidencePct")}
+                      {renderNumberField("Min MTF Confluence (%)", "Percentage of multiple timeframes (5m, 15m, 1h, 1d) that must agree with the trend.", "minMtfConfluencePct")}
+                      {renderNumberField("VIX Pause Threshold", "If India VIX exceeds this number, the engine halts new position entries.", "vixPauseThreshold")}
                     </div>
                   )}
 
@@ -495,7 +541,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                           </Tooltip>
                         </div>
 
-                        <div className="flex items-center justify-between py-3 border-b border-foreground/15">
+                        <div className="flex items-center justify-between py-3 border-b border-foreground/8">
                           <div className="flex items-center gap-3">
                             {tradingModeQuery.data?.mode === "LIVE" ? (
                               <>
@@ -599,16 +645,18 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                         <select
                           value={formData.stopLossMode || "FIXED"}
                           onChange={(e) => handleInputChange("stopLossMode", e.target.value as "FIXED" | "TRAILING" | "BREAKEVEN")}
-                          className="w-full bg-transparent text-sm font-mono text-foreground outline-none ring-0 border-0 focus:border-0 px-0 py-2.5 transition-colors shadow-none rounded-none cursor-pointer"
+                          className="w-full bg-transparent text-sm font-mono text-foreground outline-none ring-0 border-0 border-b border-foreground/10 focus:border-primary hover:border-foreground/25 px-0 py-2.5 transition-colors shadow-none rounded-none cursor-pointer"
                         >
                           <option className="bg-background text-foreground" value="FIXED">FIXED (Standard)</option>
                           <option className="bg-background text-foreground" value="TRAILING">TRAILING (Dynamic Profit Lock)</option>
                         </select>
                       </div>
 
-                      {renderField("Estimated Slippage (BPS)", "Buffer subtracted from expected PnL calculations (10 BPS = 0.1%).", "number", formData.slippageBps, (e) => handleNumberChange("slippageBps", e.target.value))}
-                      {renderField("Fixed Brokerage (₹)", "Cost deducted per executed trade in PnL calculations.", "number", formData.brokeragePerOrderInr, (e) => handleNumberChange("brokeragePerOrderInr", e.target.value))}
-                      {renderField("Avoid Market Open (Mins)", "Do not trade this many minutes after market open (9:15 AM).", "number", formData.avoidFirstMinutes, (e) => handleNumberChange("avoidFirstMinutes", e.target.value, false))}
+                      {renderNumberField("Estimated Slippage (BPS)", "Buffer subtracted from expected PnL calculations (10 BPS = 0.1%).", "slippageBps")}
+                      {renderNumberField("Fixed Brokerage (₹)", "Cost deducted per executed trade in PnL calculations.", "brokeragePerOrderInr")}
+                      {renderNumberField("Avoid Market Open (Mins)", "Do not trade this many minutes after market open (9:15 AM).", "avoidFirstMinutes", false)}
+                      {renderNumberField("Midday Pause Start (Min from Open)", "Session minute (from 9:15) when the low-volume midday chop pause begins. 150 = 11:45 AM.", "avoidMiddayStartMinute", false)}
+                      {renderNumberField("Midday Pause End (Min from Open)", "Session minute when suggestion generation resumes. 225 = 1:00 PM. Set equal to start to disable.", "avoidMiddayEndMinute", false)}
                     </div>
                   )}
 

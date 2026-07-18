@@ -17,11 +17,17 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   const baseUrl = import.meta.env.VITE_API_URL || "";
-  const res = await fetch(`${baseUrl}${path}`, {
-    credentials: "include",
-    ...init,
-    headers,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${baseUrl}${path}`, {
+      credentials: "include",
+      ...init,
+      headers,
+    });
+  } catch (err) {
+    // TypeError: Failed to fetch — network down / backend not running
+    throw new Error("Can't reach server — check connection", { cause: err });
+  }
 
   const text = await res.text();
   let body: unknown = null;
@@ -29,7 +35,7 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     body = text ? JSON.parse(text) : null;
   } catch (err) {
     if (res.ok && res.status !== 204) {
-      throw new Error(`Invalid JSON response: ${text.slice(0, 100)}...`, { cause: err });
+      throw new Error("Server returned an invalid response", { cause: err });
     }
   }
 
@@ -41,7 +47,9 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     if (typedBody?.error || typedBody?.message) {
       throw new Error(typedBody.error || typedBody.message || `API Error: ${res.status}`);
     }
-    throw new Error(text.slice(0, 50) || `Request failed (${res.status})`);
+    // No structured error from server — keep it human, log the raw text for debugging
+    console.error(`API ${res.status} ${path}:`, text.slice(0, 200));
+    throw new Error(res.status >= 500 ? "Server error — retrying shortly" : `Request failed (${res.status})`);
   }
 
   return body as T;
@@ -92,6 +100,14 @@ export const api = {
     .then(res => z.array(SuggestionSchema as z.ZodTypeAny).parse(res) as import("@/types/api").Suggestion[]),
   historySuggestions: () => apiFetch<{ data: import("@/types/api").Suggestion[], total: number }>("/api/suggestions/history?limit=100")
     .then(res => ({ ...res, data: z.array(SuggestionSchema as z.ZodTypeAny).parse(res.data) as import("@/types/api").Suggestion[] })),
+  suggestionsAccuracy: () =>
+    apiFetch<{
+      closedTrades: number;
+      winRate: number | null;
+      totalPnlInr: number;
+      lookbackDays: number;
+      setups: Array<{ setupType: string; tradeType: string; samples: number; winRate: number; avgPnlInr: number; medianTimeToTargetMin: number | null }>;
+    }>("/api/suggestions/accuracy"),
   dashboardIndices: () =>
     apiFetch<import("@/types/api").DashboardIndices & { degraded?: boolean; reason?: string }>(
       "/api/market/dashboard-indices",

@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { cn, fmtNum } from "@/lib/format";
+import { cn, fmtNum, toFixed, fmtPct } from "@/lib/format";
 import type { SystemStatus, MarketRegime } from "@/types/api";
 import { ArrowUpRight, ArrowDownRight } from "lucide-react";
 import { Tooltip } from "@/components/mimir/tooltip";
@@ -9,14 +9,14 @@ import { api } from "@/lib/api";
 
 function StatusLed({ status }: { status: "ok" | "warn" | "error" | "unknown" }) {
   const color = status === "ok" ? "bg-green-500" : status === "warn" ? "bg-yellow-500" : status === "error" ? "bg-red-500" : "bg-neutral-500";
-  const shadow = status === "ok" ? "rgba(34,197,94,0.6)" : status === "warn" ? "rgba(234,179,8,0.6)" : status === "error" ? "rgba(239,68,68,0.6)" : "rgba(115,115,115,0.6)";
-  
+  const shadow = status === "ok" ? "rgba(34,197,94,0.5)" : status === "warn" ? "rgba(234,179,8,0.5)" : status === "error" ? "rgba(239,68,68,0.5)" : "rgba(115,115,115,0.3)";
+
   return (
-    <motion.div 
-      animate={{ opacity: [0.4, 1, 0.4] }} 
-      transition={{ duration: 2.5, repeat: Infinity, ease: "easeInOut" }} 
-      className={cn("w-1.5 h-1.5 rounded-full shrink-0", color)} 
-      style={{ boxShadow: `0 0 8px ${shadow}` }} 
+    <motion.div
+      animate={{ opacity: [0.6, 1, 0.6] }}
+      transition={{ duration: 3, repeat: Infinity, ease: [0.45, 0, 0.55, 1] }}
+      className={cn("w-[5px] h-[5px] rounded-full shrink-0", color)}
+      style={{ boxShadow: `0 0 6px ${shadow}` }}
     />
   );
 }
@@ -46,11 +46,11 @@ export const StatusBar = memo(function StatusBar({ status, regime, wsConnected, 
     : "UNKNOWN";
 
   return (
-    <div className="shrink-0 h-10 pb-1.5 w-full bg-background flex items-center px-4 sm:px-6 text-[9px] font-mono text-muted-foreground tracking-widest uppercase z-50 overflow-x-auto whitespace-nowrap [&::-webkit-scrollbar]:hidden">
-      <div className="flex shrink-0 items-center gap-4 sm:gap-6 text-foreground/70">
+    <div className="shrink-0 h-9 lg:h-10 w-full bg-background flex items-center px-4 sm:px-6 text-[9px] sm:text-[10px] xl:text-[11px] font-mono text-muted-foreground/80 tracking-[0.08em] uppercase z-50 overflow-x-auto whitespace-nowrap [&::-webkit-scrollbar]:hidden">
+      <div className="flex shrink-0 items-center gap-5 sm:gap-6 text-foreground/60">
         {isLiveTrading && (
           <span className="flex items-center gap-1.5 cursor-help" title="Live trading armed — engine fills place real broker orders">
-            <div className="flex items-center gap-1.5 bg-destructive/10 px-2 py-0.5 rounded-full border border-destructive/30">
+            <div className="flex items-center gap-1.5 bg-destructive/10 px-2 py-0.5 rounded-full">
               <StatusLed status="error" />
               <span className="font-bold text-[10px] text-destructive">LIVE</span>
             </div>
@@ -58,9 +58,9 @@ export const StatusBar = memo(function StatusBar({ status, regime, wsConnected, 
         )}
         <span className="flex items-center gap-1.5 cursor-help" title="AI Status: Health of Native Math Models">
           AI
-          <div className="flex items-center gap-1.5 bg-foreground/5 px-2 py-0.5 rounded-full border border-border/20">
+          <div className="flex items-center gap-1.5 bg-foreground/5 px-2 py-0.5 rounded-full">
             <StatusLed status={aiOk ? "ok" : aiWarn ? "warn" : "error"} />
-            <span className={cn("font-bold text-[10px]", aiOk ? "text-emerald-500" : aiWarn ? "text-yellow-500" : "text-destructive")}>
+            <span className={cn("font-bold text-[10px]", aiOk ? "text-bull" : aiWarn ? "text-yellow-500" : "text-bear")}>
               {aiLabel}
             </span>
           </div>
@@ -69,29 +69,29 @@ export const StatusBar = memo(function StatusBar({ status, regime, wsConnected, 
           className="cursor-help flex items-center gap-1.5"
           content={
             <div className="flex flex-col gap-1 w-48 text-[11px]">
-              <div className="font-bold border-b border-border/20 pb-1 mb-1">REGIME ANALYSIS</div>
+              <div className="font-bold pb-1 mb-1 text-foreground/60">REGIME ANALYSIS</div>
               <div className="flex justify-between text-muted-foreground">
                 <span>VIX:</span>
-                <span className={cn("font-mono font-bold", regime?.indiaVix ? (regime.indiaVix > 18 ? "text-red-500" : regime.indiaVix < 13 ? "text-yellow-500" : "text-green-500") : "text-foreground")}>
-                  {regime?.indiaVix ? regime.indiaVix.toFixed(2) : "N/A"}
+                <span className={cn("font-mono font-bold", regime?.indiaVix ? (regime.indiaVix > 18 ? "text-bear" : regime.indiaVix < 13 ? "text-bull" : "text-foreground") : "text-foreground")}>
+                  {regime?.indiaVix ? toFixed(regime.indiaVix, 2) : "N/A"}
                 </span>
               </div>
               <div className="flex justify-between text-muted-foreground">
                 <span>Nifty Change:</span>
                 <span className={cn("font-mono font-bold", regime?.niftyChange ? (regime.niftyChange > 0 ? "text-bull" : "text-bear") : "text-foreground")}>
-                  {regime?.niftyChange ? `${regime.niftyChange > 0 ? "+" : ""}${regime.niftyChange.toFixed(2)}%` : "N/A"}
+                  {regime?.niftyChange ? fmtPct(regime.niftyChange, 2) : "N/A"}
                 </span>
               </div>
               <div className="flex justify-between text-muted-foreground">
                 <span>Sector Breadth:</span>
                 <span className="font-mono font-bold text-foreground">
-                  {regime?.sectorBreadth != null ? `${regime.sectorBreadth.toFixed(0)}%` : "N/A"}
+                  {regime?.sectorBreadth != null ? `${toFixed(regime.sectorBreadth, 0)}%` : "N/A"}
                 </span>
               </div>
               <div className="flex justify-between text-muted-foreground">
                 <span>Momentum:</span>
                 <span className="font-mono font-bold text-foreground">
-                  {regime?.momentum != null ? regime.momentum.toFixed(2) : "N/A"}
+                  {regime?.momentum != null ? toFixed(regime.momentum, 2) : "N/A"}
                 </span>
               </div>
             </div>
@@ -109,18 +109,18 @@ export const StatusBar = memo(function StatusBar({ status, regime, wsConnected, 
         </Tooltip>
         <span className="flex items-center gap-1.5 cursor-help" title="Scheduler: Background job status for scans and ticks">
           SCHEDULER
-          <div className="flex items-center gap-1.5 bg-foreground/5 px-2 py-0.5 rounded-full border border-border/20">
+          <div className="flex items-center gap-1.5 bg-foreground/5 px-2 py-0.5 rounded-full">
             <StatusLed status={status?.schedulerRunning ? "ok" : "error"} />
-            <span className={cn("font-bold text-[10px]", status?.schedulerRunning ? "text-green-500" : "text-red-500")}>
+            <span className={cn("font-bold text-[10px]", status?.schedulerRunning ? "text-bull" : "text-bear")}>
               {status?.schedulerRunning ? "ON" : "OFF"}
             </span>
           </div>
         </span>
         <span className="flex items-center gap-1.5 cursor-help" title="Network: WebSocket real-time connection status">
           NETWORK
-          <div className="flex items-center gap-1.5 bg-foreground/5 px-2 py-0.5 rounded-full border border-border/20">
+          <div className="flex items-center gap-1.5 bg-foreground/5 px-2 py-0.5 rounded-full">
             <StatusLed status={wsConnected ? "ok" : "error"} />
-            <span className={cn("font-bold text-[10px]", wsConnected ? "text-green-500" : "text-red-500")}>
+            <span className={cn("font-bold text-[10px]", wsConnected ? "text-bull" : "text-bear")}>
               {wsConnected ? "OK" : "ERR"}
             </span>
           </div>
@@ -128,20 +128,20 @@ export const StatusBar = memo(function StatusBar({ status, regime, wsConnected, 
       </div>
       
       {macro && (
-        <div className="flex items-center gap-3 sm:gap-4 ml-auto text-muted-foreground pl-4 border-l border-border/40 shrink-0">
+        <div className="flex items-center gap-3 sm:gap-4 ml-auto text-muted-foreground pl-6 shrink-0">
           <span className="font-bold text-foreground hidden sm:inline">INDIAN CONTEXT</span>
           <span className="font-bold text-foreground sm:hidden">MACRO</span>
           
           {macro.fiiDii ? (
             <div className="flex items-center gap-1.5">
               <span>FII:</span>
-              <span className={cn("font-medium flex items-center gap-0.5", macro.fiiDii.fiiNetInr < 0 ? "text-red-500" : "text-green-500")}>
+              <span className={cn("font-medium flex items-center gap-0.5", macro.fiiDii.fiiNetInr < 0 ? "text-bear" : "text-bull")}>
                 {macro.fiiDii.fiiNetInr > 0 ? <ArrowUpRight className="h-3 w-3" /> : macro.fiiDii.fiiNetInr < 0 ? <ArrowDownRight className="h-3 w-3" /> : null}
                 {fmtNum(Math.abs(macro.fiiDii.fiiNetInr))}Cr
               </span>
-              <span className="mx-1 text-border/40">|</span>
+              <span className="mx-1.5 w-[3px] h-[3px] rounded-full bg-foreground/10 shrink-0" />
               <span>DII:</span>
-              <span className={cn("font-medium flex items-center gap-0.5", macro.fiiDii.diiNetInr < 0 ? "text-red-500" : "text-green-500")}>
+              <span className={cn("font-medium flex items-center gap-0.5", macro.fiiDii.diiNetInr < 0 ? "text-bear" : "text-bull")}>
                 {macro.fiiDii.diiNetInr > 0 ? <ArrowUpRight className="h-3 w-3" /> : macro.fiiDii.diiNetInr < 0 ? <ArrowDownRight className="h-3 w-3" /> : null}
                 {fmtNum(Math.abs(macro.fiiDii.diiNetInr))}Cr
               </span>
@@ -154,42 +154,43 @@ export const StatusBar = memo(function StatusBar({ status, regime, wsConnected, 
           )}
 
           {macro.niftyOptionChain && (
-            <>
-              <span className="mx-1 text-border/40">|</span>
-              <div className="flex items-center gap-1.5">
-                <span>PCR:</span>
-                <span className={cn("font-medium", macro.niftyOptionChain.pcr > 1.2 ? "text-green-500" : macro.niftyOptionChain.pcr < 0.7 ? "text-red-500" : "text-foreground")}>
-                  {macro.niftyOptionChain.pcr.toFixed(2)}
-                </span>
-                <span className="mx-1 text-border/40">|</span>
-                <span>MAX PAIN:</span>
-                <span className="font-medium text-foreground">
-                  {fmtNum(macro.niftyOptionChain.maxPain)}
-                </span>
-              </div>
-            </>
+            <div className="hidden md:flex items-center gap-1.5">
+              <span className="mx-1.5 w-[3px] h-[3px] rounded-full bg-foreground/10 shrink-0" />
+              <span>PCR:</span>
+              <span className={cn("font-medium", macro.niftyOptionChain.pcr > 1.2 ? "text-bull" : macro.niftyOptionChain.pcr < 0.7 ? "text-bear" : "text-foreground")}>
+                {toFixed(macro.niftyOptionChain.pcr, 2)}
+              </span>
+              <span className="mx-1.5 w-[3px] h-[3px] rounded-full bg-foreground/10 shrink-0 hidden lg:inline-block" />
+              <span className="hidden lg:inline">MAX PAIN:</span>
+              <span className="font-medium text-foreground hidden lg:inline">
+                {fmtNum(macro.niftyOptionChain.maxPain)}
+              </span>
+            </div>
           )}
 
-          <span className="mx-1 text-border/40">|</span>
+          <span className="mx-1.5 w-[3px] h-[3px] rounded-full bg-foreground/10 shrink-0" />
           <div className="flex items-center gap-1.5">
             <span>USD/INR:</span>
-            <span className={cn("font-medium", macro.usdInr > 86.0 ? "text-red-500" : "text-foreground")}>
-              {macro.usdInr ? macro.usdInr.toFixed(2) : "—"}
+            <span className={cn("font-medium", macro.usdInr > 86.0 ? "text-bear" : "text-foreground")}>
+              {macro.usdInr ? toFixed(macro.usdInr, 2) : "—"}
             </span>
-            <span className="mx-1 text-border/40">|</span>
-            <span>IN10Y:</span>
-            <span className={cn("font-medium", macro.india10y > 7.2 ? "text-red-500" : "text-foreground")}>
-              {macro.india10y ? macro.india10y.toFixed(2) : "—"}%
+            <span className="mx-1.5 w-[3px] h-[3px] rounded-full bg-foreground/10 shrink-0 hidden lg:inline-block" />
+            <span className="hidden lg:inline">IN10Y:</span>
+            <span
+              title={macro.india10yIsEstimate ? "Estimated from RBI repo rate — no free live 10Y feed" : undefined}
+              className={cn("font-medium hidden lg:inline", macro.india10y > 7.2 ? "text-bear" : "text-foreground")}
+            >
+              {macro.india10y ? `${macro.india10yIsEstimate ? "~" : ""}${toFixed(macro.india10y, 2)}%` : "—"}
             </span>
           </div>
 
-          <span className="mx-1 text-border/40">|</span>
+          <span className="mx-1.5 w-[3px] h-[3px] rounded-full bg-foreground/10 shrink-0" />
           <div className="flex items-center gap-1.5">
             <span>RISK:</span>
             {macro.eventRiskActive ? (
-              <span className="bg-red-500/20 text-red-500 px-1.5 py-0.5 rounded font-bold animate-pulse">ELEVATED</span>
+              <span className="bg-bear/20 text-bear px-1.5 py-0.5 rounded font-bold animate-pulse">ELEVATED</span>
             ) : (
-              <span className="text-green-500 font-bold">NORMAL</span>
+              <span className="text-bull font-bold">NORMAL</span>
             )}
           </div>
         </div>

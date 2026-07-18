@@ -1,11 +1,21 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { useStore } from "@/store/useStore";
-import { AlertCircle, Loader2, CheckCircle2, Bell } from "lucide-react";
-import { CommandPalette } from "./CommandPalette";
+import { AlertCircle, Loader2, CheckCircle2, Bell, X } from "lucide-react";
 import { EventFeed } from "./EventFeed";
 import DynamicIslandBase from "./DynamicIslandBase";
+import { FADE_SLOW } from "@/lib/motion";
+
+// The palette chunk starts downloading the moment this module evaluates (app
+// startup), and the island refuses to open for the palette until it has
+// resolved. Both matter: if the chunk arrives mid-descent, Suspense renders an
+// empty pill that snaps to full size when the code lands — which reads as a
+// completely different first animation.
+const palettePromise = import("./CommandPalette");
+let paletteLoaded = false;
+void palettePromise.then(() => { paletteLoaded = true; });
+const CommandPalette = lazy(() => palettePromise.then((m) => ({ default: m.CommandPalette })));
 
 // ── Design Tokens ─────────────────────────────────────────────────────────────
 const TOKENS = {
@@ -58,8 +68,20 @@ export function DynamicIsland() {
   const [error, setError] = useState<string | null>(null);
   const [paletteWidth, setPaletteWidth] = useState(commandPaletteSearch.toLowerCase().startsWith('scan ') ? 650 : 480);
   const [mounted, setMounted] = useState(false);
+  // Don't open the island for the palette until its code has actually arrived —
+  // an empty Suspense pill that snaps to size mid-descent is the "different
+  // first animation". The chunk is prefetched at module load, so this wait is
+  // ~zero in practice; it only guards the cold-cache race.
+  const [paletteReady, setPaletteReady] = useState(paletteLoaded);
+  useEffect(() => {
+    if (!paletteReady) {
+      let cancelled = false;
+      void palettePromise.then(() => { if (!cancelled) setPaletteReady(true); });
+      return () => { cancelled = true; };
+    }
+  }, [paletteReady]);
 
-  const showCommandPalette = commandPaletteOpen;
+  const showCommandPalette = commandPaletteOpen && paletteReady;
   const showIslandConfig = !commandPaletteOpen && !eventFeedOpen && !!islandConfig;
   const showEventFeed = eventFeedOpen;
   const isSuccess = islandConfig?.showSuccessOnly ? true : isSuccessState;
@@ -132,7 +154,7 @@ export function DynamicIsland() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 0.35 }}
+            transition={FADE_SLOW}
             className={`fixed inset-0 z-[9998] ${isNotification ? "pointer-events-none" : "pointer-events-auto"}`}
             onClick={() => {
               if (isNotification) {
@@ -211,7 +233,10 @@ export function DynamicIsland() {
                     {error && (
                       <div className="flex items-start w-full gap-2 text-left" style={{ marginTop: TOKENS.spacing.contentGap, padding: "10px 14px", borderRadius: "12px", backgroundColor: "rgba(255,59,48,0.12)", color: TOKENS.colors.destructive, fontSize: "12px", fontWeight: 600 }}>
                         <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
-                        <span>{error}</span>
+                        <span className="flex-1">{error}</span>
+                        <button onClick={handleCancel} className="shrink-0 opacity-70 hover:opacity-100 transition-opacity" title="Dismiss">
+                          <X className="w-4 h-4" />
+                        </button>
                       </div>
                     )}
                   </div>
@@ -222,7 +247,7 @@ export function DynamicIsland() {
                         <button
                           onClick={handleCancel}
                           disabled={isProcessing}
-                          style={{ flex: 1, padding: "12px 0", borderRadius: "14px", backgroundColor: "var(--secondary)", color: "var(--foreground)", fontSize: "13px", fontWeight: 600, border: "1px solid var(--border)", opacity: isProcessing ? 0.5 : 1 }}
+                          style={{ flex: 1, padding: "12px 0", borderRadius: "14px", backgroundColor: "var(--secondary)", color: "var(--foreground)", fontSize: "13px", fontWeight: 600, border: "none", opacity: isProcessing ? 0.5 : 1 }}
                           className="hover:opacity-80 active:scale-[0.98] transition-all duration-200"
                         >
                           {cancelText}
@@ -242,7 +267,9 @@ export function DynamicIsland() {
               </div>
             ) : (
               <div className="w-full flex flex-col" style={{ width: paletteWidth }}>
-                <CommandPalette onClose={() => setCommandPaletteOpen(false)} onWidthChange={setPaletteWidth} />
+                <Suspense fallback={null}>
+                  <CommandPalette onClose={() => setCommandPaletteOpen(false)} onWidthChange={setPaletteWidth} />
+                </Suspense>
               </div>
             )}
           </DynamicIslandBase>

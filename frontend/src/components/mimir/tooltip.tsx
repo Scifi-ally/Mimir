@@ -52,7 +52,7 @@ export function Tooltip({
       {isVisible && (
         <div
           className={cn(
-            "absolute z-50 px-2.5 py-1.5 text-[10px] font-medium text-foreground bg-secondary border border-border/50 rounded shadow-lg pointer-events-none w-max max-w-xs text-wrap leading-tight text-center",
+            "absolute z-50 px-2.5 py-1.5 text-[10px] font-medium text-foreground bg-secondary rounded shadow-lg pointer-events-none w-max max-w-xs text-wrap leading-tight text-center",
             positionClasses[side],
             alignClasses[side][align],
             contentClassName

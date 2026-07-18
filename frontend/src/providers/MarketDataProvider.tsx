@@ -23,6 +23,7 @@ export interface SymbolData {
   // State
   scan_status: 'scanned' | 'watchlisted' | 'active_signal' | 'unknown';
   is_transitioning: boolean;  // true during source switch
+  is_stale: boolean;          // true when the last live tick is older than STALE_TTL_MS
 }
 
 export interface MarketTelemetry {
@@ -38,6 +39,10 @@ class MarketDataStore {
   private data = new Map<string, SymbolData>();
   private subscribers = new Map<string, Set<() => void>>();
   private telemetrySubscribers = new Set<() => void>();
+
+  private key(symbol: string): string {
+    return symbol.trim().toUpperCase();
+  }
   
   private telemetry: MarketTelemetry = {
     fps: 60,
@@ -50,6 +55,13 @@ class MarketDataStore {
 
   private frameCount = 0;
   private lastFpsTime = performance.now();
+  private ticksSinceLastTelemetry = 0;
+
+  // A price with a real feed source is considered stale this long after its last
+  // tick. Without this, a dropped WebSocket left the last tick on screen forever,
+  // presented as live — a frozen price a user could trade against. The sweep below
+  // flips is_stale and re-notifies so LivePrice can dim / flag it.
+  private static readonly STALE_TTL_MS = 10_000;
 
   constructor() {
     if (typeof window !== "undefined") {
@@ -58,9 +70,13 @@ class MarketDataStore {
         const now = performance.now();
         if (now - this.lastFpsTime >= 1000) {
           this.telemetry.fps = Math.round((this.frameCount * 1000) / (now - this.lastFpsTime));
+          this.telemetry.ticksPerSec = this.ticksSinceLastTelemetry;
+          this.telemetry.totalTicksReceived += this.ticksSinceLastTelemetry;
+          this.ticksSinceLastTelemetry = 0;
           this.frameCount = 0;
           this.lastFpsTime = now;
           this.notifyTelemetry();
+          this.sweepStale();
         }
         requestAnimationFrame(loop);
       };
@@ -68,13 +84,27 @@ class MarketDataStore {
     }
   }
 
+  // Once per second: mark live-sourced prices stale after STALE_TTL_MS of silence.
+  private sweepStale(): void {
+    const nowMs = Date.now();
+    for (const [k, d] of this.data.entries()) {
+      if (d.source === 'cache' || d.timestamp == null) continue;
+      const shouldBeStale = nowMs - d.timestamp > MarketDataStore.STALE_TTL_MS;
+      if (shouldBeStale !== d.is_stale) {
+        this.data.set(k, { ...d, is_stale: shouldBeStale });
+        this.notify(k);
+      }
+    }
+  }
+
   // Priority: WebSocket tick > REST quote > cached last value
   // Never returns undefined — always returns last known good value
   get(symbol: string): SymbolData {
-    let existing = this.data.get(symbol);
+    const k = this.key(symbol);
+    let existing = this.data.get(k);
     if (!existing) {
-      existing = this.getDefaultData(symbol);
-      this.data.set(symbol, existing);
+      existing = this.getDefaultData(k);
+      this.data.set(k, existing);
     }
     return existing;
   }
@@ -91,7 +121,8 @@ class MarketDataStore {
   // Called when WebSocket tick arrives
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   updateFromTick(symbol: string, tick: any): void {
-    const existing = this.data.get(symbol) ?? this.getDefaultData(symbol);
+    const k = this.key(symbol);
+    const existing = this.data.get(k) ?? this.getDefaultData(k);
     const newLtp = tick.ltp ?? tick.price ?? existing.ltp;
     let direction: 'up' | 'down' | 'none' = 'none';
     if (newLtp !== null && existing.ltp !== null) {
@@ -106,7 +137,7 @@ class MarketDataStore {
     const incomingVolume = tick.volume;
     const newVolume = incomingVolume != null ? incomingVolume : existing.volume;
 
-    this.data.set(symbol, {
+    this.data.set(k, {
       ...existing,
       ltp: newLtp,
       change_pct: newChangePct,
@@ -115,16 +146,18 @@ class MarketDataStore {
       source: 'websocket',
       direction,
       is_transitioning: false,
+      is_stale: false,
     });
-    this.notify(symbol);
-    this.notifyTelemetry();
+    this.notify(k);
+    this.ticksSinceLastTelemetry++;
   }
   
   // Called when market:analysis WebSocket event arrives
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   updateFromAnalysis(symbol: string, analysis: any): void {
-    const existing = this.data.get(symbol) ?? this.getDefaultData(symbol);
-    this.data.set(symbol, {
+    const k = this.key(symbol);
+    const existing = this.data.get(k) ?? this.getDefaultData(k);
+    this.data.set(k, {
       ...existing,
       composite_score: analysis.composite_score,
       watchlist_score: analysis.watchlist_score,
@@ -136,39 +169,42 @@ class MarketDataStore {
       tech_edge: analysis.tech_edge,
       regime_align: analysis.regime_align,
     });
-    this.notify(symbol);
-    this.notifyTelemetry();
+    this.notify(k);
+    this.ticksSinceLastTelemetry++;
   }
-  
+
   // Called when REST query resolves
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   updateFromRest(symbol: string, quote: any): void {
-    const existing = this.data.get(symbol) ?? this.getDefaultData(symbol);
+    const k = this.key(symbol);
+    const existing = this.data.get(k) ?? this.getDefaultData(k);
     // Only update price if no WebSocket data (REST is lower priority)
     const shouldUpdatePrice = existing.source !== 'websocket';
-    
-    this.data.set(symbol, {
+
+    this.data.set(k, {
       ...existing,
       ltp: shouldUpdatePrice ? (quote.ltp ?? existing.ltp) : existing.ltp,
       change_pct: quote.change_pct ?? existing.change_pct,
       source: shouldUpdatePrice ? 'rest' : existing.source,
       is_transitioning: shouldUpdatePrice ? false : existing.is_transitioning,
+      timestamp: shouldUpdatePrice ? Date.now() : existing.timestamp,
+      is_stale: shouldUpdatePrice ? false : existing.is_stale,
     });
-    this.notify(symbol);
-    this.notifyTelemetry();
+    this.notify(k);
   }
-  
+
   markTransitioning(symbol: string): void {
-    const existing = this.data.get(symbol) ?? this.getDefaultData(symbol);
-    this.data.set(symbol, { ...existing, is_transitioning: true });
+    const k = this.key(symbol);
+    const existing = this.data.get(k) ?? this.getDefaultData(k);
+    this.data.set(k, { ...existing, is_transitioning: true });
     setTimeout(() => {
-      const current = this.data.get(symbol);
+      const current = this.data.get(k);
       if (current?.is_transitioning) {
-        this.data.set(symbol, { ...current, is_transitioning: false });
-        this.notify(symbol);
+        this.data.set(k, { ...current, is_transitioning: false });
+        this.notify(k);
       }
     }, 1000);
-    this.notify(symbol);
+    this.notify(k);
   }
   
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -180,18 +216,25 @@ class MarketDataStore {
       provisional_trigger: null, provisional_deviation: null,
       mtf_score: null, mtf_total: null, mtf_confluence: null,
       tech_edge: null, regime_align: null,
-      scan_status: 'unknown', is_transitioning: false,
+      scan_status: 'unknown', is_transitioning: false, is_stale: false,
     };
   }
   
   subscribe(symbol: string, callback: () => void): () => void {
-    if (!this.subscribers.has(symbol)) {
-      this.subscribers.set(symbol, new Set());
+    const k = this.key(symbol);
+    if (!this.subscribers.has(k)) {
+      this.subscribers.set(k, new Set());
     }
-    this.subscribers.get(symbol)!.add(callback);
+    this.subscribers.get(k)!.add(callback);
     this.telemetry.activeSymbolListeners++;
     return () => {
-      this.subscribers.get(symbol)?.delete(callback);
+      const set = this.subscribers.get(k);
+      if (set) {
+        set.delete(callback);
+        // Drop empty Sets so subscribers doesn't grow for every symbol ever rendered.
+        // (data entries are intentionally kept — last-known-good cache for remounts.)
+        if (set.size === 0) this.subscribers.delete(k);
+      }
       this.telemetry.activeSymbolListeners = Math.max(0, this.telemetry.activeSymbolListeners - 1);
     };
   }

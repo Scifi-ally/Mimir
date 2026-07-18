@@ -3,10 +3,11 @@ import { Command } from 'cmdk';
 import { useStore } from '@/store/useStore';
 import { api } from '@/lib/api';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Search, Plus, Filter } from 'lucide-react';
+import { Search, Plus, Filter, Loader2 } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { AdvancedRuleBuilder } from './AdvancedRuleBuilder';
 import type { SymbolSearchResult } from '@/types/api';
+import { FADE_FAST, FADE_STANDARD } from "@/lib/motion";
 
 type ScreenerRule = {
   id: number;
@@ -34,6 +35,7 @@ export function CommandPalette({ onClose, onWidthChange }: { onClose: () => void
   
   const queryClient = useQueryClient();
   const setSelectedSymbol = useStore((s) => s.setSelectedSymbol);
+  const showIsland = useStore((s) => s.showIsland);
 
   const { data: screeners = [] } = useQuery<ScreenerRule[]>({
     queryKey: ["screener_rules"],
@@ -71,9 +73,14 @@ export function CommandPalette({ onClose, onWidthChange }: { onClose: () => void
       if (!res.ok) throw new Error("Failed to add target");
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (_data, vars) => {
       queryClient.invalidateQueries({ queryKey: ["screener_targets"] });
       setContextMenu(null);
+      showIsland({ title: `${vars.symbol} added`, showSuccessOnly: true, hideCancel: true });
+    },
+    onError: (err, vars) => {
+      setContextMenu(null);
+      showIsland({ isNotification: true, title: `Couldn't add ${vars.symbol}`, subtitle: err.message, showSuccessOnly: false });
     }
   });
 
@@ -91,9 +98,10 @@ export function CommandPalette({ onClose, onWidthChange }: { onClose: () => void
         })
       );
     },
-    onSuccess: () => {
+    onSuccess: (_data, vars) => {
       queryClient.invalidateQueries({ queryKey: ["screener_targets"] });
       setContextMenu(null);
+      showIsland({ title: `${vars.symbols.length} stock${vars.symbols.length === 1 ? "" : "s"} added`, showSuccessOnly: true, hideCancel: true });
     }
   });
 
@@ -150,9 +158,9 @@ export function CommandPalette({ onClose, onWidthChange }: { onClose: () => void
             initial={{ opacity: 0, backdropFilter: 'blur(0px)' }}
             animate={{ opacity: 1, backdropFilter: 'blur(12px)' }}
             exit={{ opacity: 0, backdropFilter: 'blur(0px)' }}
-            transition={{ duration: 0.3 }}
+            transition={FADE_STANDARD}
             style={{ top: contextMenu.y, left: contextMenu.x }}
-            className="fixed z-[120] min-w-[200px] rounded-xl border border-border/50 bg-background/95 p-1.5 shadow-2xl backdrop-blur-md"
+            className="fixed z-[120] min-w-[200px] rounded-xl border border-border/20 bg-background/95 p-1.5 shadow-2xl backdrop-blur-md"
           >
             <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">
               {contextMenu.symbol}
@@ -220,10 +228,10 @@ export function CommandPalette({ onClose, onWidthChange }: { onClose: () => void
                   type="button"
                   onClick={handleAddBatchSymbols}
                   disabled={createTargetsMutation.isPending}
-                  className="ml-3 flex shrink-0 items-center gap-1.5 rounded-full bg-foreground/10 px-4 py-1.5 text-xs font-semibold text-foreground transition-colors hover:bg-foreground/20 disabled:cursor-not-allowed disabled:opacity-60 border border-border"
+                  className="ml-3 flex shrink-0 items-center gap-1.5 rounded-full bg-foreground/10 px-4 py-1.5 text-xs font-semibold text-foreground transition-colors hover:bg-foreground/20 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  <Plus className="h-3.5 w-3.5" />
-                  Add Stocks
+                  {createTargetsMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                  {createTargetsMutation.isPending ? "Adding..." : "Add Stocks"}
                 </button>
               )}
             </div>
@@ -242,7 +250,7 @@ export function CommandPalette({ onClose, onWidthChange }: { onClose: () => void
               initial={{ opacity: 0, scale: 0.98, filter: "blur(4px)" }}
               animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
               exit={{ opacity: 0, scale: 0.98, filter: "blur(4px)" }}
-              transition={{ duration: 0.2 }}
+              transition={FADE_FAST}
             >
               <AdvancedRuleBuilder initialRule={editRule} onComplete={() => {
                 setIsBuildingRule(false);
@@ -302,7 +310,7 @@ export function CommandPalette({ onClose, onWidthChange }: { onClose: () => void
                           <span className="text-foreground/50 truncate text-xs">{item.name}</span>
                         </div>
                         {item.sector && (
-                          <span className="text-[10px] uppercase tracking-widest font-medium text-foreground/30 shrink-0 border border-border/50 rounded-full px-2 py-0.5 bg-foreground/5">{item.sector}</span>
+                          <span className="text-[10px] uppercase tracking-widest font-medium text-foreground/30 shrink-0 rounded-full px-2 py-0.5 bg-foreground/5">{item.sector}</span>
                         )}
                       </Command.Item>
                     );

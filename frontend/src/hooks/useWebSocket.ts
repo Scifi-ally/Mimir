@@ -65,6 +65,35 @@ export function useWebSocket() {
         void queryClient.invalidateQueries({ queryKey: key });
       }, 300);
     };
+    // Throttle scan_progress: the backend emits multiple events per scanned
+    // stock, so batch store updates every ~250ms (mirrors debouncedInvalidate)
+    // instead of forcing a re-render per message. STOPPED still flushes
+    // immediately below.
+    let scanFlushTimer: ReturnType<typeof setTimeout> | null = null;
+    let pendingScanState: Parameters<typeof setScanState>[0] | null = null;
+    const pendingScanLogs = new Map<string, Parameters<typeof addScanLog>[0]>();
+    const flushScanProgress = () => {
+      scanFlushTimer = null;
+      pendingScanLogs.forEach((log) => addScanLog(log));
+      pendingScanLogs.clear();
+      if (pendingScanState) {
+        setScanState(pendingScanState);
+        pendingScanState = null;
+      }
+    };
+    const scheduleScanFlush = () => {
+      if (scanFlushTimer === null) {
+        scanFlushTimer = setTimeout(flushScanProgress, 250);
+      }
+    };
+    const cancelScanFlush = () => {
+      if (scanFlushTimer !== null) {
+        clearTimeout(scanFlushTimer);
+        scanFlushTimer = null;
+      }
+      pendingScanState = null;
+      pendingScanLogs.clear();
+    };
     let isMdConnected = false;
     let lastMessageTimeInt = Date.now();
     let lastMessageTimeMd = Date.now();
@@ -222,19 +251,14 @@ export function useWebSocket() {
             marketDataStore.updateFromAnalysis(event.data.symbol, event.data);
             break;
           case "scan_started":
+            cancelScanFlush();
             clearScanLogs();
             setScanState({ scanning: true, phase: "running", current: 0, total: event.data.stocksToAnalyze, message: "Scanner started", updatedAt: Date.now() });
             break;
             case "scan_progress":
-              if (event.data.currentStock && event.data.status) {
-                addScanLog({
-                  symbol: event.data.currentStock,
-                  status: event.data.status,
-                  reason: event.data.reason,
-                });
-              }
               // If status is STOPPED, reset the scan state immediately
               if (event.data.status === "STOPPED") {
+                cancelScanFlush();
                 setScanState({
                   scanning: false,
                   phase: "stopped",
@@ -248,7 +272,14 @@ export function useWebSocket() {
                 });
                 clearScanLogs();
               } else {
-                setScanState({
+                if (event.data.currentStock && event.data.status) {
+                  pendingScanLogs.set(event.data.currentStock, {
+                    symbol: event.data.currentStock,
+                    status: event.data.status,
+                    reason: event.data.reason,
+                  });
+                }
+                pendingScanState = {
                   scanning: true,
                   phase: "running",
                   current: event.data.current,
@@ -258,11 +289,20 @@ export function useWebSocket() {
                   reason: event.data.reason,
                   message: event.data.reason || event.data.status || "Scanning",
                   updatedAt: Date.now(),
-                });
+                };
+                scheduleScanFlush();
               }
               break;
             case "scan_completed":
               {
+                // Flush buffered logs so the panel is complete, but drop any
+                // queued "running" state so it can't overwrite the final one.
+                if (scanFlushTimer !== null) {
+                  clearTimeout(scanFlushTimer);
+                  scanFlushTimer = null;
+                }
+                pendingScanState = null;
+                flushScanProgress();
                 const phase = event.data.outcome === "FAILED"
                   ? "failed"
                   : event.data.outcome === "STOPPED"
@@ -315,6 +355,8 @@ export function useWebSocket() {
               // Trailing-stop / manual-close updates from position_tracker
               debouncedInvalidate(["suggestions"]);
               debouncedInvalidate(["positions"]);
+              // Paper panel data is WS-driven now, so its polling can stay slow
+              debouncedInvalidate(["paperTrading"]);
               break;
             case "daily_loss_limit_reached":
               debouncedInvalidate(["suggestions"]);
@@ -437,6 +479,7 @@ export function useWebSocket() {
     return () => {
       cancelled = true;
       Object.values(invalidationTimeouts).forEach(clearTimeout);
+      cancelScanFlush();
       if (rafId !== null) cancelAnimationFrame(rafId);
       if (reconnectTimerInt != null) window.clearTimeout(reconnectTimerInt);
       if (reconnectTimerMd != null) window.clearTimeout(reconnectTimerMd);

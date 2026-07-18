@@ -85,7 +85,10 @@ interface AppStore {
 export const useStore = create<AppStore>()(
   persist(
     (set) => ({
-      selectedSymbol: "",
+      // Default to NIFTY 50 (a valid index selection) so the chart/insights queries
+      // fire in parallel with the watchlist query on first-ever load instead of
+      // waiting for the watchlist round-trip. Persisted selections override this.
+      selectedSymbol: "NIFTY 50",
       setSelectedSymbol: (symbol) => set({ selectedSymbol: symbol }),
       wsConnected: false,
       setWsConnected: (connected) => set({ wsConnected: connected }),
