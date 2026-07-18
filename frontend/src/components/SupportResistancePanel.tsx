@@ -21,7 +21,6 @@ export const SupportResistancePanel = React.memo(function SupportResistancePanel
     queryKey: ["candles", selectedSymbol, "day", 15],
     queryFn: () => api.candles(selectedSymbol, "day", 15),
     enabled: Boolean(selectedSymbol.trim()),
-    placeholderData: keepPreviousData,
     refetchInterval: 5 * 60 * 1000, // refresh every 5 mins for new daily highs/lows
   });
 

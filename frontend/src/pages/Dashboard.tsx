@@ -543,6 +543,7 @@ export default function Dashboard() {
                 transition={{ ...FADE_STANDARD, delay: 0.12 }}
               >
                 <DetailPanel
+                  key={activeSymbol}
                   suggestions={suggestions}
                   selectedSymbol={activeSymbol}
                   session={session}
@@ -610,7 +611,7 @@ export default function Dashboard() {
               </div>
             </div>
             <div className="h-[400px]">
-              <DetailPanel suggestions={suggestions} selectedSymbol={activeSymbol} session={session} isScanActive={isScanActive} />
+              <DetailPanel key={activeSymbol} suggestions={suggestions} selectedSymbol={activeSymbol} session={session} isScanActive={isScanActive} />
             </div>
           </div>
         </div>

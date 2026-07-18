@@ -53,7 +53,6 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
     queryKey: ["symbol-insights", selectedSymbol],
     queryFn: () => api.symbolInsights(selectedSymbol),
     enabled: Boolean(selectedSymbol && typeof selectedSymbol === 'string' && selectedSymbol.trim()),
-    placeholderData: keepPreviousData,
     retry: false,
     refetchInterval: 300000,
   });
@@ -72,7 +71,6 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
     queryKey: ["score-history", selectedSymbol],
     queryFn: () => api.scoreHistory(selectedSymbol),
     enabled: Boolean(selectedSymbol.trim()),
-    placeholderData: keepPreviousData,
   });
   const scoreHistory = scoreHistoryQuery.data?.history ?? [];
 

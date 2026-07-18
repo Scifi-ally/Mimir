@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { findStockBySymbol, fetchNiftyDailyCandles, resolveSymbolInsightContext } from "../analysis/stock_scanner";
 import { inferSymbolForecast } from "../analysis/ai_client";
+import { getLastRegimeOutput } from "../analysis/regime_detector";
 import { getMonitoringStatus } from "../analysis/intraday_monitor";
 import { getAccessToken } from "../upstox/auth";
 import { logger } from "../lib/logger";
@@ -302,8 +303,8 @@ router.get("/market/symbol-insights", async (req, res) => {
             technicalPatterns: ai.technicalRanking?.detected_patterns ?? [],
             source: ai.chronos?.source ?? "unknown",
             isFallback: Boolean(ai.isFallback || ai.chronos?.source === "fallback" || ai.technicalRanking?.source === "fallback" || ai.technicalRanking?.source === "Advanced Stochastic Engine" || ai.chronos?.source === "error" || ai.technicalRanking?.source === "error"),
-            techEdge: metrics.techEdge,
-            regimeAlign: metrics.regimeAlign,
+            techEdge: metrics.techEdge ?? (ai.technicalRanking ? Math.round(ai.technicalRanking.confidence * 100) : null),
+            regimeAlign: metrics.regimeAlign ?? (getLastRegimeOutput()?.strength ?? 50),
           }
         : {
             compositeScore: 0,
@@ -313,7 +314,7 @@ router.get("/market/symbol-insights", async (req, res) => {
             source: "none",
             isFallback: false,
             techEdge: metrics.techEdge,
-            regimeAlign: metrics.regimeAlign,
+            regimeAlign: metrics.regimeAlign ?? (getLastRegimeOutput()?.strength ?? 50),
           },
       fetchedAt: new Date().toISOString(),
     };
