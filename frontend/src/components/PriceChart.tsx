@@ -804,7 +804,7 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
         </div>
         <div className="flex shrink-0 items-center gap-4 w-full sm:w-auto justify-between sm:justify-end overflow-x-auto pb-1 [&::-webkit-scrollbar]:hidden">
           {chartMode === "actual" && (
-            <div className="flex items-center gap-3 text-xs font-bold text-foreground/70">
+            <div className="flex items-center gap-3 text-xs font-medium text-foreground/70">
             <div className="flex bg-foreground/5 rounded-full p-0.5 items-center">
               {TIMEFRAMES.map((tf) => (
                 <button
@@ -812,7 +812,7 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
                   type="button"
                   onClick={() => setTimeframe(tf)}
                   className={cn(
-                    "relative px-2.5 py-1 text-[10px] font-bold rounded-full transition-colors",
+                    "relative px-2.5 py-1 text-[10px] font-medium rounded-full transition-colors",
                     timeframe.label === tf.label
                       ? "text-background"
                       : "text-foreground/50 hover:text-foreground"
@@ -856,13 +856,13 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
               </button>
             </div>
           )}
-          <div className="flex items-center gap-3 text-xs font-bold text-foreground/70 pl-3">
+          <div className="flex items-center gap-3 text-xs font-medium text-foreground/70 pl-3">
           <div className="flex bg-foreground/5 rounded-full p-0.5 items-center pl-1">
             <button
               type="button"
               onClick={() => onChartModeChange("actual")}
               className={cn(
-                "relative px-2.5 py-1 text-[10px] font-bold rounded-full transition-colors",
+                "relative px-2.5 py-1 text-[10px] font-medium rounded-full transition-colors",
                 chartMode === "actual"
                   ? "text-background"
                   : "text-foreground/50 hover:text-foreground"
@@ -882,7 +882,7 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
               onClick={() => onChartModeChange("forecast")}
               disabled={!forecast}
               className={cn(
-                "relative px-2.5 py-1 text-[10px] font-bold rounded-full transition-colors",
+                "relative px-2.5 py-1 text-[10px] font-medium rounded-full transition-colors",
                 chartMode === "forecast"
                   ? "text-background"
                   : "text-foreground/50 hover:text-foreground",
