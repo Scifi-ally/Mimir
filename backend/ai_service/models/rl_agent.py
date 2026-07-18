@@ -14,6 +14,33 @@ except ImportError:
     _SB3_AVAILABLE = False
     logger.warning("stable-baselines3 or gymnasium not installed. RL features will be disabled.")
 
+try:
+    # Same indicator library/params used at training time (train_rl.py) so the
+    # serving observation vector matches the training distribution exactly.
+    from ta.momentum import RSIIndicator
+    from ta.trend import MACD
+    _TA_AVAILABLE = True
+except ImportError:
+    _TA_AVAILABLE = False
+    logger.warning("`ta` not installed. RL RSI/MACD features cannot be reconstructed at serve time.")
+
+
+def _ensure_rsi_macd(df: pd.DataFrame) -> pd.DataFrame:
+    """Compute RSI(14) and MACD-diff into df if absent, using the identical
+    `ta` calls train_rl.py uses. Without this the serving state would freeze
+    RSI at 50 and MACD at 0 — an off-distribution input the policy never saw
+    in training (train/serve skew)."""
+    if "close" not in df.columns or len(df) == 0:
+        return df
+    if not _TA_AVAILABLE:
+        return df
+    if "rsi" not in df.columns:
+        df = df.copy()
+        df["rsi"] = RSIIndicator(close=df["close"], window=14).rsi()
+    if "macd" not in df.columns:
+        df["macd"] = MACD(close=df["close"]).macd_diff()
+    return df
+
 class RLAgentService:
     def __init__(self):
         self.model = None
@@ -52,9 +79,12 @@ class RLAgentService:
         """
         if len(df) == 0:
             return np.zeros(7, dtype=np.float32)
-            
+
+        # Reconstruct RSI/MACD from the candle series if the caller didn't
+        # supply them, matching the training feature computation.
+        df = _ensure_rsi_macd(df)
         latest = df.iloc[-1]
-        
+
         # Example features
         close = latest.get("close", 0.0)
         volume = latest.get("volume", 0.0)
@@ -94,15 +124,18 @@ class RLAgentService:
         4: Strong Buy
         """
         if not self.is_loaded or self.model is None:
-            # Fallback when no model is loaded (e.g. before user trains it)
+            # No model loaded (e.g. before user trains it) — return neutral
+            # with zero confidence and a flag; never invent conviction.
             return {
                 "action": "HOLD",
-                "confidence": 0.5,
-                "score_adjustment": 0.0
+                "confidence": 0.0,
+                "score_adjustment": 0.0,
+                "isFallback": True,
+                "source": "no_model"
             }
             
         state = self.prepare_state(df, macro_data)
-        
+
         try:
             # deterministic=True for inference
             action, _states = self.model.predict(state, deterministic=True)
@@ -115,22 +148,44 @@ class RLAgentService:
             # Map to a score adjustment [-0.5 to +0.5]
             score_map = {0: -0.5, 1: -0.25, 2: 0.0, 3: 0.25, 4: 0.5}
             score_adj = score_map.get(action_idx, 0.0)
-            
-            # PPO doesn't output probabilities natively via predict(), 
-            # we can approximate confidence based on action extremeness
-            confidence = abs(score_adj) * 2.0  # 1.0 for Strong, 0.5 for normal, 0 for hold
-            
+
+            # Confidence = the policy's actual probability mass on the chosen
+            # action, read from the PPO action distribution. This is the true
+            # model conviction, not a constant derived from action extremeness
+            # (which would report 1.0 even when the policy was nearly indifferent).
+            confidence = self._action_probability(state, action_idx)
+
             return {
                 "action": action_str,
                 "confidence": confidence,
-                "score_adjustment": score_adj
+                "score_adjustment": score_adj,
+                "source": "model"
             }
         except Exception as e:
             logger.error(f"RL prediction failed: {e}")
             return {
                 "action": "HOLD",
                 "confidence": 0.0,
-                "score_adjustment": 0.0
+                "score_adjustment": 0.0,
+                "isFallback": True,
+                "source": "error"
             }
+
+    def _action_probability(self, state: np.ndarray, action_idx: int) -> float:
+        """Return the policy's probability mass on `action_idx` from the PPO
+        action distribution. Falls back to a neutral 0.5 if the SB3 internals
+        aren't reachable, rather than fabricating conviction."""
+        try:
+            import torch
+            obs_t, _ = self.model.policy.obs_to_tensor(state)
+            with torch.no_grad():
+                dist = self.model.policy.get_distribution(obs_t)
+                probs = dist.distribution.probs.detach().cpu().numpy().ravel()
+            if 0 <= action_idx < len(probs):
+                return float(probs[action_idx])
+            return 0.5
+        except Exception as e:
+            logger.debug(f"Could not derive RL action probability, using neutral: {e}")
+            return 0.5
 
 rl_agent_service = RLAgentService()

@@ -32,9 +32,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pydantic import BaseModel, Field, field_validator
 
 from models import technical_pattern_engine, chronos_service
+from models import ranker_service
 from models.rl_agent import rl_agent_service
 from rl_lifecycle import rl_lifecycle_manager
+from ranker_lifecycle import ranker_lifecycle_manager
 from sentiment import analyze_sentiment
+import sentiment as sentiment_module
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -200,7 +203,13 @@ def _build_health_snapshot() -> Dict[str, Any]:
         "models": {
             "technical_engine": technical_engine_status,
             "chronos": chronos_status,
-            "rl_model": rl_lifecycle_manager.get_status()
+            # Report BOTH the training lifecycle (READY/TRAINING) and whether an
+            # RL model is actually loaded for inference. A service with no
+            # rl_model.zip would otherwise show READY while silently serving the
+            # no_model fallback.
+            "rl_model": rl_lifecycle_manager.get_status(),
+            "rl_inference_loaded": rl_agent_service.is_loaded,
+            "sentiment": sentiment_module.get_status(),
         },
         "hardware": runtime,
         "diagnostics": diagnostics,
@@ -220,7 +229,7 @@ def _refresh_health_snapshot() -> Dict[str, Any]:
 async def _monitor_health() -> None:
     while True:
         try:
-            _refresh_health_snapshot()
+            await asyncio.to_thread(_refresh_health_snapshot)
         except Exception:
             logger.exception("AI health refresh failed")
         await asyncio.sleep(_HEALTH_REFRESH_INTERVAL_SEC)
@@ -273,6 +282,11 @@ async def lifespan(app: FastAPI):
             chronos_service.load_model()
         except Exception:
             logger.exception("Failed to load Chronos model")
+
+        try:
+            ranker_service.load_model()
+        except Exception:
+            logger.exception("Failed to load learned ranker")
 
         _refresh_health_snapshot()
         logger.info("=== Model loading completed in %.2f s ===", time.time() - t0)
@@ -383,11 +397,24 @@ class CandidateScore(BaseModel):
     world_sentiment_score: float = Field(default=0.0, description="World politics sentiment score -1.0 to 1.0")
     composite_score: float = Field(description="Blended AI score 0-100")
     components: Dict[str, float] = Field(default_factory=dict, description="Score breakdown by sub-components")
+    win_probability: Optional[float] = Field(
+        default=None,
+        description="Calibrated P(target1 before stop) from the learned ranker; null when the ranker is unavailable and callers should use composite_score.",
+    )
+    scored: bool = Field(
+        default=True,
+        description="False when this candidate could not be scored and composite_score is a neutral 50 placeholder (per-candidate inference error). Callers must NOT rank an unscored placeholder alongside genuinely-scored candidates.",
+    )
 
 
 class BatchResponse(BaseModel):
     results: List[CandidateScore]
     processing_time_ms: float
+    ranker_threshold: Optional[float] = Field(
+        default=None,
+        description="Recommended P(win) threshold for greenlighting a trade; null when the ranker is unavailable.",
+    )
+    ranker_loaded: bool = Field(default=False, description="Whether the learned ranker served these scores.")
 
 
 class HealthResponse(BaseModel):
@@ -417,7 +444,7 @@ async def health():
         ts = _LAST_HEALTH_REFRESH_TS
     
     if snapshot is None or (time.time() - ts) > _HEALTH_REFRESH_INTERVAL_SEC:
-        snapshot = _refresh_health_snapshot()
+        snapshot = await asyncio.to_thread(_refresh_health_snapshot)
 
     return HealthResponse(
         status=snapshot["status"],
@@ -435,7 +462,7 @@ async def infer_technical_ranking(req: TechnicalRankingRequest):
     """Single Technical Pattern Engine inference on OHLCV data."""
     t0 = time.time()
     try:
-        result = technical_pattern_engine.infer(req.ohlcv, req.features or {})
+        result = await asyncio.to_thread(technical_pattern_engine.infer, req.ohlcv, req.features or {})
         InferenceStats.record((time.time() - t0) * 1000)
         return TechnicalRankingResponse(
             bullish_probability=result.bullish_probability,
@@ -455,7 +482,7 @@ async def infer_chronos(req: ChronosRequest):
     """Single Chronos inference on close prices."""
     t0 = time.time()
     try:
-        result = chronos_service.infer(req.closes, req.steps or 5)
+        result = await asyncio.to_thread(chronos_service.infer, req.closes, req.steps or 5)
         InferenceStats.record((time.time() - t0) * 1000)
         return ChronosResponse(
             median_forecast=result.median_forecast,
@@ -527,29 +554,61 @@ async def infer_batch(req: BatchRequest):
     """Batch inference — runs Technical Pattern Engine + Chronos for each candidate and returns
     a composite AI score (0-100)."""
     t0 = time.time()
-    
-    # Semaphore to prevent overwhelming CPU/GPU with too many concurrent threads
+
+    # Chronos forecasts for ALL candidates in a single batched GPU call. This
+    # replaces the previous pattern of N concurrent single-series calls — one
+    # forward pass over the whole batch is dramatically cheaper on the RTX 3050.
+    def _closes_for(cand: CandidateRequest) -> List[float]:
+        c = cand.closes
+        if c is None or len(c) < 2:
+            c = [row[3] for row in cand.ohlcv]
+        return c
+
+    closes_batch = [_closes_for(cand) for cand in req.candidates]
+    chronos_results = await asyncio.to_thread(chronos_service.infer_batch, closes_batch)
+    chronos_by_symbol = {
+        id(cand): chronos_results[i] for i, cand in enumerate(req.candidates)
+    }
+
+    # Learned ranker: one batched P(win) prediction for all candidates. The caller
+    # sends the shared candle-derived feature array under features["ranker_features"]
+    # (ordered per RANKER_FEATURE_KEYS). Returns None per row when the ranker is
+    # unavailable, so each candidate cleanly falls back to the composite score.
+    ranker_rows = [
+        (cand.features or {}).get("ranker_features") or [] for cand in req.candidates
+    ]
+    ranker_probs = await asyncio.to_thread(ranker_service.predict_batch, ranker_rows)
+    win_prob_by_id = {
+        id(cand): ranker_probs[i] for i, cand in enumerate(req.candidates)
+    }
+
+    # Semaphore bounds the remaining per-candidate CPU work (pattern engine +
+    # sentiment). Chronos is already done, so contention on the GPU is gone.
     sem = asyncio.Semaphore(4)
 
     async def process_candidate(cand: CandidateRequest) -> CandidateScore:
         async with sem:
             try:
-                closes = cand.closes
-                if closes is None or len(closes) < 2:
-                    closes = [row[3] for row in cand.ohlcv]
+                # Chronos already computed in the batched pass above.
+                cr = chronos_by_symbol[id(cand)]
 
-                # Run heavy inference in separate threads to avoid blocking the event loop
-                kr, cr = await asyncio.gather(
-                    asyncio.to_thread(technical_pattern_engine.infer, cand.ohlcv, cand.features or {}),
-                    asyncio.to_thread(chronos_service.infer, closes)
+                kr = await asyncio.to_thread(
+                    technical_pattern_engine.infer, cand.ohlcv, cand.features or {}
                 )
-                
+
                 # Fetch sentiment
                 if cand.as_of_date:
-                    # PIT query from DB
+                    # PIT query from DB. Fetch BOTH the symbol composite and the
+                    # as-of-date world sentiment so the backtest applies the SAME
+                    # macro crash penalty (_compute_composite_score gates it on
+                    # world_score < -0.5) that live scoring does. Previously
+                    # world_score was hardcoded to 0.0 here, so the penalty could
+                    # never fire historically — train/serve skew between backtest
+                    # and live scoring of the identical formula.
                     def fetch_historical_sentiment():
                         db_url = os.getenv("DATABASE_URL")
-                        if not db_url: return 0.0
+                        if not db_url:
+                            return 0.0, 0.0
                         try:
                             import psycopg2
                             from contextlib import closing
@@ -561,13 +620,24 @@ async def infer_batch(req: BatchRequest):
                                         ORDER BY filed_date DESC LIMIT 1
                                     """, (cand.symbol, cand.as_of_date))
                                     row = cur.fetchone()
-                                    return float(row[0]) if row else 0.0
+                                    composite_val = float(row[0]) if row else 0.0
+                                    # World sentiment is market-wide, not per-symbol;
+                                    # take the most recent as-of-date reading from any
+                                    # symbol (they all write the same world score).
+                                    cur.execute("""
+                                        SELECT value FROM fundamental_snapshots
+                                        WHERE field_name = 'sentiment_world' AND filed_date <= %s
+                                        ORDER BY filed_date DESC LIMIT 1
+                                    """, (cand.as_of_date,))
+                                    wrow = cur.fetchone()
+                                    world_val = float(wrow[0]) if wrow else 0.0
+                                    return composite_val, world_val
                         except Exception as e:
                             logger.error(f"Failed to fetch historical sentiment: {e}")
-                            return 0.0
+                            return 0.0, 0.0
 
-                    historical_composite = await asyncio.to_thread(fetch_historical_sentiment)
-                    sentiment_dict = {"symbol_specific_score": historical_composite, "market_wide_score": 0.0, "world_score": 0.0, "composite": historical_composite}
+                    historical_composite, historical_world = await asyncio.to_thread(fetch_historical_sentiment)
+                    sentiment_dict = {"symbol_specific_score": historical_composite, "market_wide_score": 0.0, "world_score": historical_world, "composite": historical_composite}
                 else:
                     # Live query
                     sentiment_dict = await analyze_sentiment(cand.symbol)
@@ -595,6 +665,7 @@ async def infer_batch(req: BatchRequest):
                     world_sentiment_score=sentiment_dict.get("world_score", 0.0),
                     composite_score=composite,
                     components=components,
+                    win_probability=win_prob_by_id.get(id(cand)),
                 )
             except Exception as exc:
                 logger.error("Batch inference failed for %s: %s", cand.symbol, exc)
@@ -616,7 +687,8 @@ async def infer_batch(req: BatchRequest):
                     sentiment_score=0.0,
                     world_sentiment_score=0.0,
                     composite_score=50.0,
-                    components={}
+                    components={},
+                    scored=False,
                 )
 
     # Process all candidates concurrently with bounded concurrency
@@ -626,7 +698,12 @@ async def infer_batch(req: BatchRequest):
     InferenceStats.record(elapsed_ms)
     logger.info("Batch inference: %d candidates in %.1f ms", len(results), elapsed_ms)
 
-    return BatchResponse(results=results, processing_time_ms=round(elapsed_ms, 2))
+    return BatchResponse(
+        results=results,
+        processing_time_ms=round(elapsed_ms, 2),
+        ranker_loaded=ranker_service.is_loaded(),
+        ranker_threshold=ranker_service.recommended_threshold(),
+    )
 
 
 class RLPredictRequest(BaseModel):
@@ -642,7 +719,7 @@ async def predict_rl(req: RLPredictRequest):
     try:
         import pandas as pd
         if not req.ohlcv:
-            return {"action": "HOLD", "confidence": 0.0, "score_adjustment": 0.0}
+            return {"action": "HOLD", "confidence": 0.0, "score_adjustment": 0.0, "isFallback": True, "source": "no_data"}
             
         df = pd.DataFrame(req.ohlcv, columns=["timestamp", "open", "high", "low", "close", "volume"])
         macro_data = {
@@ -650,11 +727,11 @@ async def predict_rl(req: RLPredictRequest):
             "pcr": req.pcr,
             "fiiNet": req.fii_dii_net
         }
-        result = rl_agent_service.predict(df, macro_data)
+        result = await asyncio.to_thread(rl_agent_service.predict, df, macro_data)
         return result
     except Exception as e:
         logger.error(f"RL prediction failed for {req.symbol}: {e}")
-        return {"action": "HOLD", "confidence": 0.0, "score_adjustment": 0.0}
+        return {"action": "HOLD", "confidence": 0.0, "score_adjustment": 0.0, "isFallback": True, "source": "error"}
 
 @app.post("/api/v1/rl_train", tags=["Training"])
 async def trigger_rl_train():
@@ -669,6 +746,29 @@ async def trigger_rl_train():
 async def get_rl_status():
     """Get the current status of the RL training pipeline."""
     return rl_lifecycle_manager.get_status()
+
+
+class RankerTrainRequest(BaseModel):
+    data_path: Optional[str] = Field(
+        default=None, description="Path to the JSONL training data; defaults to ../data/ranker_train.jsonl"
+    )
+
+
+@app.post("/api/v1/ranker_train", tags=["Training"])
+async def trigger_ranker_train(req: RankerTrainRequest):
+    """Trigger learned-ranker retraining in the background. Training enforces the
+    walk-forward out-of-sample gate and champion-challenger promotion, so this is
+    safe to call on a schedule — a weak retrain simply keeps the incumbent."""
+    started = ranker_lifecycle_manager.trigger_training(req.data_path)
+    if started:
+        return {"message": "Ranker training started"}
+    return {"message": "Ranker training already in progress", "status": "TRAINING"}
+
+
+@app.get("/api/v1/ranker_status", tags=["Training"])
+async def get_ranker_status():
+    """Status of the learned ranker: training lifecycle + currently-served model."""
+    return {"lifecycle": ranker_lifecycle_manager.get_status(), "model": ranker_service.get_status()}
 
 # ---------------------------------------------------------------------------
 # Auth & Timing middleware

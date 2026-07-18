@@ -57,15 +57,25 @@ class StockTradingEnv(gym.Env):
         self.current_step += 1
         
         if self.current_step < self.max_steps:
-            current_price = self.df.iloc[self.current_step-1]["close"]
-            next_price = self.df.iloc[self.current_step]["close"]
-            
+            prev_row = self.df.iloc[self.current_step - 1]
+            curr_row = self.df.iloc[self.current_step]
+            current_price = prev_row["close"]
+            next_price = curr_row["close"]
+
+            # If the dataset stitches multiple tickers together, the return across
+            # the seam between two different stocks is meaningless — zero it so the
+            # agent never learns from a phantom overnight jump between symbols.
+            same_symbol = (
+                "symbol" not in self.df.columns
+                or prev_row.get("symbol") == curr_row.get("symbol")
+            )
+
             # Simple reward based on future return and our action
-            if current_price > 0:
+            if current_price > 0 and same_symbol:
                 price_change = (next_price - current_price) / current_price
             else:
                 price_change = 0.0
-                
+
             action_mult = {0: -1.0, 1: -0.5, 2: 0.0, 3: 0.5, 4: 1.0}[int(action)]
             reward = price_change * action_mult
         else:
@@ -167,9 +177,10 @@ def fetch_data() -> pd.DataFrame:
             df['fiiNet'] = 0.0
             
         df['pcr'] = 1.0  # Default PCR since historical options data isn't in yfinance
-        
+        df['symbol'] = ticker  # tag rows so episodes never cross a stock boundary
+
         df = df.dropna(subset=['close', 'volume', 'rsi', 'macd'])
-        all_data.append(df[['close', 'volume', 'rsi', 'macd', 'vix', 'fiiNet', 'pcr']])
+        all_data.append(df[['close', 'volume', 'rsi', 'macd', 'vix', 'fiiNet', 'pcr', 'symbol']])
         
     if not all_data:
         raise ValueError("Could not fetch any data from yfinance.")
