@@ -361,7 +361,7 @@ export default function Dashboard() {
       <button
         type="button"
         onClick={() => setSidebarTab("watchlist")}
-        className={`relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors ${sidebarTab === "watchlist" ? "text-background" : "text-muted-foreground hover:text-foreground"}`}
+        className={`relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-widest rounded-full transition-colors ${sidebarTab === "watchlist" ? "text-background" : "text-muted-foreground hover:text-foreground"}`}
       >
         {sidebarTab === "watchlist" && <motion.div layoutId="desktopTabIndicator" className="absolute inset-0 bg-foreground rounded-full" transition={SPRING_SNAPPY} />}
         <span className="relative z-10">Watchlist</span>
@@ -369,7 +369,7 @@ export default function Dashboard() {
       <button
         type="button"
         onClick={() => setSidebarTab("screener")}
-        className={`relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors ${sidebarTab === "screener" ? "text-background" : "text-muted-foreground hover:text-foreground"}`}
+        className={`relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-widest rounded-full transition-colors ${sidebarTab === "screener" ? "text-background" : "text-muted-foreground hover:text-foreground"}`}
       >
         {sidebarTab === "screener" && <motion.div layoutId="desktopTabIndicator" className="absolute inset-0 bg-foreground rounded-full" transition={SPRING_SNAPPY} />}
         <span className="relative z-10">Screener</span>
@@ -382,7 +382,7 @@ export default function Dashboard() {
       <button
         type="button"
         onClick={() => setSidebarTab("watchlist")}
-        className={`relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors ${sidebarTab === "watchlist" ? "text-background" : "text-muted-foreground hover:text-foreground"}`}
+        className={`relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-widest rounded-full transition-colors ${sidebarTab === "watchlist" ? "text-background" : "text-muted-foreground hover:text-foreground"}`}
       >
         {sidebarTab === "watchlist" && <motion.div layoutId="mobileTabIndicator" className="absolute inset-0 bg-foreground rounded-full" transition={SPRING_SNAPPY} />}
         <span className="relative z-10">Watchlist</span>
@@ -390,7 +390,7 @@ export default function Dashboard() {
       <button
         type="button"
         onClick={() => setSidebarTab("screener")}
-        className={`relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors ${sidebarTab === "screener" ? "text-background" : "text-muted-foreground hover:text-foreground"}`}
+        className={`relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-widest rounded-full transition-colors ${sidebarTab === "screener" ? "text-background" : "text-muted-foreground hover:text-foreground"}`}
       >
         {sidebarTab === "screener" && <motion.div layoutId="mobileTabIndicator" className="absolute inset-0 bg-foreground rounded-full" transition={SPRING_SNAPPY} />}
         <span className="relative z-10">Screener</span>
@@ -649,4 +649,5 @@ function flattenWatchlist(watchlist: Awaited<ReturnType<typeof api.watchlistToda
     return true;
   });
 }
+
 

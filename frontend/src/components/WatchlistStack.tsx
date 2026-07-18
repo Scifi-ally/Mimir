@@ -227,12 +227,12 @@ export const WatchlistStack = memo(function WatchlistStack({ items, monitored, s
       <CardHeader className="shrink-0 h-[48px] px-3 py-0 space-y-0 flex flex-row items-center justify-between gap-4 overflow-hidden">
         {headerLeft}
         {watchlistMetadata?.isFallback && (
-          <span className="shrink-0 whitespace-nowrap rounded-full bg-secondary/40 px-2 py-0.5 text-[9px] font-normal uppercase tracking-wider text-muted-foreground">
+          <span className="shrink-0 whitespace-nowrap rounded-full bg-secondary/40 px-2 py-0.5 text-[9px] font-normal uppercase tracking-widest text-muted-foreground">
             Showing {watchlistMetadata.forDate} (previous session)
           </span>
         )}
         {rows.length > 0 ? (
-          <div className="flex overflow-x-auto whitespace-nowrap flex-nowrap gap-4 text-[10px] font-normal uppercase tracking-wider [&::-webkit-scrollbar]:hidden pb-1 justify-end w-full items-center">
+          <div className="flex overflow-x-auto whitespace-nowrap flex-nowrap gap-4 text-[10px] font-normal uppercase tracking-widest [&::-webkit-scrollbar]:hidden pb-1 justify-end w-full items-center">
             <button
               type="button"
               onClick={() => handleCategorySelect(null)}
@@ -272,7 +272,7 @@ export const WatchlistStack = memo(function WatchlistStack({ items, monitored, s
             ))}
           </div>
         ) : (
-          <div className="flex items-center justify-end w-full text-[10px] font-normal uppercase tracking-wider text-muted-foreground/60">
+          <div className="flex items-center justify-end w-full text-[10px] font-normal uppercase tracking-widest text-muted-foreground/60">
             <span>0 Symbols</span>
           </div>
         )}
@@ -418,4 +418,5 @@ function countCategories(rows: StockRow[]) {
   });
   return sorted.slice(0, 6);
 }
+
 
