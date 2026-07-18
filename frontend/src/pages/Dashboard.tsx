@@ -361,7 +361,7 @@ export default function Dashboard() {
       <button
         type="button"
         onClick={() => setSidebarTab("watchlist")}
-        className={`relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors ${sidebarTab === "watchlist" ? "text-background" : "text-muted-foreground hover:text-foreground"}`}
+        className={`relative px-4 py-1.5 text-[10px] font-normal uppercase tracking-wider rounded-full transition-colors ${sidebarTab === "watchlist" ? "text-background" : "text-muted-foreground hover:text-foreground"}`}
       >
         {sidebarTab === "watchlist" && <motion.div layoutId="desktopTabIndicator" className="absolute inset-0 bg-foreground rounded-full" transition={SPRING_SNAPPY} />}
         <span className="relative z-10">Watchlist</span>
@@ -369,7 +369,7 @@ export default function Dashboard() {
       <button
         type="button"
         onClick={() => setSidebarTab("screener")}
-        className={`relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors ${sidebarTab === "screener" ? "text-background" : "text-muted-foreground hover:text-foreground"}`}
+        className={`relative px-4 py-1.5 text-[10px] font-normal uppercase tracking-wider rounded-full transition-colors ${sidebarTab === "screener" ? "text-background" : "text-muted-foreground hover:text-foreground"}`}
       >
         {sidebarTab === "screener" && <motion.div layoutId="desktopTabIndicator" className="absolute inset-0 bg-foreground rounded-full" transition={SPRING_SNAPPY} />}
         <span className="relative z-10">Screener</span>
@@ -382,7 +382,7 @@ export default function Dashboard() {
       <button
         type="button"
         onClick={() => setSidebarTab("watchlist")}
-        className={`relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors ${sidebarTab === "watchlist" ? "text-background" : "text-muted-foreground hover:text-foreground"}`}
+        className={`relative px-4 py-1.5 text-[10px] font-normal uppercase tracking-wider rounded-full transition-colors ${sidebarTab === "watchlist" ? "text-background" : "text-muted-foreground hover:text-foreground"}`}
       >
         {sidebarTab === "watchlist" && <motion.div layoutId="mobileTabIndicator" className="absolute inset-0 bg-foreground rounded-full" transition={SPRING_SNAPPY} />}
         <span className="relative z-10">Watchlist</span>
@@ -390,7 +390,7 @@ export default function Dashboard() {
       <button
         type="button"
         onClick={() => setSidebarTab("screener")}
-        className={`relative px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-full transition-colors ${sidebarTab === "screener" ? "text-background" : "text-muted-foreground hover:text-foreground"}`}
+        className={`relative px-4 py-1.5 text-[10px] font-normal uppercase tracking-wider rounded-full transition-colors ${sidebarTab === "screener" ? "text-background" : "text-muted-foreground hover:text-foreground"}`}
       >
         {sidebarTab === "screener" && <motion.div layoutId="mobileTabIndicator" className="absolute inset-0 bg-foreground rounded-full" transition={SPRING_SNAPPY} />}
         <span className="relative z-10">Screener</span>
@@ -403,7 +403,7 @@ export default function Dashboard() {
   if (statusQuery.isPending) {
     return (
       <div className="flex h-[100dvh] flex-col items-center justify-center gap-4 bg-background text-foreground">
-        <span className="font-mono text-2xl font-bold tracking-[0.3em]">MIMIR</span>
+        <span className="font-mono text-2xl font-normal tracking-[0.3em]">MIMIR</span>
         <span className="h-1.5 w-1.5 rounded-full bg-foreground/60 animate-pulse" />
       </div>
     );
@@ -453,7 +453,7 @@ export default function Dashboard() {
               transition={SPRING_GENTLE}
               className="shrink-0 px-2 py-0.5 overflow-hidden"
             >
-              <p className="text-xs font-medium text-destructive">{apiError}</p>
+              <p className="text-xs font-normal text-destructive">{apiError}</p>
             </motion.div>
           )}
         </AnimatePresence>

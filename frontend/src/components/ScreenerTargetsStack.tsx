@@ -245,9 +245,9 @@ export function ScreenerTargetsStack({ selectedSymbol, onSelect, headerLeft }: S
         />
         <div className="flex flex-col justify-center gap-1 min-w-0 flex-1 z-10 pointer-events-none">
           <div className="flex items-center gap-2 min-w-0">
-            <span className="truncate text-sm font-bold tracking-tight text-foreground">{row.symbol}</span>
+            <span className="truncate text-sm font-normal tracking-tight text-foreground">{row.symbol}</span>
             <span className={cn(
-              "rounded px-1.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wider leading-none",
+              "rounded px-1.5 py-0.5 text-[10px] font-normal uppercase tracking-wider leading-none",
               row.notes ? "bg-primary/15 text-primary" : "bg-foreground/10 text-muted-foreground"
             )}>
               {row.notes ? "Rule" : "Manual"}
@@ -255,12 +255,12 @@ export function ScreenerTargetsStack({ selectedSymbol, onSelect, headerLeft }: S
           </div>
           <div className="flex flex-wrap items-center gap-1.5 min-w-0">
             {badges.map((badge) => (
-              <span key={badge} className="text-[11px] font-bold uppercase tracking-wider text-accent truncate">
+              <span key={badge} className="text-[11px] font-normal uppercase tracking-wider text-accent truncate">
                 {badge}
               </span>
             ))}
             {badges.length === 0 && (
-              <span className="text-[11px] font-medium text-foreground/60 truncate">
+              <span className="text-[11px] font-normal text-foreground/60 truncate">
                 {row.notes ? "Matched condition" : "Added manually"}
               </span>
             )}
@@ -272,12 +272,12 @@ export function ScreenerTargetsStack({ selectedSymbol, onSelect, headerLeft }: S
             <LivePrice
               symbol={row.symbol}
               decimals={2}
-              className="text-sm font-bold tabular-nums font-mono leading-tight text-foreground"
+              className="text-sm font-normal tabular-nums font-mono leading-tight text-foreground"
             />
             <LiveChangePct
               symbol={row.symbol}
               decimals={2}
-              className="text-[11px] font-bold tabular-nums font-mono leading-tight"
+              className="text-[11px] font-normal tabular-nums font-mono leading-tight"
             />
           </div>
 
@@ -328,7 +328,7 @@ export function ScreenerTargetsStack({ selectedSymbol, onSelect, headerLeft }: S
               <button onClick={() => setActiveWatchlist(null)} className="p-1 hover:bg-secondary/20 rounded-full transition-colors text-muted-foreground hover:text-foreground shrink-0">
                 <ArrowLeft className="h-4 w-4" />
               </button>
-              <CardTitle className="text-sm font-semibold tracking-tight text-foreground truncate">
+              <CardTitle className="text-sm font-normal tracking-tight text-foreground truncate">
                 {title}
               </CardTitle>
             </div>
@@ -336,14 +336,14 @@ export function ScreenerTargetsStack({ selectedSymbol, onSelect, headerLeft }: S
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => setCommandPaletteOpen(true, "", activeWatchlist as number)}
-                  className="flex items-center text-xs font-semibold px-2 py-1 bg-secondary/80 hover:bg-secondary text-foreground rounded transition-colors"
+                  className="flex items-center text-xs font-normal px-2 py-1 bg-secondary/80 hover:bg-secondary text-foreground rounded transition-colors"
                 >
                   <Plus className="h-3 w-3 mr-1" />
                   Add Stock
                 </button>
                 <button
                   onClick={() => setCommandPaletteOpen(true, "", null, activeWatchlist as number)}
-                  className="flex items-center gap-1 text-xs font-semibold px-2.5 py-1 bg-secondary/80 hover:bg-secondary text-foreground rounded transition-colors"
+                  className="flex items-center gap-1 text-xs font-normal px-2.5 py-1 bg-secondary/80 hover:bg-secondary text-foreground rounded transition-colors"
                   title="Edit scan conditions and schedule"
                 >
                   <Settings2 className="h-3 w-3" />
@@ -352,7 +352,7 @@ export function ScreenerTargetsStack({ selectedSymbol, onSelect, headerLeft }: S
                 <button
                   onClick={() => runNow(activeWatchlist)}
                   disabled={runScreenerMutation.isPending}
-                  className="relative flex items-center gap-1 text-xs font-bold px-3 py-1 bg-bull text-bull-foreground rounded shadow-[0_0_12px_rgba(34,197,94,0.4)] hover:shadow-[0_0_20px_rgba(34,197,94,0.7)] hover:bg-bull/90 transition-all disabled:opacity-50 z-10"
+                  className="relative flex items-center gap-1 text-xs font-normal px-3 py-1 bg-bull text-bull-foreground rounded shadow-[0_0_12px_rgba(34,197,94,0.4)] hover:shadow-[0_0_20px_rgba(34,197,94,0.7)] hover:bg-bull/90 transition-all disabled:opacity-50 z-10"
                   title="Run scan for this watchlist"
                 >
                   {runScreenerMutation.isPending ? (
@@ -391,33 +391,33 @@ export function ScreenerTargetsStack({ selectedSymbol, onSelect, headerLeft }: S
           <div className="flex flex-col gap-3">
             <motion.div layout className="grid grid-cols-2 gap-2">
               <div className="rounded-lg bg-secondary/10 px-3 py-2">
-                <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground"><Activity className="h-3 w-3" /> Status</div>
-                <div className={cn("mt-1 text-xs font-bold", activeRule?.status === "PAUSED" ? "text-amber-500" : "text-primary")}>{activeRule?.status || "ACTIVE"}</div>
+                <div className="flex items-center gap-1.5 text-[10px] font-normal uppercase tracking-wider text-muted-foreground"><Activity className="h-3 w-3" /> Status</div>
+                <div className={cn("mt-1 text-xs font-normal", activeRule?.status === "PAUSED" ? "text-amber-500" : "text-primary")}>{activeRule?.status || "ACTIVE"}</div>
               </div>
               <div className="rounded-lg bg-secondary/10 px-3 py-2">
-                <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground"><Clock className="h-3 w-3" /> Last trigger</div>
-                <div className="mt-1 truncate text-xs font-bold text-foreground">{formatShortDate(activeRule?.lastTriggeredAt)}</div>
+                <div className="flex items-center gap-1.5 text-[10px] font-normal uppercase tracking-wider text-muted-foreground"><Clock className="h-3 w-3" /> Last trigger</div>
+                <div className="mt-1 truncate text-xs font-normal text-foreground">{formatShortDate(activeRule?.lastTriggeredAt)}</div>
               </div>
               <div className="rounded-lg bg-secondary/10 px-3 py-2">
-                <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground"><ListTree className="h-3 w-3" /> Rule</div>
-                <div className="mt-1 truncate text-xs font-bold text-foreground">{summarizeRule(activeRule)}</div>
+                <div className="flex items-center gap-1.5 text-[10px] font-normal uppercase tracking-wider text-muted-foreground"><ListTree className="h-3 w-3" /> Rule</div>
+                <div className="mt-1 truncate text-xs font-normal text-foreground">{summarizeRule(activeRule)}</div>
               </div>
               <div className="rounded-lg bg-secondary/10 px-3 py-2">
-                <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground"><Sparkles className="h-3 w-3" /> Sources</div>
-                <div className="mt-1 text-xs font-bold text-foreground">{autoTargets.length} auto / {manualTargets.length} manual</div>
+                <div className="flex items-center gap-1.5 text-[10px] font-normal uppercase tracking-wider text-muted-foreground"><Sparkles className="h-3 w-3" /> Sources</div>
+                <div className="mt-1 text-xs font-normal text-foreground">{autoTargets.length} auto / {manualTargets.length} manual</div>
               </div>
             </motion.div>
 
             {loadError ? (
               <div className="flex flex-col items-center justify-center text-xs font-mono py-10 px-4 text-center gap-3">
-                <p className="text-bear font-bold">Couldn't load watchlists</p>
+                <p className="text-bear font-normal">Couldn't load watchlists</p>
                 <button
                   onClick={() => {
                     void queryClient.invalidateQueries({ queryKey: ["screener_targets"] });
                     void queryClient.invalidateQueries({ queryKey: ["screener_rules"] });
                     void queryClient.invalidateQueries({ queryKey: ["screener_matches"] });
                   }}
-                  className="rounded-lg bg-secondary/30 px-3 py-2 text-[11px] font-bold text-foreground transition-colors hover:bg-secondary/50"
+                  className="rounded-lg bg-secondary/30 px-3 py-2 text-[11px] font-normal text-foreground transition-colors hover:bg-secondary/50"
                 >
                   Try Again
                 </button>
@@ -427,13 +427,13 @@ export function ScreenerTargetsStack({ selectedSymbol, onSelect, headerLeft }: S
                 <Target className="h-8 w-8 mb-2 opacity-20" />
                 <p>This watchlist is empty.</p>
                 <div className="mt-4 flex flex-wrap justify-center gap-2">
-                  <button onClick={() => setCommandPaletteOpen(true, "", activeWatchlist as number)} className="flex items-center gap-1 rounded-lg bg-primary px-3 py-2 text-[11px] font-bold text-primary-foreground transition-transform hover:scale-105">
+                  <button onClick={() => setCommandPaletteOpen(true, "", activeWatchlist as number)} className="flex items-center gap-1 rounded-lg bg-primary px-3 py-2 text-[11px] font-normal text-primary-foreground transition-transform hover:scale-105">
                     <Plus className="h-3.5 w-3.5" /> Add Stock
                   </button>
-                  <button onClick={() => setCommandPaletteOpen(true, "scan ")} className="flex items-center gap-1 rounded-lg bg-secondary/30 px-3 py-2 text-[11px] font-bold text-foreground transition-colors hover:bg-secondary/50">
+                  <button onClick={() => setCommandPaletteOpen(true, "scan ")} className="flex items-center gap-1 rounded-lg bg-secondary/30 px-3 py-2 text-[11px] font-normal text-foreground transition-colors hover:bg-secondary/50">
                     <Clock className="h-3.5 w-3.5" /> Set Schedule
                   </button>
-                  <button onClick={() => runNow(activeWatchlist === "GLOBAL" ? undefined : activeWatchlist)} disabled={runScreenerMutation.isPending} className="flex items-center gap-1 rounded-lg bg-secondary/30 px-3 py-2 text-[11px] font-bold text-foreground transition-colors hover:bg-secondary/50 disabled:opacity-50">
+                  <button onClick={() => runNow(activeWatchlist === "GLOBAL" ? undefined : activeWatchlist)} disabled={runScreenerMutation.isPending} className="flex items-center gap-1 rounded-lg bg-secondary/30 px-3 py-2 text-[11px] font-normal text-foreground transition-colors hover:bg-secondary/50 disabled:opacity-50">
                     {runScreenerMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
                     {runScreenerMutation.isPending ? "Running..." : "Run Scan"}
                   </button>
@@ -443,7 +443,7 @@ export function ScreenerTargetsStack({ selectedSymbol, onSelect, headerLeft }: S
               <AnimatePresence>
                 {autoTargets.length > 0 && (
                   <div className="flex flex-col gap-2.5">
-                    <div className="px-1 text-[11px] font-bold uppercase tracking-widest text-muted-foreground">Auto matches</div>
+                    <div className="px-1 text-[11px] font-normal uppercase tracking-widest text-muted-foreground">Auto matches</div>
                     <div className="grid grid-cols-[repeat(auto-fit,minmax(310px,1fr))] gap-3">
                       {autoTargets.map((row) => renderTargetRow(row, title))}
                     </div>
@@ -451,7 +451,7 @@ export function ScreenerTargetsStack({ selectedSymbol, onSelect, headerLeft }: S
                 )}
                 {manualTargets.length > 0 && (
                   <div className="flex flex-col gap-2.5">
-                    <div className="px-1 text-[11px] font-bold uppercase tracking-widest text-muted-foreground">Manual stocks</div>
+                    <div className="px-1 text-[11px] font-normal uppercase tracking-widest text-muted-foreground">Manual stocks</div>
                     <div className="grid grid-cols-[repeat(auto-fit,minmax(310px,1fr))] gap-3">
                       {manualTargets.map((row) => renderTargetRow(row, title))}
                     </div>
@@ -462,12 +462,12 @@ export function ScreenerTargetsStack({ selectedSymbol, onSelect, headerLeft }: S
 
             {recentMatches.length > 0 && (
               <motion.div layout className="mt-1 rounded-xl bg-background/30 p-3">
-                <div className="mb-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Recent activity</div>
+                <div className="mb-2 text-[10px] font-normal uppercase tracking-widest text-muted-foreground">Recent activity</div>
                 <div className="flex flex-col gap-2">
                   {recentMatches.map((match) => (
                     <div key={match.id} className="flex items-start justify-between gap-3 text-xs">
                       <div className="min-w-0 flex-1">
-                        <span className="font-bold text-foreground mr-2">{match.symbol}</span>
+                        <span className="font-normal text-foreground mr-2">{match.symbol}</span>
                         <span className="text-muted-foreground break-words">{match.condition}</span>
                       </div>
                       <span className="shrink-0 font-mono text-[10px] text-muted-foreground">{formatShortDate(match.matchedAt)}</span>
@@ -492,7 +492,7 @@ export function ScreenerTargetsStack({ selectedSymbol, onSelect, headerLeft }: S
           {headerLeft}
         </CardHeader>
         <div className="flex-1 flex items-center justify-center p-6">
-          <button onClick={() => setCommandPaletteOpen(true, "scan ")} className="flex items-center gap-2 rounded-xl bg-primary px-6 py-2.5 text-xs font-bold text-primary-foreground transition-all hover:scale-105 shadow-md shadow-primary/20">
+          <button onClick={() => setCommandPaletteOpen(true, "scan ")} className="flex items-center gap-2 rounded-xl bg-primary px-6 py-2.5 text-xs font-normal text-primary-foreground transition-all hover:scale-105 shadow-md shadow-primary/20">
             <Plus className="h-4 w-4" /> Create Watchlist
           </button>
         </div>
@@ -506,10 +506,10 @@ export function ScreenerTargetsStack({ selectedSymbol, onSelect, headerLeft }: S
         {headerLeft}
         <div className="flex items-center justify-between gap-3 w-full min-w-0">
           <div className="flex items-center gap-3 min-w-0">
-            <CardTitle className="text-sm font-bold tracking-tight text-foreground whitespace-nowrap">
+            <CardTitle className="text-sm font-normal tracking-tight text-foreground whitespace-nowrap">
               Custom Watchlists
             </CardTitle>
-            <div className="flex items-center gap-1.5 font-mono text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/80 whitespace-nowrap hidden @min-md:flex">
+            <div className="flex items-center gap-1.5 font-mono text-[10px] font-normal uppercase tracking-widest text-muted-foreground/80 whitespace-nowrap hidden @min-md:flex">
               <span className="text-foreground/70">{customWatchlists.length} lists</span>
               <span className="text-foreground/20">/</span>
               <span className="text-foreground/70">{totalCustomTargets} symbols</span>
@@ -520,7 +520,7 @@ export function ScreenerTargetsStack({ selectedSymbol, onSelect, headerLeft }: S
           <button
             type="button"
             onClick={() => setCommandPaletteOpen(true, "scan ")}
-            className="group relative flex shrink-0 items-center gap-1.5 overflow-hidden rounded-full bg-white/5 px-4 py-1.5 text-[11px] font-bold text-foreground transition-all hover:bg-white/10 hover:shadow-[0_0_20px_rgba(255,255,255,0.1)] hover:scale-105 active:scale-95"
+            className="group relative flex shrink-0 items-center gap-1.5 overflow-hidden rounded-full bg-white/5 px-4 py-1.5 text-[11px] font-normal text-foreground transition-all hover:bg-white/10 hover:shadow-[0_0_20px_rgba(255,255,255,0.1)] hover:scale-105 active:scale-95"
           >
             <div className="absolute inset-0 bg-gradient-to-r from-primary/10 to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
             <Plus className="relative h-3.5 w-3.5 text-primary" />
@@ -554,13 +554,13 @@ export function ScreenerTargetsStack({ selectedSymbol, onSelect, headerLeft }: S
                       <span className={cn("absolute inline-flex h-full w-full animate-ping rounded-full opacity-40", isPaused ? "bg-amber-400" : "bg-primary")} />
                       <span className={cn("relative inline-flex h-1.5 w-1.5 rounded-full", isPaused ? "bg-amber-400" : "bg-primary")} />
                     </span>
-                    <span className="truncate text-sm font-bold tracking-tight text-foreground/90 group-hover:text-foreground">
+                    <span className="truncate text-sm font-normal tracking-tight text-foreground/90 group-hover:text-foreground">
                       {watchlist.outputName || "Unnamed Watchlist"}
                     </span>
                   </div>
                   
                   <div className="flex flex-wrap items-center gap-2 text-[10px] font-mono text-muted-foreground">
-                    <span className={cn("font-bold", isPaused ? "text-amber-400/80" : "text-primary/80")}>
+                    <span className={cn("font-normal", isPaused ? "text-amber-400/80" : "text-primary/80")}>
                       {isPaused ? "PAUSED" : "ACTIVE"}
                     </span>
                     <span className="text-foreground/20">|</span>
@@ -605,7 +605,7 @@ export function ScreenerTargetsStack({ selectedSymbol, onSelect, headerLeft }: S
               <div className="flex min-w-0 items-center gap-3">
                 <div className="flex items-center gap-2">
                   <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/60" />
-                  <span className="truncate text-sm font-bold tracking-tight text-foreground/90 group-hover:text-foreground">Uncategorized Targets</span>
+                  <span className="truncate text-sm font-normal tracking-tight text-foreground/90 group-hover:text-foreground">Uncategorized Targets</span>
                 </div>
                 <div className="flex flex-wrap items-center gap-2 text-[10px] font-mono text-muted-foreground">
                   <span className="text-foreground/20">|</span>

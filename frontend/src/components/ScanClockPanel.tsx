@@ -20,7 +20,7 @@ const SingleDigit = memo(function SingleDigit({ char }: { char: string }) {
           animate={{ y: "0%" }}
           exit={{ y: "-100%" }}
           transition={SPRING_GENTLE}
-          className="absolute inset-0 flex items-center justify-center text-7xl sm:text-8xl md:text-9xl font-mono font-black text-foreground tabular-nums select-none"
+          className="absolute inset-0 flex items-center justify-center text-7xl sm:text-8xl md:text-9xl font-mono font-normal text-foreground tabular-nums select-none"
         >
           {char}
         </motion.span>

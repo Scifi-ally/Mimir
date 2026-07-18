@@ -181,7 +181,7 @@ function CustomSelect({ value, onChange, options, editable = false, placeholder 
           aria-label={placeholder || "Indicator"}
           style={{ width: `calc(${Math.max(currentInputValue.length || placeholder.length, 2)}ch + 24px)` }}
           className={cn(
-            "rounded-md bg-transparent px-3 py-1.5 text-center text-xs font-bold text-foreground outline-none transition-colors placeholder:text-foreground/30 hover:bg-secondary/30 focus:bg-secondary/50",
+            "rounded-md bg-transparent px-3 py-1.5 text-center text-xs font-normal text-foreground outline-none transition-colors placeholder:text-foreground/30 hover:bg-secondary/30 focus:bg-secondary/50",
             textValue !== undefined && "bg-secondary/20"
           )}
         />
@@ -191,7 +191,7 @@ function CustomSelect({ value, onChange, options, editable = false, placeholder 
           type="button"
           onClick={() => setOpen((current) => !current)}
           onKeyDown={handleKeyDown}
-          className="whitespace-nowrap rounded-md bg-transparent px-2 py-1.5 text-xs font-bold text-foreground transition-colors hover:bg-secondary/30"
+          className="whitespace-nowrap rounded-md bg-transparent px-2 py-1.5 text-xs font-normal text-foreground transition-colors hover:bg-secondary/30"
         >
           {selectedLabel}
         </button>
@@ -217,7 +217,7 @@ function CustomSelect({ value, onChange, options, editable = false, placeholder 
                     onMouseEnter={() => setHighlightedIndex(index)}
                     onClick={() => { onChange(option.value); setOpen(false); }}
                     className={cn(
-                      "rounded-lg px-3 py-1.5 text-left text-[11px] font-medium transition-colors hover:bg-foreground/10",
+                      "rounded-lg px-3 py-1.5 text-left text-[11px] font-normal transition-colors hover:bg-foreground/10",
                       (option.value === value || highlightedIndex === index) ? "bg-foreground/10 text-foreground" : "text-foreground/70",
                     )}
                   >
@@ -432,18 +432,18 @@ export function AdvancedRuleBuilder({ onComplete, initialRule }: { onComplete: (
           />
           <span className="text-[9px] uppercase tracking-widest text-muted-foreground">{node.rules.length} item{node.rules.length === 1 ? "" : "s"}</span>
           {depth > 0 && (
-            <button type="button" onClick={() => removeAt(path)} className="ml-auto text-[9px] font-bold uppercase tracking-wider text-destructive/70 hover:text-destructive">Remove group</button>
+            <button type="button" onClick={() => removeAt(path)} className="ml-auto text-[9px] font-normal uppercase tracking-wider text-destructive/70 hover:text-destructive">Remove group</button>
           )}
         </div>
         <div className="flex flex-col gap-1">
           {node.rules.map((child, index) => renderNode(child, [...path, index], depth + 1))}
         </div>
         <div className="flex items-center gap-2 px-1">
-          <button type="button" onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); appendTo(path, { type: "CONDITION", indicatorA: "RSI14", operator: "<", indicatorB: "30" }); }} className="flex items-center gap-1 rounded px-1.5 py-1 text-[9px] font-bold uppercase tracking-wider text-foreground/60 hover:bg-foreground/5 hover:text-foreground">
+          <button type="button" onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); appendTo(path, { type: "CONDITION", indicatorA: "RSI14", operator: "<", indicatorB: "30" }); }} className="flex items-center gap-1 rounded px-1.5 py-1 text-[9px] font-normal uppercase tracking-wider text-foreground/60 hover:bg-foreground/5 hover:text-foreground">
             <Plus className="h-2.5 w-2.5" /> Condition
           </button>
           {depth < 5 && (
-            <button type="button" onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); appendTo(path, { type: "AND", rules: [{ type: "CONDITION", indicatorA: "CLOSE", operator: ">", indicatorB: "SMA50" }] }); }} className="flex items-center gap-1 rounded px-1.5 py-1 text-[9px] font-bold uppercase tracking-wider text-foreground/60 hover:bg-foreground/5 hover:text-foreground">
+            <button type="button" onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); appendTo(path, { type: "AND", rules: [{ type: "CONDITION", indicatorA: "CLOSE", operator: ">", indicatorB: "SMA50" }] }); }} className="flex items-center gap-1 rounded px-1.5 py-1 text-[9px] font-normal uppercase tracking-wider text-foreground/60 hover:bg-foreground/5 hover:text-foreground">
               <Plus className="h-2.5 w-2.5" /> Group
             </button>
           )}
@@ -456,7 +456,7 @@ export function AdvancedRuleBuilder({ onComplete, initialRule }: { onComplete: (
     <div className="mx-auto flex w-[610px] shrink-0 flex-col gap-1 px-1 pb-1">
       <div className="px-1 py-1">
         <div className="grid grid-cols-[auto_1fr_auto_auto] items-center gap-x-2 gap-y-1 text-[11px]">
-          <span className="font-semibold text-foreground/60">Scan</span>
+          <span className="font-normal text-foreground/60">Scan</span>
           <div>
             <CustomSelect 
                value={targetType} 
@@ -478,7 +478,7 @@ export function AdvancedRuleBuilder({ onComplete, initialRule }: { onComplete: (
                autoFocus={targetType === "CUSTOM"}
             />
           </div>
-          <span className="justify-self-end font-semibold text-foreground/60">on</span>
+          <span className="justify-self-end font-normal text-foreground/60">on</span>
           <div>
             <CustomSelect value={timeframe} onChange={setTimeframe} options={[
               { label: "1 minute", value: "1m" },
@@ -489,7 +489,7 @@ export function AdvancedRuleBuilder({ onComplete, initialRule }: { onComplete: (
             ]} />
           </div>
 
-          <span className="font-semibold text-foreground/60">Run</span>
+          <span className="font-normal text-foreground/60">Run</span>
           <div className="col-span-3 flex flex-wrap items-center gap-2">
             <CustomSelect value={scheduleMode} onChange={(value) => setScheduleMode(value as ScheduleMode)} options={SCHEDULE_OPTIONS} />
             {scheduleMode === "TIME" && (
@@ -500,14 +500,14 @@ export function AdvancedRuleBuilder({ onComplete, initialRule }: { onComplete: (
                 value={scheduleTime}
                 onChange={(event) => { setScheduleTime(event.target.value); setValidationError(null); }}
                 aria-label="Screener run time"
-                className="h-8 rounded-md bg-background/45 px-2 text-xs font-bold text-foreground outline-none focus:bg-secondary/35"
+                className="h-8 rounded-md bg-background/45 px-2 text-xs font-normal text-foreground outline-none focus:bg-secondary/35"
               />
             )}
           </div>
         </div>
       </div>
 
-      <div className="flex items-center justify-between px-1 pt-1 text-[10px] font-medium text-muted-foreground">
+      <div className="flex items-center justify-between px-1 pt-1 text-[10px] font-normal text-muted-foreground">
         <span className="shrink-0 font-mono opacity-80">{conditionCount}/50 conditions</span>
       </div>
 
@@ -527,8 +527,8 @@ export function AdvancedRuleBuilder({ onComplete, initialRule }: { onComplete: (
 
       {/* Compact Footer */}
       <div className="flex items-center justify-between pt-1 pb-1 px-2">
-        <button type="button" onClick={onComplete} className="rounded-xl px-4 py-2.5 text-xs font-semibold text-muted-foreground hover:bg-foreground/5 hover:text-foreground transition-colors">Cancel</button>
-        <button type="button" onClick={handleSave} disabled={createRuleMutation.isPending} className="group flex h-10 items-center gap-2 rounded-xl bg-primary px-5 text-xs font-semibold text-primary-foreground transition-all hover:opacity-90 disabled:opacity-50 active:scale-[0.98]">
+        <button type="button" onClick={onComplete} className="rounded-xl px-4 py-2.5 text-xs font-normal text-muted-foreground hover:bg-foreground/5 hover:text-foreground transition-colors">Cancel</button>
+        <button type="button" onClick={handleSave} disabled={createRuleMutation.isPending} className="group flex h-10 items-center gap-2 rounded-xl bg-primary px-5 text-xs font-normal text-primary-foreground transition-all hover:opacity-90 disabled:opacity-50 active:scale-[0.98]">
           {createRuleMutation.isPending ? "Saving..." : "Review & Save"}
           {createRuleMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />}
         </button>

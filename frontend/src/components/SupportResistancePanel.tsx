@@ -86,7 +86,7 @@ export const SupportResistancePanel = React.memo(function SupportResistancePanel
 
   return (
     <div className="bg-transparent flex flex-col text-card-foreground pt-1 pb-0 overflow-hidden border-0 shrink-0">
-      <div className="text-[10px] font-bold font-sans uppercase tracking-widest text-neutral-500 mb-1.5 shrink-0 flex items-center justify-between">
+      <div className="text-[10px] font-normal font-sans uppercase tracking-widest text-neutral-500 mb-1.5 shrink-0 flex items-center justify-between">
          <span>Support & Resistance</span>
          <span className={cn("font-mono", confluenceScore > 80 ? "text-bull" : confluenceScore > 50 ? "text-yellow-500" : "text-neutral-500")}>
            {fmtNum(confluenceScore, 0)}% CONF
@@ -98,7 +98,7 @@ export const SupportResistancePanel = React.memo(function SupportResistancePanel
         {r2 && (
           <div className="flex justify-between items-center text-bear/80">
             <div className="flex items-center gap-1.5">
-              <span className="font-bold">R2</span>
+              <span className="font-normal">R2</span>
               <span className="text-[10px] font-mono opacity-80">
                 <AnimatedNumber value={r2Dist} decimals={Math.abs(r2Dist) < 0.1 ? 2 : 1} showSign={true} suffix="%" duration={0.3} flashColor={true} />
               </span>
@@ -109,7 +109,7 @@ export const SupportResistancePanel = React.memo(function SupportResistancePanel
         {r1 && (
           <div className="flex justify-between items-center text-bear/90">
             <div className="flex items-center gap-1.5">
-              <span className="font-bold">R1</span>
+              <span className="font-normal">R1</span>
               <span className="text-[10px] font-mono opacity-80">
                 <AnimatedNumber value={r1Dist} decimals={Math.abs(r1Dist) < 0.1 ? 2 : 1} showSign={true} suffix="%" duration={0.3} flashColor={true} />
               </span>
@@ -120,7 +120,7 @@ export const SupportResistancePanel = React.memo(function SupportResistancePanel
         
         <div className="w-full h-px bg-border/20 my-0.5" />
         
-        <div className="flex justify-between items-center text-foreground font-black py-0.5">
+        <div className="flex justify-between items-center text-foreground font-normal py-0.5">
           <span>LTP</span>
           <LivePrice symbol={selectedSymbol} decimals={2} fallback={currentPrice} className="font-mono text-xs" />
         </div>
@@ -130,7 +130,7 @@ export const SupportResistancePanel = React.memo(function SupportResistancePanel
         {s1 && (
           <div className="flex justify-between items-center text-bull/90">
             <div className="flex items-center gap-1.5">
-              <span className="font-bold">S1</span>
+              <span className="font-normal">S1</span>
               <span className="text-[10px] font-mono opacity-80">
                 <AnimatedNumber value={s1Dist} decimals={Math.abs(s1Dist) < 0.1 ? 2 : 1} showSign={true} suffix="%" duration={0.3} flashColor={true} />
               </span>
@@ -141,7 +141,7 @@ export const SupportResistancePanel = React.memo(function SupportResistancePanel
         {s2 && (
           <div className="flex justify-between items-center text-bull/80">
             <div className="flex items-center gap-1.5">
-              <span className="font-bold">S2</span>
+              <span className="font-normal">S2</span>
               <span className="text-[10px] font-mono opacity-80">
                 <AnimatedNumber value={s2Dist} decimals={Math.abs(s2Dist) < 0.1 ? 2 : 1} showSign={true} suffix="%" duration={0.3} flashColor={true} />
               </span>

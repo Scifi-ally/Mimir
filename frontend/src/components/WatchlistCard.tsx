@@ -53,23 +53,23 @@ export const WatchlistCard = memo(({ row, selected, onSelect }: WatchlistCardPro
               />
             )}
             <span 
-              className={cn("truncate text-sm font-bold tracking-tight transition-colors", selected ? "text-foreground" : "text-foreground group-hover:text-primary")}
+              className={cn("truncate text-sm font-normal tracking-tight transition-colors", selected ? "text-foreground" : "text-foreground group-hover:text-primary")}
             >
               {row.symbol}
             </span>
             {score > 0 && (
-              <span className={cn("text-[10px] font-extrabold leading-none shrink-0 tabular-nums", scoreColor)}>
+              <span className={cn("text-[10px] font-normal leading-none shrink-0 tabular-nums", scoreColor)}>
                 {Math.round(score)}
               </span>
             )}
           </div>
           <div className="flex items-center gap-1.5 min-w-0">
             {topTag ? (
-              <span className="truncate text-[11px] font-bold text-accent uppercase tracking-wider">
+              <span className="truncate text-[11px] font-normal text-accent uppercase tracking-wider">
                 {topTag}
               </span>
             ) : (
-              <span className="truncate text-[11px] font-medium text-foreground/50 capitalize">
+              <span className="truncate text-[11px] font-normal text-foreground/50 capitalize">
                 {statusText}
               </span>
             )}
@@ -81,13 +81,13 @@ export const WatchlistCard = memo(({ row, selected, onSelect }: WatchlistCardPro
             symbol={row.symbol} 
             decimals={2}
             fallback={row.price}
-            className="text-sm font-bold tabular-nums font-mono leading-tight text-foreground"
+            className="text-sm font-normal tabular-nums font-mono leading-tight text-foreground"
           />
           <LiveChangePct
             symbol={row.symbol}
             decimals={2}
             fallback={row.changePct}
-            className="text-[11px] font-bold tabular-nums font-mono leading-tight"
+            className="text-[11px] font-normal tabular-nums font-mono leading-tight"
           />
         </div>
       </div>

@@ -227,17 +227,17 @@ export const WatchlistStack = memo(function WatchlistStack({ items, monitored, s
       <CardHeader className="shrink-0 h-[48px] px-3 py-0 space-y-0 flex flex-row items-center justify-between gap-4 overflow-hidden">
         {headerLeft}
         {watchlistMetadata?.isFallback && (
-          <span className="shrink-0 whitespace-nowrap rounded-full bg-secondary/40 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-muted-foreground">
+          <span className="shrink-0 whitespace-nowrap rounded-full bg-secondary/40 px-2 py-0.5 text-[9px] font-normal uppercase tracking-wider text-muted-foreground">
             Showing {watchlistMetadata.forDate} (previous session)
           </span>
         )}
         {rows.length > 0 ? (
-          <div className="flex overflow-x-auto whitespace-nowrap flex-nowrap gap-4 text-[10px] font-bold uppercase tracking-wider [&::-webkit-scrollbar]:hidden pb-1 justify-end w-full items-center">
+          <div className="flex overflow-x-auto whitespace-nowrap flex-nowrap gap-4 text-[10px] font-normal uppercase tracking-wider [&::-webkit-scrollbar]:hidden pb-1 justify-end w-full items-center">
             <button
               type="button"
               onClick={() => handleCategorySelect(null)}
               className={cn(
-                "transition-all duration-300 relative group font-medium",
+                "transition-all duration-300 relative group font-normal",
                 "@max-md:px-3 @max-md:py-1.5 @max-md:rounded-full",
                 selectedCategory === null 
                   ? "@max-md:bg-foreground @max-md:text-background @min-md:text-foreground @min-md:border-foreground"
@@ -256,7 +256,7 @@ export const WatchlistStack = memo(function WatchlistStack({ items, monitored, s
                 type="button"
                 onClick={() => handleCategorySelect(cat)}
                 className={cn(
-                  "transition-all duration-300 relative group font-medium",
+                  "transition-all duration-300 relative group font-normal",
                   "@max-md:px-3 @max-md:py-1.5 @max-md:rounded-full",
                   selectedCategory === cat
                     ? "@max-md:bg-foreground @max-md:text-background @min-md:text-foreground @min-md:border-foreground"
@@ -272,7 +272,7 @@ export const WatchlistStack = memo(function WatchlistStack({ items, monitored, s
             ))}
           </div>
         ) : (
-          <div className="flex items-center justify-end w-full text-[10px] font-bold uppercase tracking-wider text-muted-foreground/60">
+          <div className="flex items-center justify-end w-full text-[10px] font-normal uppercase tracking-wider text-muted-foreground/60">
             <span>0 Symbols</span>
           </div>
         )}
@@ -280,7 +280,7 @@ export const WatchlistStack = memo(function WatchlistStack({ items, monitored, s
 
       {filteredRows.length === 0 ? (
         <div className="flex-1 w-full h-full min-h-[180px] flex flex-col items-center justify-center text-center p-6">
-          <p className="text-xs font-medium text-muted-foreground">No scan yet — run one or pick from Screener.</p>
+          <p className="text-xs font-normal text-muted-foreground">No scan yet — run one or pick from Screener.</p>
         </div>
       ) : (
         <>
@@ -357,7 +357,7 @@ export const WatchlistStack = memo(function WatchlistStack({ items, monitored, s
                     >
                       <div className="flex flex-col gap-1.5 min-w-0 flex-1">
                         <div className="flex items-center gap-2 min-w-0">
-                          <span className={cn("truncate font-bold text-[15px]", selected ? "text-background" : "text-foreground")}>{row.symbol}</span>
+                          <span className={cn("truncate font-normal text-[15px]", selected ? "text-background" : "text-foreground")}>{row.symbol}</span>
                           {row.activeSignalDirection && (
                             <span className={cn("h-2 w-2 rounded-full", row.activeSignalDirection === "BUY" ? "bg-bull" : "bg-bear")} />
                           )}
@@ -369,13 +369,13 @@ export const WatchlistStack = memo(function WatchlistStack({ items, monitored, s
                           symbol={row.symbol} 
                           decimals={2}
                           fallback={row.price}
-                          className={cn("text-[15px] font-bold tabular-nums font-mono leading-tight", selected ? "text-background" : "text-foreground")}
+                          className={cn("text-[15px] font-normal tabular-nums font-mono leading-tight", selected ? "text-background" : "text-foreground")}
                         />
                         <LiveChangePct 
                           symbol={row.symbol} 
                           decimals={2}
                           fallback={row.changePct}
-                          className={cn("text-xs font-bold tabular-nums font-mono leading-tight", selected ? "text-background/80" : "")}
+                          className={cn("text-xs font-normal tabular-nums font-mono leading-tight", selected ? "text-background/80" : "")}
                         />
                       </div>
 

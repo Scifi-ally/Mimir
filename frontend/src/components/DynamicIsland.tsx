@@ -47,7 +47,7 @@ function AppleTick() {
         <circle className="confirmation-ring" cx="58" cy="58" r="39" />
         <path className="confirmation-check" d="m40 59 12 13 25-30" />
       </svg>
-      <span className="text-[12px] font-semibold tracking-tight text-[#8cf58d]">
+      <span className="text-[12px] font-normal tracking-tight text-[#8cf58d]">
         Done
       </span>
     </div>
@@ -204,8 +204,8 @@ export function DynamicIsland() {
                   )}
                 </div>
                 <div className="flex flex-col truncate flex-1 min-w-0">
-                  {title && <span className="text-[13px] font-semibold text-foreground tracking-tight truncate">{title}</span>}
-                  {subtitle && <span className="text-[12px] font-medium text-muted-foreground truncate">{subtitle}</span>}
+                  {title && <span className="text-[13px] font-normal text-foreground tracking-tight truncate">{title}</span>}
+                  {subtitle && <span className="text-[12px] font-normal text-muted-foreground truncate">{subtitle}</span>}
                 </div>
               </div>
             ) : islandConfig ? (

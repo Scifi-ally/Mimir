@@ -233,7 +233,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
     return (
       <div className="flex flex-col">
         <div className="flex items-center gap-2 mb-1.5">
-          <label className="text-sm font-semibold text-foreground tracking-tight">{label}</label>
+          <label className="text-sm font-normal text-foreground tracking-tight">{label}</label>
           <Tooltip content={tooltip} align="start">
             <span className="text-[10px] text-muted-foreground/60 hover:text-primary cursor-help">ⓘ</span>
           </Tooltip>
@@ -257,7 +257,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
             <button
               type="button"
               onClick={() => toggleSecretVisibility(secretKey)}
-              className="absolute right-0 top-1.5 text-[9px] font-bold text-muted-foreground hover:text-foreground transition-colors outline-none ring-0 border border-foreground/10 hover:border-foreground/20 rounded px-2 py-1 uppercase tracking-widest"
+              className="absolute right-0 top-1.5 text-[9px] font-normal text-muted-foreground hover:text-foreground transition-colors outline-none ring-0 border border-foreground/10 hover:border-foreground/20 rounded px-2 py-1 uppercase tracking-widest"
             >
               {showSecrets[secretKey] ? "Hide" : "Show"}
             </button>
@@ -309,9 +309,9 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
             {/* Header */}
             <div className="flex items-center justify-between px-8 pt-8 pb-4 shrink-0">
               <div className="flex items-center gap-3">
-                <h2 className="text-xl font-black tracking-tight text-foreground">System Settings</h2>
+                <h2 className="text-xl font-normal tracking-tight text-foreground">System Settings</h2>
                 {isDirty && (
-                  <span className="text-[10px] font-extrabold text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded">
+                  <span className="text-[10px] font-normal text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded">
                     UNSAVED
                   </span>
                 )}
@@ -335,8 +335,8 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                     className={cn(
                       "text-xs tracking-wider text-left transition-colors py-2.5 px-3 rounded-md",
                       activeTab === tab.key
-                        ? "text-primary font-black bg-foreground/5"
-                        : "text-muted-foreground font-bold hover:text-foreground hover:bg-foreground/5"
+                        ? "text-primary font-normal bg-foreground/5"
+                        : "text-muted-foreground font-normal hover:text-foreground hover:bg-foreground/5"
                     )}
                   >
                     {tab.label}
@@ -358,7 +358,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-6">
                       <div className="flex flex-col col-span-1 md:col-span-2">
                         <div className="flex items-center gap-2 mb-1.5">
-                          <label className="text-sm font-semibold text-foreground tracking-tight">API Key Configuration Mode</label>
+                          <label className="text-sm font-normal text-foreground tracking-tight">API Key Configuration Mode</label>
                           <Tooltip content="Use a single API key, or dual API keys to split data analysis and live tick streaming to prevent rate limits." align="start">
                             <span className="text-[10px] text-muted-foreground/60 hover:text-primary cursor-help">ⓘ</span>
                           </Tooltip>
@@ -372,7 +372,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                               onChange={() => handleInputChange("useDualApiKeys", false)}
                               className="accent-primary w-3 h-3"
                             />
-                            <span className="text-xs font-black text-bull">SINGLE KEY</span>
+                            <span className="text-xs font-normal text-bull">SINGLE KEY</span>
                           </label>
                           <label className="flex items-center gap-2 cursor-pointer">
                             <input
@@ -382,7 +382,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                               onChange={() => handleInputChange("useDualApiKeys", true)}
                               className="accent-primary w-3 h-3"
                             />
-                            <span className="text-xs font-black text-destructive">DUAL KEYS (RECOMMENDED)</span>
+                            <span className="text-xs font-normal text-destructive">DUAL KEYS (RECOMMENDED)</span>
                           </label>
                         </div>
                       </div>
@@ -439,7 +439,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-6">
                       <div className="flex flex-col">
                         <div className="flex items-center gap-2 mb-1.5">
-                          <label className="text-sm font-semibold text-foreground tracking-tight">Remote Admin Token (Local Auth)</label>
+                          <label className="text-sm font-normal text-foreground tracking-tight">Remote Admin Token (Local Auth)</label>
                           <Tooltip content="Set a secure token to allow remote network access to this dashboard." align="start">
                             <span className="text-[10px] text-muted-foreground/60 hover:text-primary cursor-help">ⓘ</span>
                           </Tooltip>
@@ -457,19 +457,19 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                           <button
                             type="button"
                             onClick={() => toggleSecretVisibility("adminToken")}
-                            className="absolute right-[85px] top-2.5 text-[10px] font-extrabold text-muted-foreground hover:text-foreground outline-none"
+                            className="absolute right-[85px] top-2.5 text-[10px] font-normal text-muted-foreground hover:text-foreground outline-none"
                           >
                             {showSecrets.adminToken ? "[ Hide ]" : "[ Show ]"}
                           </button>
                           <button
                             onClick={saveAdminToken}
-                            className="shrink-0 text-[10px] font-black text-primary underline underline-offset-4 decoration-primary hover:opacity-80 px-2"
+                            className="shrink-0 text-[10px] font-normal text-primary underline underline-offset-4 decoration-primary hover:opacity-80 px-2"
                           >
                             [ APPLY ]
                           </button>
                         </form>
                         {localStorage.getItem("mimir_admin_token") && (
-                          <div className="text-[10px] font-bold text-bull mt-1">✓ ENABLED</div>
+                          <div className="text-[10px] font-normal text-bull mt-1">✓ ENABLED</div>
                         )}
                       </div>
                       {renderField(
@@ -535,7 +535,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-6">
                       <div className="flex flex-col col-span-full">
                         <div className="flex items-center gap-2 mb-1.5">
-                          <label className="text-sm font-semibold text-foreground tracking-tight">Trading Engine Mode</label>
+                          <label className="text-sm font-normal text-foreground tracking-tight">Trading Engine Mode</label>
                           <Tooltip content="Paper mode simulates all fills locally with zero risk. Live mode mirrors every engine fill to Upstox as a REAL order — arming requires a typed confirmation." align="start">
                             <span className="text-[10px] text-muted-foreground/60 hover:text-primary cursor-help">ⓘ</span>
                           </Tooltip>
@@ -546,12 +546,12 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                             {tradingModeQuery.data?.mode === "LIVE" ? (
                               <>
                                 <span className="w-2 h-2 rounded-full bg-destructive animate-pulse" />
-                                <span className="text-xs font-black text-destructive tracking-widest">LIVE — REAL ORDERS ACTIVE</span>
+                                <span className="text-xs font-normal text-destructive tracking-widest">LIVE — REAL ORDERS ACTIVE</span>
                               </>
                             ) : (
                               <>
                                 <span className="w-2 h-2 rounded-full bg-bull" />
-                                <span className="text-xs font-black text-bull tracking-widest">PAPER — SIMULATED FILLS</span>
+                                <span className="text-xs font-normal text-bull tracking-widest">PAPER — SIMULATED FILLS</span>
                               </>
                             )}
                           </div>
@@ -559,7 +559,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                             <button
                               onClick={() => setModeMutation.mutate({ mode: "PAPER" })}
                               disabled={setModeMutation.isPending}
-                              className="text-[10px] font-bold text-bull border border-bull/30 hover:border-bull hover:bg-bull/5 px-4 py-1.5 rounded uppercase tracking-widest transition-colors disabled:opacity-50"
+                              className="text-[10px] font-normal text-bull border border-bull/30 hover:border-bull hover:bg-bull/5 px-4 py-1.5 rounded uppercase tracking-widest transition-colors disabled:opacity-50"
                             >
                               {setModeMutation.isPending ? "Disarming..." : "Disarm → Paper"}
                             </button>
@@ -568,7 +568,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                               onClick={() => setArmingLive(true)}
                               disabled={!tradingModeQuery.data?.brokerAuthenticated}
                               className={cn(
-                                "text-[10px] font-bold px-4 py-1.5 rounded uppercase tracking-widest transition-colors border",
+                                "text-[10px] font-normal px-4 py-1.5 rounded uppercase tracking-widest transition-colors border",
                                 tradingModeQuery.data?.brokerAuthenticated
                                   ? "text-destructive border-destructive/30 hover:border-destructive hover:bg-destructive/5"
                                   : "text-muted-foreground border-foreground/10 opacity-50 cursor-not-allowed"
@@ -595,10 +595,10 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                             >
                               <div className="mt-4 pt-4 border-t border-destructive/20 space-y-3">
                                 <p className="text-xs text-foreground/80 leading-relaxed">
-                                  Live mode places <span className="font-bold text-destructive">real orders with real money</span> at
+                                  Live mode places <span className="font-normal text-destructive">real orders with real money</span> at
                                   your broker for every engine fill — entries, targets, and stops. Position sizes follow your
                                   capital settings. To confirm, type{" "}
-                                  <span className="font-mono font-bold text-foreground select-all">{tradingModeQuery.data?.armPhrase}</span> below.
+                                  <span className="font-mono font-normal text-foreground select-all">{tradingModeQuery.data?.armPhrase}</span> below.
                                 </p>
                                 <input
                                   type="text"
@@ -614,7 +614,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                                     onClick={() => setModeMutation.mutate({ mode: "LIVE", confirmationPhrase: armPhraseInput })}
                                     disabled={armPhraseInput !== tradingModeQuery.data?.armPhrase || setModeMutation.isPending}
                                     className={cn(
-                                      "text-[10px] font-bold px-4 py-1.5 rounded uppercase tracking-widest transition-colors border",
+                                      "text-[10px] font-normal px-4 py-1.5 rounded uppercase tracking-widest transition-colors border",
                                       armPhraseInput === tradingModeQuery.data?.armPhrase && !setModeMutation.isPending
                                         ? "text-white bg-destructive border-destructive hover:bg-destructive/90"
                                         : "text-muted-foreground border-foreground/10 opacity-50 cursor-not-allowed"
@@ -624,7 +624,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                                   </button>
                                   <button
                                     onClick={() => { setArmingLive(false); setArmPhraseInput(""); }}
-                                    className="text-[10px] font-bold text-muted-foreground hover:text-foreground border border-foreground/10 hover:border-foreground/20 px-4 py-1.5 rounded uppercase tracking-widest transition-colors"
+                                    className="text-[10px] font-normal text-muted-foreground hover:text-foreground border border-foreground/10 hover:border-foreground/20 px-4 py-1.5 rounded uppercase tracking-widest transition-colors"
                                   >
                                     Cancel
                                   </button>
@@ -637,7 +637,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
 
                       <div className="flex flex-col">
                         <div className="flex items-center gap-2 mb-1.5">
-                          <label className="text-sm font-semibold text-foreground tracking-tight">Stop Loss Mode</label>
+                          <label className="text-sm font-normal text-foreground tracking-tight">Stop Loss Mode</label>
                           <Tooltip content="FIXED keeps standard SL. TRAILING moves SL up as profit grows." align="start">
                             <span className="text-[10px] text-muted-foreground/60 hover:text-primary cursor-help">ⓘ</span>
                           </Tooltip>
@@ -665,7 +665,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-6">
                       <div className="col-span-full space-y-4">
                         <div className="flex items-center gap-2">
-                          <h3 className="text-sm font-extrabold text-foreground tracking-tight">System Controls</h3>
+                          <h3 className="text-sm font-normal text-foreground tracking-tight">System Controls</h3>
                           <Tooltip content="Manual overrides and system cache management." align="start">
                             <span className="text-[10px] text-muted-foreground/60 hover:text-primary cursor-help">ⓘ</span>
                           </Tooltip>
@@ -676,7 +676,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                             disabled={triggerScanMutation.isPending}
                             className="px-6 py-2.5 rounded flex items-center justify-center gap-2 border border-foreground/10 hover:border-foreground/20 bg-transparent transition-colors disabled:opacity-50 outline-none ring-0"
                           >
-                            <span className="text-[10px] font-bold text-bull uppercase tracking-widest">
+                            <span className="text-[10px] font-normal text-bull uppercase tracking-widest">
                               {triggerScanMutation.isPending ? "Scanning..." : "Start Manual Scan"}
                             </span>
                           </button>
@@ -686,7 +686,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                             disabled={stopScanMutation.isPending}
                             className="px-6 py-2.5 rounded flex items-center justify-center gap-2 border border-foreground/10 hover:border-foreground/20 bg-transparent transition-colors disabled:opacity-50 outline-none ring-0"
                           >
-                            <span className="text-[10px] font-bold text-amber-500 uppercase tracking-widest">
+                            <span className="text-[10px] font-normal text-amber-500 uppercase tracking-widest">
                               {stopScanMutation.isPending ? "Terminating..." : "Terminate Active Scan"}
                             </span>
                           </button>
@@ -695,7 +695,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                             onClick={clearLocalTokensAndCache}
                             className="px-6 py-2.5 rounded flex items-center justify-center gap-2 border border-foreground/10 hover:border-foreground/20 bg-transparent transition-colors outline-none ring-0"
                           >
-                            <span className="text-[10px] font-bold text-destructive uppercase tracking-widest">
+                            <span className="text-[10px] font-normal text-destructive uppercase tracking-widest">
                               Purge Local Cache
                             </span>
                           </button>
@@ -713,17 +713,17 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
             <div className="absolute bottom-[80px] right-8 flex flex-col gap-2 pointer-events-none z-[100]">
               <AnimatePresence>
                 {tokenSavedToast && (
-                  <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-bull/20 text-bull border border-bull/30 px-4 py-2 text-[10px] font-bold rounded shadow-xl backdrop-blur-md pointer-events-auto">
+                  <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-bull/20 text-bull border border-bull/30 px-4 py-2 text-[10px] font-normal rounded shadow-xl backdrop-blur-md pointer-events-auto">
                     Admin token saved locally.
                   </motion.div>
                 )}
                 {saveSuccessMessage && (
-                  <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-bull/20 text-bull border border-bull/30 px-4 py-2 text-[10px] font-bold rounded shadow-xl backdrop-blur-md pointer-events-auto">
+                  <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-bull/20 text-bull border border-bull/30 px-4 py-2 text-[10px] font-normal rounded shadow-xl backdrop-blur-md pointer-events-auto">
                     {saveSuccessMessage}
                   </motion.div>
                 )}
                 {actionFeedback && (
-                  <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95 }} className={cn("px-4 py-2 text-[10px] font-bold rounded shadow-xl backdrop-blur-md pointer-events-auto", actionFeedback.type === "success" ? "bg-bull/20 text-bull border border-bull/30" : "bg-destructive/20 text-destructive border border-destructive/30")}>
+                  <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95 }} className={cn("px-4 py-2 text-[10px] font-normal rounded shadow-xl backdrop-blur-md pointer-events-auto", actionFeedback.type === "success" ? "bg-bull/20 text-bull border border-bull/30" : "bg-destructive/20 text-destructive border border-destructive/30")}>
                     {actionFeedback.text}
                   </motion.div>
                 )}
@@ -732,25 +732,25 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
 
             {/* Footer */}
             <div className="px-8 py-6 flex justify-between items-center bg-background shrink-0 relative z-[90]">
-              <button onClick={handleReset} className="text-[10px] font-bold text-muted-foreground hover:text-foreground outline-none ring-0 border border-foreground/10 hover:border-foreground/20 bg-transparent px-3 py-1.5 rounded uppercase tracking-widest transition-colors">
+              <button onClick={handleReset} className="text-[10px] font-normal text-muted-foreground hover:text-foreground outline-none ring-0 border border-foreground/10 hover:border-foreground/20 bg-transparent px-3 py-1.5 rounded uppercase tracking-widest transition-colors">
                 Reset
               </button>
               
               <div className="flex items-center gap-6">
                 {tradingModeQuery.data?.mode === "LIVE" ? (
-                  <div className="text-[10px] font-black text-destructive animate-pulse tracking-widest flex items-center gap-1.5"><div className="w-1.5 h-1.5 bg-destructive rounded-full"/>LIVE BROKER EXECUTION</div>
+                  <div className="text-[10px] font-normal text-destructive animate-pulse tracking-widest flex items-center gap-1.5"><div className="w-1.5 h-1.5 bg-destructive rounded-full"/>LIVE BROKER EXECUTION</div>
                 ) : (
-                  <div className="text-[10px] font-black text-bull tracking-widest flex items-center gap-1.5"><div className="w-1.5 h-1.5 bg-bull rounded-full"/>PAPER TRADING (SAFE)</div>
+                  <div className="text-[10px] font-normal text-bull tracking-widest flex items-center gap-1.5"><div className="w-1.5 h-1.5 bg-bull rounded-full"/>PAPER TRADING (SAFE)</div>
                 )}
                 <div className="flex gap-3">
-                  <button onClick={onClose} className="text-[10px] font-bold text-muted-foreground hover:text-foreground outline-none ring-0 border border-foreground/10 hover:border-foreground/20 bg-transparent px-4 py-1.5 rounded uppercase tracking-widest transition-colors">
+                  <button onClick={onClose} className="text-[10px] font-normal text-muted-foreground hover:text-foreground outline-none ring-0 border border-foreground/10 hover:border-foreground/20 bg-transparent px-4 py-1.5 rounded uppercase tracking-widest transition-colors">
                     Cancel
                   </button>
                   <button
                     onClick={handleSave}
                     disabled={!isDirty || saveMutation.isPending}
                     className={cn(
-                      "text-[10px] font-bold outline-none ring-0 border px-4 py-1.5 rounded uppercase tracking-widest transition-colors",
+                      "text-[10px] font-normal outline-none ring-0 border px-4 py-1.5 rounded uppercase tracking-widest transition-colors",
                       isDirty && !saveMutation.isPending ? "text-primary border-primary/30 hover:border-primary hover:bg-primary/5 bg-primary/10" : "text-muted-foreground border-foreground/10 opacity-50 cursor-not-allowed bg-transparent"
                     )}
                   >

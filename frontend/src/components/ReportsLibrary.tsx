@@ -51,7 +51,7 @@ export function ReportsLibrary({ isOpen, onClose }: ReportsLibraryProps) {
           >
             {/* Header */}
             <div className="relative px-8 pt-6 pb-4 flex flex-col sm:flex-row items-center justify-between shrink-0 border-b border-border/10">
-              <h2 className="text-[10px] font-mono font-bold tracking-widest uppercase text-muted-foreground flex items-center gap-2">
+              <h2 className="text-[10px] font-mono font-normal tracking-widest uppercase text-muted-foreground flex items-center gap-2">
                 Daily Reports
                 <span className="text-foreground/40 hidden sm:inline ml-2">— End of day market summaries</span>
               </h2>
@@ -80,7 +80,7 @@ export function ReportsLibrary({ isOpen, onClose }: ReportsLibraryProps) {
                 </div>
               ) : reports.length === 0 ? (
                 <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground">
-                  <p className="text-sm font-medium text-foreground/60">No reports generated yet</p>
+                  <p className="text-sm font-normal text-foreground/60">No reports generated yet</p>
                 </div>
               ) : (
                 <div className="flex flex-col">
@@ -88,14 +88,14 @@ export function ReportsLibrary({ isOpen, onClose }: ReportsLibraryProps) {
                     <div key={report.id} className="py-8 border-b border-border/10 last:border-0">
                       <div className="flex items-center gap-3 mb-6">
                         <div className="w-1 h-6 bg-primary rounded-full" />
-                        <h3 className="font-mono font-bold text-lg text-foreground flex items-center gap-2">
+                        <h3 className="font-mono font-normal text-lg text-foreground flex items-center gap-2">
                           {report.date}
                         </h3>
                       </div>
                       {report.summary && (
                         <p className="text-sm text-muted-foreground mb-4 pl-4">{report.summary}</p>
                       )}
-                      <div className="prose prose-sm dark:prose-invert prose-p:leading-relaxed prose-headings:font-bold prose-h1:text-xl prose-h2:text-lg prose-h3:text-base prose-a:text-primary max-w-none text-foreground/90 pl-4">
+                      <div className="prose prose-sm dark:prose-invert prose-p:leading-relaxed prose-headings:font-normal prose-h1:text-xl prose-h2:text-lg prose-h3:text-base prose-a:text-primary max-w-none text-foreground/90 pl-4">
                         <ReactMarkdown>{report.content?.replace(/\\n/g, '\n')}</ReactMarkdown>
                       </div>
                     </div>

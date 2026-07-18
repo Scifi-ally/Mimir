@@ -39,13 +39,13 @@ function EventItem({ event }: { event: AppEvent }) {
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-baseline justify-between gap-2">
-          <span className="text-[12px] font-semibold text-foreground/90 tracking-tight truncate leading-tight">
+          <span className="text-[12px] font-normal text-foreground/90 tracking-tight truncate leading-tight">
             {event.symbol && (
-              <span className="font-bold text-primary mr-1">{event.symbol}</span>
+              <span className="font-normal text-primary mr-1">{event.symbol}</span>
             )}
             {event.title}
           </span>
-          <span className="text-[10px] font-medium text-muted-foreground/50 shrink-0 tabular-nums">
+          <span className="text-[10px] font-normal text-muted-foreground/50 shrink-0 tabular-nums">
             {formatRelativeTime(event.timestamp)}
           </span>
         </div>
@@ -72,7 +72,7 @@ export const EventFeed = memo(function EventFeed() {
     <div className="flex flex-col w-full text-left" style={{ width: 320, maxHeight: 400 }}>
       <div className="shrink-0 flex items-center justify-between px-4 py-3">
         <div>
-          <h2 className="text-[13px] font-semibold text-foreground tracking-tight">Activity</h2>
+          <h2 className="text-[13px] font-normal text-foreground tracking-tight">Activity</h2>
           <p className="text-[10px] text-muted-foreground/60 mt-0.5">
             {events.length} event{events.length !== 1 ? "s" : ""}
           </p>
@@ -91,7 +91,7 @@ export const EventFeed = memo(function EventFeed() {
       <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 pb-3 space-y-0.5" style={{ maxHeight: 350 }}>
         {events.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12 text-center">
-            <p className="text-[11px] font-medium text-muted-foreground/50">No events yet</p>
+            <p className="text-[11px] font-normal text-muted-foreground/50">No events yet</p>
           </div>
         ) : (
           <AnimatePresence initial={false}>

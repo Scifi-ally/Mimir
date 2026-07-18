@@ -85,7 +85,7 @@ export function SuggestionsSlider({ isOpen, onClose, onSelectSymbol, activeSugge
           >
             {/* Header */}
             <div className="relative px-8 pr-12 pt-6 pb-4 flex flex-col sm:flex-row items-center justify-between gap-4 shrink-0">
-              <h2 className="text-[9px] font-mono font-bold tracking-[0.15em] uppercase text-muted-foreground/80">
+              <h2 className="text-[9px] font-mono font-normal tracking-[0.15em] uppercase text-muted-foreground/80">
                 Active Signals
               </h2>
 
@@ -101,11 +101,11 @@ export function SuggestionsSlider({ isOpen, onClose, onSelectSymbol, activeSugge
             {accuracy && accuracy.closedTrades >= 10 && accuracy.winRate != null && (
               <div className="px-8 pb-3 shrink-0 flex flex-wrap items-center gap-x-6 gap-y-1 text-[11px] font-mono text-muted-foreground">
                 <span>
-                  <span className={cn("font-bold", accuracy.winRate >= 55 ? "text-bull" : accuracy.winRate >= 45 ? "text-amber-500" : "text-bear")}>{accuracy.winRate}%</span>
+                  <span className={cn("font-normal", accuracy.winRate >= 55 ? "text-bull" : accuracy.winRate >= 45 ? "text-amber-500" : "text-bear")}>{accuracy.winRate}%</span>
                   {" "}win rate
                 </span>
                 <span>
-                  <span className={cn("font-bold", accuracy.totalPnlInr >= 0 ? "text-bull" : "text-bear")}>
+                  <span className={cn("font-normal", accuracy.totalPnlInr >= 0 ? "text-bull" : "text-bear")}>
                     {accuracy.totalPnlInr >= 0 ? "+" : "-"}₹{fmtNum(Math.abs(accuracy.totalPnlInr))}
                   </span>
                   {" "}net P&L
@@ -125,25 +125,25 @@ export function SuggestionsSlider({ isOpen, onClose, onSelectSymbol, activeSugge
                   </div>
                 </div>
               ) : error ? (
-                <div className="flex-1 flex items-center justify-center py-20 text-destructive text-sm font-semibold">
+                <div className="flex-1 flex items-center justify-center py-20 text-destructive text-sm font-normal">
                   {error instanceof Error ? error.message : "Failed to load signals"}
                 </div>
               ) : activeTrades.length === 0 && completedTrades.length === 0 && expiredTrades.length === 0 ? (
                 <div className="flex flex-col items-center justify-center p-12 text-center text-muted-foreground">
-                  <p className="text-sm font-semibold text-foreground">No signals generated yet</p>
+                  <p className="text-sm font-normal text-foreground">No signals generated yet</p>
                 </div>
               ) : (
                 <>
                   {activeTrades.length === 0 && (
                     <div className="flex flex-col items-center justify-center p-8 text-center">
-                      <p className="text-sm font-semibold text-foreground">No active signals — scanner monitoring</p>
+                      <p className="text-sm font-normal text-foreground">No active signals — scanner monitoring</p>
                     </div>
                   )}
                   {activeTrades.length > 0 && (
                     <div className="flex flex-col gap-6 relative">
                       <div className="flex flex-col gap-6 pl-2">
                         <div className="flex flex-col gap-3">
-                          <h3 className="text-[10px] font-bold tracking-widest uppercase text-bull flex items-center gap-2">
+                          <h3 className="text-[10px] font-normal tracking-widest uppercase text-bull flex items-center gap-2">
                             Active Trades ({activeTrades.length})
                           </h3>
                           <div className="grid pl-4 ml-1">
@@ -157,7 +157,7 @@ export function SuggestionsSlider({ isOpen, onClose, onSelectSymbol, activeSugge
                   )}
                   {completedTrades.length > 0 && (
                     <div className="flex flex-col gap-3 pl-2">
-                      <h3 className="text-[10px] font-bold tracking-widest uppercase text-muted-foreground flex items-center gap-2">
+                      <h3 className="text-[10px] font-normal tracking-widest uppercase text-muted-foreground flex items-center gap-2">
                         Completed ({completedTrades.length})
                       </h3>
                       <div className="grid pl-4 ml-1">
@@ -169,7 +169,7 @@ export function SuggestionsSlider({ isOpen, onClose, onSelectSymbol, activeSugge
                   )}
                   {expiredTrades.length > 0 && (
                     <div className="flex flex-col gap-3 pl-2">
-                      <h3 className="text-[10px] font-bold tracking-widest uppercase text-muted-foreground/60 flex items-center gap-2">
+                      <h3 className="text-[10px] font-normal tracking-widest uppercase text-muted-foreground/60 flex items-center gap-2">
                         Expired ({expiredTrades.length})
                       </h3>
                       <div className="grid pl-4 ml-1">
@@ -264,41 +264,41 @@ function SuggestionCard({ s, onSelectSymbol, onClose }: {
         <div className="flex flex-col">
           <div className="flex items-center gap-2 mb-1">
             <span className={cn(
-              "text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider",
+              "text-[10px] font-normal px-1.5 py-0.5 rounded uppercase tracking-wider",
               s.direction === 'BUY' ? "bg-bull/10 text-bull" : "bg-bear/10 text-bear"
             )}>
               {s.direction}
             </span>
-            <span className="font-bold text-base tracking-tight">{s.symbol}</span>
+            <span className="font-normal text-base tracking-tight">{s.symbol}</span>
             <span className="text-[10px] text-muted-foreground/60 font-mono hidden sm:inline-block">#{s.id.slice(-4)}</span>
           </div>
           
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
             <span className="flex items-center gap-1">
               <span className="text-foreground/40 text-[10px] uppercase tracking-wider">EN</span>
-              <span className="font-mono font-medium text-foreground/80">₹{fmtNum(s.entryPrice)}</span>
+              <span className="font-mono font-normal text-foreground/80">₹{fmtNum(s.entryPrice)}</span>
             </span>
             <span className="text-border/40">•</span>
             <span className="flex items-center gap-1">
               <span className="text-foreground/40 text-[10px] uppercase tracking-wider">TG</span>
-              <span className="font-mono font-medium text-foreground/80">₹{fmtNum(s.target1)}</span>
+              <span className="font-mono font-normal text-foreground/80">₹{fmtNum(s.target1)}</span>
             </span>
             <span className="text-border/40">•</span>
             <span className="flex items-center gap-1">
               <span className="text-foreground/40 text-[10px] uppercase tracking-wider">SL</span>
-              <span className="font-mono font-medium text-foreground/80">₹{fmtNum(s.stopLoss)}</span>
+              <span className="font-mono font-normal text-foreground/80">₹{fmtNum(s.stopLoss)}</span>
             </span>
             <span className="text-border/40">•</span>
             <span className="flex items-center gap-1">
               <span className="text-foreground/40 text-[10px] uppercase tracking-wider">GEN</span>
-              <span className="font-mono font-medium text-foreground/80">{new Date(s.generatedAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+              <span className="font-mono font-normal text-foreground/80">{new Date(s.generatedAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
             </span>
             {expectedHold && (
               <>
                 <span className="text-border/40">â€¢</span>
                 <span className="flex items-center gap-1">
                   <span className="text-foreground/40 text-[10px] uppercase tracking-wider">HOLD</span>
-                  <span className="font-mono font-medium text-foreground/80">{expectedHold}</span>
+                  <span className="font-mono font-normal text-foreground/80">{expectedHold}</span>
                 </span>
               </>
             )}
@@ -307,7 +307,7 @@ function SuggestionCard({ s, onSelectSymbol, onClose }: {
                 <span className="text-border/40">•</span>
                 <span className="flex items-center gap-1" title={isPending ? "Distance from current price to entry" : "Distance from current price to target"}>
                   <span className="text-foreground/40 text-[10px] uppercase tracking-wider">{isPending ? "TO EN" : "DIST"}</span>
-                  <span className="font-mono font-medium text-foreground/80">{targetTimeStr}</span>
+                  <span className="font-mono font-normal text-foreground/80">{targetTimeStr}</span>
                 </span>
               </>
             )}
@@ -316,7 +316,7 @@ function SuggestionCard({ s, onSelectSymbol, onClose }: {
                 <span className="text-border/40">•</span>
                 <span className="flex items-center gap-1" title="Time remaining before this signal's time-stop">
                   <span className="text-foreground/40 text-[10px] uppercase tracking-wider">EXP</span>
-                  <span className={cn("font-mono font-medium", expiresIn === "expiring" ? "text-amber-500" : "text-foreground/80")}>{expiresIn}</span>
+                  <span className={cn("font-mono font-normal", expiresIn === "expiring" ? "text-amber-500" : "text-foreground/80")}>{expiresIn}</span>
                 </span>
               </>
             )}
@@ -324,7 +324,7 @@ function SuggestionCard({ s, onSelectSymbol, onClose }: {
           {stats && (
             <div className="flex items-center gap-2 mt-1.5" title={`Realized outcomes for ${s.setupType} over last 120 days (${stats.samples} closed trades)`}>
               <span className={cn(
-                "text-[10px] font-bold px-1.5 py-0.5 rounded font-mono",
+                "text-[10px] font-normal px-1.5 py-0.5 rounded font-mono",
                 stats.winRate >= 60 ? "bg-bull/10 text-bull" : stats.winRate >= 45 ? "bg-amber-500/10 text-amber-500" : "bg-bear/10 text-bear"
               )}>
                 {stats.winRate}% hit rate
@@ -343,10 +343,10 @@ function SuggestionCard({ s, onSelectSymbol, onClose }: {
       <div className="flex items-center justify-between sm:justify-end gap-6 sm:w-1/3">
         {/* Current Price / Outcome */}
         <div className="flex flex-col items-start sm:items-end">
-          <span className="text-[10px] font-bold tracking-widest uppercase text-muted-foreground mb-1">
+          <span className="text-[10px] font-normal tracking-widest uppercase text-muted-foreground mb-1">
             {isPending ? "Awaiting Entry" : isActive ? "Current" : "Outcome"}
           </span>
-          <span className="font-mono font-bold text-sm">
+          <span className="font-mono font-normal text-sm">
             {isActive ? (
               <LivePrice symbol={s.symbol} decimals={2} fallback={currentPrice} />
             ) : (
@@ -357,23 +357,23 @@ function SuggestionCard({ s, onSelectSymbol, onClose }: {
 
         {/* P&L */}
         <div className="flex flex-col items-end min-w-[70px]">
-          <span className="text-[10px] font-bold tracking-widest uppercase text-muted-foreground mb-1">
+          <span className="text-[10px] font-normal tracking-widest uppercase text-muted-foreground mb-1">
             P&L
           </span>
           {isWin ? (
-            <span className="font-mono font-bold text-sm text-bull flex items-center gap-0.5">
+            <span className="font-mono font-normal text-sm text-bull flex items-center gap-0.5">
               +₹{fmtNum(s.pnlInr)}
             </span>
           ) : isLoss ? (
-            <span className="font-mono font-bold text-sm text-bear flex items-center gap-0.5">
+            <span className="font-mono font-normal text-sm text-bear flex items-center gap-0.5">
               -₹{fmtNum(Math.abs(s.pnlInr ?? 0))}
             </span>
           ) : isActive && pnlFromCurrent != null ? (
-            <span className={cn("font-mono font-bold text-sm", pnlFromCurrent > 0 ? "text-bull" : pnlFromCurrent < 0 ? "text-bear" : "text-foreground")}>
+            <span className={cn("font-mono font-normal text-sm", pnlFromCurrent > 0 ? "text-bull" : pnlFromCurrent < 0 ? "text-bear" : "text-foreground")}>
               <AnimatedNumber value={pnlFromCurrent} decimals={2} showSign={true} suffix="%" duration={0.3} flashColor={true} />
             </span>
           ) : (
-            <span className="font-mono font-bold text-sm text-muted-foreground/50">—</span>
+            <span className="font-mono font-normal text-sm text-muted-foreground/50">—</span>
           )}
         </div>
 

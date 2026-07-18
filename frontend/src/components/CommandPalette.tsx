@@ -162,7 +162,7 @@ export function CommandPalette({ onClose, onWidthChange }: { onClose: () => void
             style={{ top: contextMenu.y, left: contextMenu.x }}
             className="fixed z-[120] min-w-[200px] rounded-xl border border-border/20 bg-background/95 p-1.5 shadow-2xl backdrop-blur-md"
           >
-            <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">
+            <div className="px-2 py-1.5 text-xs font-normal text-muted-foreground uppercase tracking-wider mb-1">
               {contextMenu.symbol}
             </div>
             <div className="px-2 py-1 text-xs text-foreground/70 mb-1">
@@ -221,14 +221,14 @@ export function CommandPalette({ onClose, onWidthChange }: { onClose: () => void
                 placeholder={targetWatchlist !== null ? "Search or add comma-separated symbols..." : "Search symbols... (Try 'RELIANCE')"}
                 value={search}
                 onValueChange={setSearch}
-                className="flex h-12 w-full bg-transparent text-lg font-medium text-foreground outline-none placeholder:text-foreground/30 placeholder:font-normal disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex h-12 w-full bg-transparent text-lg font-normal text-foreground outline-none placeholder:text-foreground/30 placeholder:font-normal disabled:cursor-not-allowed disabled:opacity-50"
               />
               {batchSymbols.length > 0 && (
                 <button
                   type="button"
                   onClick={handleAddBatchSymbols}
                   disabled={createTargetsMutation.isPending}
-                  className="ml-3 flex shrink-0 items-center gap-1.5 rounded-full bg-foreground/10 px-4 py-1.5 text-xs font-semibold text-foreground transition-colors hover:bg-foreground/20 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="ml-3 flex shrink-0 items-center gap-1.5 rounded-full bg-foreground/10 px-4 py-1.5 text-xs font-normal text-foreground transition-colors hover:bg-foreground/20 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {createTargetsMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
                   {createTargetsMutation.isPending ? "Adding..." : "Add Stocks"}
@@ -238,7 +238,7 @@ export function CommandPalette({ onClose, onWidthChange }: { onClose: () => void
           ) : (
             <div className="flex flex-col items-center justify-center px-4 pt-4 pb-1.5 text-center">
               <div className="flex items-center justify-center">
-                <span className="text-xs font-semibold tracking-tight text-foreground">Screener Rule Builder</span>
+                <span className="text-xs font-normal tracking-tight text-foreground">Screener Rule Builder</span>
               </div>
             </div>
           )}
@@ -293,7 +293,7 @@ export function CommandPalette({ onClose, onWidthChange }: { onClose: () => void
               )}
 
               {searchResults?.items && searchResults.items.length > 0 && (
-                <Command.Group heading="Symbols" className="px-2 pt-2 text-[11px] font-semibold tracking-wider text-foreground/40 uppercase">
+                <Command.Group heading="Symbols" className="px-2 pt-2 text-[11px] font-normal tracking-wider text-foreground/40 uppercase">
                   {searchResults.items.map((item: SymbolSearchResult) => {
                     return (
                       <Command.Item
@@ -306,11 +306,11 @@ export function CommandPalette({ onClose, onWidthChange }: { onClose: () => void
                         className="apple-hover flex cursor-pointer select-none items-center justify-between rounded-xl px-3 py-2.5 text-sm outline-none hover:bg-foreground/10 aria-selected:bg-foreground/10 aria-selected:text-foreground data-[selected=true]:bg-foreground/10 data-[selected=true]:text-foreground mt-1 transition-all duration-200"
                       >
                         <div className="flex flex-1 items-center gap-3 min-w-0 mr-3">
-                          <span className="font-semibold text-foreground font-mono tracking-tight shrink-0">{item.symbol}</span>
+                          <span className="font-normal text-foreground font-mono tracking-tight shrink-0">{item.symbol}</span>
                           <span className="text-foreground/50 truncate text-xs">{item.name}</span>
                         </div>
                         {item.sector && (
-                          <span className="text-[10px] uppercase tracking-widest font-medium text-foreground/30 shrink-0 rounded-full px-2 py-0.5 bg-foreground/5">{item.sector}</span>
+                          <span className="text-[10px] uppercase tracking-widest font-normal text-foreground/30 shrink-0 rounded-full px-2 py-0.5 bg-foreground/5">{item.sector}</span>
                         )}
                       </Command.Item>
                     );

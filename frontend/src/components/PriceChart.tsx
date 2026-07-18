@@ -794,7 +794,7 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
       <CardHeader className="flex shrink-0 flex-col sm:flex-row items-start sm:items-center justify-between gap-2 p-3 pb-1">
         <div className="flex min-w-0 items-center gap-3">
           {projMeta && (
-            <span className="text-xs font-medium text-foreground/70">
+            <span className="text-xs font-normal text-foreground/70">
               {forecast!.trend}{" "}
               <strong className={`font-mono tabular-nums ${(forecast!.forecastReturnPct ?? 0) >= 0 ? "text-bull" : "text-bear"}`}>
                 {fmtPct(forecast!.forecastReturnPct ?? null)}
@@ -804,7 +804,7 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
         </div>
         <div className="flex shrink-0 items-center gap-4 w-full sm:w-auto justify-between sm:justify-end overflow-x-auto pb-1 [&::-webkit-scrollbar]:hidden">
           {chartMode === "actual" && (
-            <div className="flex items-center gap-3 text-xs font-medium text-foreground/70">
+            <div className="flex items-center gap-3 text-xs font-normal text-foreground/70">
             <div className="flex bg-foreground/5 rounded-full p-0.5 items-center">
               {TIMEFRAMES.map((tf) => (
                 <button
@@ -812,7 +812,7 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
                   type="button"
                   onClick={() => setTimeframe(tf)}
                   className={cn(
-                    "relative px-2.5 py-1 text-[10px] font-medium rounded-full transition-colors",
+                    "relative px-2.5 py-1 text-[10px] font-normal rounded-full transition-colors",
                     timeframe.label === tf.label
                       ? "text-background"
                       : "text-foreground/50 hover:text-foreground"
@@ -856,13 +856,13 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
               </button>
             </div>
           )}
-          <div className="flex items-center gap-3 text-xs font-medium text-foreground/70 pl-3">
+          <div className="flex items-center gap-3 text-xs font-normal text-foreground/70 pl-3">
           <div className="flex bg-foreground/5 rounded-full p-0.5 items-center pl-1">
             <button
               type="button"
               onClick={() => onChartModeChange("actual")}
               className={cn(
-                "relative px-2.5 py-1 text-[10px] font-medium rounded-full transition-colors",
+                "relative px-2.5 py-1 text-[10px] font-normal rounded-full transition-colors",
                 chartMode === "actual"
                   ? "text-background"
                   : "text-foreground/50 hover:text-foreground"
@@ -882,7 +882,7 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
               onClick={() => onChartModeChange("forecast")}
               disabled={!forecast}
               className={cn(
-                "relative px-2.5 py-1 text-[10px] font-medium rounded-full transition-colors",
+                "relative px-2.5 py-1 text-[10px] font-normal rounded-full transition-colors",
                 chartMode === "forecast"
                   ? "text-background"
                   : "text-foreground/50 hover:text-foreground",
@@ -913,7 +913,7 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
           <div 
             ref={legendRef}
             style={{ display: 'none' }}
-            className="absolute top-2 left-2 z-10 flex-wrap gap-2 text-[10px] sm:text-xs font-mono font-medium text-muted-foreground bg-background/80 backdrop-blur-sm px-2 py-1 rounded shadow-sm pointer-events-none"
+            className="absolute top-2 left-2 z-10 flex-wrap gap-2 text-[10px] sm:text-xs font-mono font-normal text-muted-foreground bg-background/80 backdrop-blur-sm px-2 py-1 rounded shadow-sm pointer-events-none"
           />
         )}
 
@@ -923,19 +923,19 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
             animate={{ opacity: 1, y: 0 }}
             className="absolute bottom-6 left-6 z-10 flex flex-col gap-1.5 text-xs font-mono bg-background/90 backdrop-blur-md px-3 py-2 border border-border/20 rounded shadow-lg pointer-events-none min-w-[160px]"
           >
-            <div className="font-bold border-b border-border/20 pb-1 mb-1 text-foreground/90 uppercase tracking-widest text-[10px]">
+            <div className="font-normal border-b border-border/20 pb-1 mb-1 text-foreground/90 uppercase tracking-widest text-[10px]">
               Chronos Projection
               {forecastIsFallback && <span className="text-yellow-500"> · Heuristic</span>}
             </div>
             <div className="flex justify-between gap-4">
               <span className="text-muted-foreground">Est Return</span>
-              <span className={cn("font-bold", (forecast.forecastReturnPct ?? 0) > 0 ? "text-bull" : (forecast.forecastReturnPct ?? 0) < 0 ? "text-bear" : "text-foreground")}>
+              <span className={cn("font-normal", (forecast.forecastReturnPct ?? 0) > 0 ? "text-bull" : (forecast.forecastReturnPct ?? 0) < 0 ? "text-bear" : "text-foreground")}>
                 {forecast.forecastReturnPct != null ? fmtPct(forecast.forecastReturnPct) : "N/A"}
               </span>
             </div>
             <div className="flex justify-between gap-4">
               <span className="text-muted-foreground">Trend</span>
-              <span className={cn("font-bold uppercase", forecast.trend === 'UP' ? "text-bull" : forecast.trend === 'DOWN' ? "text-bear" : "text-foreground")}>
+              <span className={cn("font-normal uppercase", forecast.trend === 'UP' ? "text-bull" : forecast.trend === 'DOWN' ? "text-bear" : "text-foreground")}>
                 {forecast.trend || "NEUTRAL"}
               </span>
             </div>
@@ -957,7 +957,7 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
             >
               <div className="h-8 w-8 rounded-full border-2 border-accent border-t-transparent animate-spin" />
               <motion.span 
-                className="text-xs font-medium text-foreground/70"
+                className="text-xs font-normal text-foreground/70"
                 animate={{ opacity: [0.6, 1, 0.6] }}
                 transition={{ repeat: Infinity, duration: 2 }}
               >
@@ -980,7 +980,7 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
               </svg>
             </div>
             <div className="space-y-1">
-              <h3 className="text-sm font-bold tracking-tight text-foreground">
+              <h3 className="text-sm font-normal tracking-tight text-foreground">
                 {isAuthenticated === false ? "Chart Data Locked" : `No Historical Bars for ${symbol}`}
               </h3>
               <p className="text-xs text-muted-foreground max-w-[280px] mx-auto leading-relaxed">
@@ -996,13 +996,13 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
         )}
 
         {!loading && candles.length > 0 && isAuthenticated === false && (
-          <div className="pointer-events-none absolute top-2 right-2 z-10 px-2 py-1 bg-destructive/10 border border-destructive/20 rounded text-[10px] font-medium text-destructive backdrop-blur-md">
+          <div className="pointer-events-none absolute top-2 right-2 z-10 px-2 py-1 bg-destructive/10 border border-destructive/20 rounded text-[10px] font-normal text-destructive backdrop-blur-md">
             Upstox Auth Required for Live Updates
           </div>
         )}
         
         {!loading && candles.length > 0 && error && isAuthenticated !== false && (
-          <div className="pointer-events-none absolute top-2 right-2 z-10 px-2 py-1 bg-destructive/10 border border-destructive/20 rounded text-[10px] font-medium text-destructive backdrop-blur-md">
+          <div className="pointer-events-none absolute top-2 right-2 z-10 px-2 py-1 bg-destructive/10 border border-destructive/20 rounded text-[10px] font-normal text-destructive backdrop-blur-md">
             Live Feed Disconnected
           </div>
         )}

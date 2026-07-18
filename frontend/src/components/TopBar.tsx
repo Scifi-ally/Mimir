@@ -179,7 +179,7 @@ export const TopBar = memo(function TopBar({
           <div className="flex w-full min-w-0 items-center justify-between gap-3 sm:gap-4 whitespace-nowrap">
             <div className="flex min-w-0 flex-1 items-center gap-x-3 pr-2 relative">
 
-          <div className="hidden sm:flex min-w-0 shrink items-center gap-3 text-[11px] font-medium text-foreground/60 overflow-x-auto [&::-webkit-scrollbar]:hidden">
+          <div className="hidden sm:flex min-w-0 shrink items-center gap-3 text-[11px] font-normal text-foreground/60 overflow-x-auto [&::-webkit-scrollbar]:hidden">
             <IndexMetric label="NIFTY 50" ltp={indices?.nifty50.ltp} changePct={indices?.nifty50.changePct} storeKey="nifty" onSelect={() => onSelectSymbol?.("NIFTY 50")} />
             <IndexMetric label="SENSEX" ltp={indices?.sensex.ltp} changePct={indices?.sensex.changePct} storeKey="sensex" onSelect={() => onSelectSymbol?.("SENSEX")} />
             <div className="hidden lg:contents">
@@ -201,7 +201,7 @@ export const TopBar = memo(function TopBar({
               onClick={handleScanButtonClick}
               disabled={startingScan || stoppingScan}
               className={cn(
-                "apple-hover relative overflow-hidden h-7 text-[10px] px-3 font-medium bg-foreground/[0.03] transition-all duration-200 rounded-lg",
+                "apple-hover relative overflow-hidden h-7 text-[10px] px-3 font-normal bg-foreground/[0.03] transition-all duration-200 rounded-lg",
                 scanning
                   ? "text-foreground hover:bg-red-500/10 hover:text-red-500"
                   : "text-foreground/70 hover:bg-foreground/[0.08] hover:text-foreground"
@@ -216,7 +216,7 @@ export const TopBar = memo(function TopBar({
               )}
               <span className="relative z-10 flex items-center justify-center min-w-[32px]">
                 {scanning && scanProgress !== undefined ? (
-                  <span className="text-[10px] font-mono font-bold text-foreground px-1">
+                  <span className="text-[10px] font-mono font-normal text-foreground px-1">
                     {scanProgress > 0 && scanProgress < 100 ? toFixed(scanProgress, 1) : Math.round(scanProgress || 0)}%
                   </span>
                 ) : (
@@ -231,13 +231,13 @@ export const TopBar = memo(function TopBar({
               variant="ghost"
               size="sm"
               onClick={onOpenSuggestions}
-              className="apple-hover h-7 flex items-center gap-1.5 text-[10px] px-3 font-medium bg-foreground/[0.03] text-foreground/70 hover:bg-foreground/[0.08] hover:text-foreground transition-all duration-200 rounded-lg"
+              className="apple-hover h-7 flex items-center gap-1.5 text-[10px] px-3 font-normal bg-foreground/[0.03] text-foreground/70 hover:bg-foreground/[0.08] hover:text-foreground transition-all duration-200 rounded-lg"
               title="View Signals Generated"
             >
               <BarChart2 className="h-3.5 w-3.5 sm:mr-0.5" />
               <span className="hidden sm:inline">Signals</span>
               {totalActiveSignals > 0 && (
-                <span className="ml-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-bull px-1 text-[9px] font-bold text-black">
+                <span className="ml-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-bull px-1 text-[9px] font-normal text-black">
                   {totalActiveSignals}
                 </span>
               )}
@@ -298,7 +298,7 @@ export const TopBar = memo(function TopBar({
             >
               <Bell className="h-3.5 w-3.5" />
               {unreadCount > 0 && (
-                <span className="absolute -top-1 -right-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-destructive px-0.5 text-[8px] font-bold text-white">
+                <span className="absolute -top-1 -right-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-destructive px-0.5 text-[8px] font-normal text-white">
                   {unreadCount > 9 ? "9+" : unreadCount}
                 </span>
               )}
@@ -332,11 +332,11 @@ export const TopBar = memo(function TopBar({
                               <div className="flex items-center justify-between px-1">
                                 <div className="flex items-center gap-2">
                                   <Zap className="h-4 w-4 text-blue-400" />
-                                  <span className="text-[13px] font-semibold text-foreground">Live Feed Key</span>
+                                  <span className="text-[13px] font-normal text-foreground">Live Feed Key</span>
                                 </div>
                                 <div className="flex items-center gap-1 text-[12px]">
                                   {status?.upstoxFeedAuthenticated ? (
-                                    <span className="text-bull flex items-center gap-1 font-medium bg-bull/10 px-2 py-0.5 rounded">
+                                    <span className="text-bull flex items-center gap-1 font-normal bg-bull/10 px-2 py-0.5 rounded">
                                       <CheckCircle2 className="h-3 w-3" />
                                       {status.upstoxFeedTokenExpiry ? <TokenExpiryDisplay expiry={status.upstoxFeedTokenExpiry} /> : "Verified"}
                                     </span>
@@ -344,7 +344,7 @@ export const TopBar = memo(function TopBar({
                                     <button
                                       onClick={(e) => { e.stopPropagation(); hideIsland(); onAuthorize("trading"); }}
                                       disabled={authorizing}
-                                      className="text-red-400 hover:text-red-300 hover:bg-red-400/20 transition-colors flex items-center gap-1 font-medium bg-red-400/10 px-2 py-0.5 rounded cursor-pointer disabled:opacity-50"
+                                      className="text-red-400 hover:text-red-300 hover:bg-red-400/20 transition-colors flex items-center gap-1 font-normal bg-red-400/10 px-2 py-0.5 rounded cursor-pointer disabled:opacity-50"
                                     >
                                       <AlertCircle className="h-3 w-3" />
                                       Authorize
@@ -356,11 +356,11 @@ export const TopBar = memo(function TopBar({
                               <div className="flex items-center justify-between px-1">
                                 <div className="flex items-center gap-2">
                                   <BarChart2 className="h-4 w-4 text-orange-400" />
-                                  <span className="text-[13px] font-semibold text-foreground">Analysis Key</span>
+                                  <span className="text-[13px] font-normal text-foreground">Analysis Key</span>
                                 </div>
                                 <div className="flex items-center gap-1 text-[12px]">
                                   {status?.upstoxDataAuthenticated ? (
-                                    <span className="text-bull flex items-center gap-1 font-medium bg-bull/10 px-2 py-0.5 rounded">
+                                    <span className="text-bull flex items-center gap-1 font-normal bg-bull/10 px-2 py-0.5 rounded">
                                       <CheckCircle2 className="h-3 w-3" />
                                       {status.upstoxDataTokenExpiry ? <TokenExpiryDisplay expiry={status.upstoxDataTokenExpiry} /> : "Verified"}
                                     </span>
@@ -368,7 +368,7 @@ export const TopBar = memo(function TopBar({
                                     <button
                                       onClick={(e) => { e.stopPropagation(); hideIsland(); onAuthorize("data"); }}
                                       disabled={authorizing}
-                                      className="text-red-400 hover:text-red-300 hover:bg-red-400/20 transition-colors flex items-center gap-1 font-medium bg-red-400/10 px-2 py-0.5 rounded cursor-pointer disabled:opacity-50"
+                                      className="text-red-400 hover:text-red-300 hover:bg-red-400/20 transition-colors flex items-center gap-1 font-normal bg-red-400/10 px-2 py-0.5 rounded cursor-pointer disabled:opacity-50"
                                     >
                                       <AlertCircle className="h-3 w-3" />
                                       Authorize
@@ -389,10 +389,10 @@ export const TopBar = memo(function TopBar({
                               <div className="flex items-center justify-between px-1">
                                 <div className="flex items-center gap-2">
                                   <Zap className="h-4 w-4 text-blue-400" />
-                                  <span className="text-[13px] font-semibold text-foreground">API Key</span>
+                                  <span className="text-[13px] font-normal text-foreground">API Key</span>
                                 </div>
                                 <div className="flex items-center gap-1 text-[12px]">
-                                  <span className="text-bull flex items-center gap-1 font-medium bg-bull/10 px-2 py-0.5 rounded">
+                                  <span className="text-bull flex items-center gap-1 font-normal bg-bull/10 px-2 py-0.5 rounded">
                                     <CheckCircle2 className="h-3 w-3" />
                                     {status.upstoxTokenExpiry ? <TokenExpiryDisplay expiry={status.upstoxTokenExpiry} /> : "Verified"}
                                   </span>
@@ -408,7 +408,7 @@ export const TopBar = memo(function TopBar({
                   }}
                   disabled={authorizing}
                   className={cn(
-                    "apple-hover h-7 flex items-center gap-1.5 text-[11px] px-3 font-medium transition-all rounded-lg",
+                    "apple-hover h-7 flex items-center gap-1.5 text-[11px] px-3 font-normal transition-all rounded-lg",
                     isDualKeyConfigured
                       ? authorizedKeysCount === 2
                         ? "text-bull bg-bull/10 hover:bg-bull/20"
@@ -429,7 +429,7 @@ export const TopBar = memo(function TopBar({
                   ) : isDualKeyConfigured ? (
                     <>
                       <KeyRound className={cn("h-4 w-4", authorizedKeysCount > 0 ? "text-current" : "text-red-500")} />
-                      <span className="flex items-center gap-1 font-mono font-bold text-[12px] tracking-tight">
+                      <span className="flex items-center gap-1 font-mono font-normal text-[12px] tracking-tight">
                         {authorizedKeysCount}/2
                       </span>
                     </>
@@ -463,7 +463,7 @@ export const TopBar = memo(function TopBar({
           </Button>
           </motion.div>
           
-          <span className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-foreground/70 px-1">
+          <span className="flex items-center gap-1.5 text-[11px] font-normal uppercase tracking-wider text-foreground/70 px-1">
             <span className={cn(
               "h-1.5 w-1.5 rounded-full", 
               wsConnected ? "bg-[#34C759] shadow-[0_0_8px_rgba(52,199,89,0.6)] animate-[pulse-bloom_4s_ease-in-out_infinite]" : "bg-red-500/80"

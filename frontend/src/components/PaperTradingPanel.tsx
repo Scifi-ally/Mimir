@@ -170,17 +170,17 @@ export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClo
             {/* Header */}
             <div className="flex justify-between items-center px-8 pt-6 pb-4 shrink-0">
               <div className="flex flex-col">
-                <h2 className="text-lg font-bold tracking-tight flex items-center gap-2 text-foreground">
+                <h2 className="text-lg font-normal tracking-tight flex items-center gap-2 text-foreground">
                   <Wallet className="w-4 h-4 text-foreground/80" strokeWidth={2.5} />
                   {isLive ? "Live Trading" : "Paper Trading"}
                   {isLive && (
-                    <span className="flex items-center gap-1.5 ml-1 text-[9px] font-black tracking-widest text-destructive uppercase">
+                    <span className="flex items-center gap-1.5 ml-1 text-[9px] font-normal tracking-widest text-destructive uppercase">
                       <span className="w-1.5 h-1.5 rounded-full bg-destructive animate-pulse" />
                       Real Orders
                     </span>
                   )}
                 </h2>
-                <p className="text-foreground/40 text-[9px] mt-0.5 tracking-widest uppercase font-semibold">
+                <p className="text-foreground/40 text-[9px] mt-0.5 tracking-widest uppercase font-normal">
                   {isLive
                     ? `Broker Account · Available ₹${fmtNum(brokerFunds?.availableMargin ?? 0, 0)}`
                     : `Simulated Portfolio · Starting ₹${fmtNum(startingBalance, 0)}`}
@@ -190,7 +190,7 @@ export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClo
                 {!isLive && (
                   <button
                     onClick={handleReset}
-                    className="apple-hover text-[10px] font-bold tracking-widest uppercase flex items-center gap-1.5 hover:bg-destructive/10 text-foreground/40 hover:text-destructive px-3 py-1.5 rounded-lg transition-all duration-300"
+                    className="apple-hover text-[10px] font-normal tracking-widest uppercase flex items-center gap-1.5 hover:bg-destructive/10 text-foreground/40 hover:text-destructive px-3 py-1.5 rounded-lg transition-all duration-300"
                   >
                     <RotateCcw className="w-3 h-3" />
                     Reset
@@ -203,7 +203,7 @@ export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClo
               <div className="flex-1 flex flex-col items-center justify-center opacity-60">
                 <div className="flex flex-col items-center gap-4 text-foreground/40 animate-pulse">
                   <Activity className="w-8 h-8" />
-                  <div className="text-xs font-bold tracking-widest uppercase">Syncing Virtual Ledger...</div>
+                  <div className="text-xs font-normal tracking-widest uppercase">Syncing Virtual Ledger...</div>
                 </div>
               </div>
             ) : (
@@ -214,21 +214,21 @@ export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClo
             <motion.div variants={staggerContainer} initial="hidden" animate="show" className="px-6 sm:px-8 py-5 shrink-0">
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-6">
                 <motion.div variants={staggerItem} className="flex flex-col gap-1 min-w-0 overflow-hidden">
-                  <span className="text-[10px] font-bold text-foreground/50 tracking-widest uppercase truncate">Available Margin</span>
-                  <span className="text-xl sm:text-2xl font-mono tabular-nums font-bold tracking-tight text-foreground truncate">
+                  <span className="text-[10px] font-normal text-foreground/50 tracking-widest uppercase truncate">Available Margin</span>
+                  <span className="text-xl sm:text-2xl font-mono tabular-nums font-normal tracking-tight text-foreground truncate">
                     ₹{fmtNum(brokerFunds?.availableMargin ?? 0, 2)}
                   </span>
                 </motion.div>
                 <motion.div variants={staggerItem} className="flex flex-col gap-1 min-w-0 overflow-hidden">
-                  <span className="text-[10px] font-bold text-foreground/50 tracking-widest uppercase truncate">Used Margin</span>
-                  <span className="text-xl sm:text-2xl font-mono tabular-nums font-bold tracking-tight text-foreground/60 truncate">
+                  <span className="text-[10px] font-normal text-foreground/50 tracking-widest uppercase truncate">Used Margin</span>
+                  <span className="text-xl sm:text-2xl font-mono tabular-nums font-normal tracking-tight text-foreground/60 truncate">
                     ₹{fmtNum(brokerFunds?.usedMargin ?? 0, 2)}
                   </span>
                 </motion.div>
                 <motion.div variants={staggerItem} className="flex flex-col gap-1 min-w-0 overflow-hidden">
-                  <span className="text-[10px] font-bold text-foreground/50 tracking-widest uppercase truncate">Day PnL</span>
+                  <span className="text-[10px] font-normal text-foreground/50 tracking-widest uppercase truncate">Day PnL</span>
                   <span className={cn(
-                    "text-xl sm:text-2xl font-mono tabular-nums font-bold tracking-tight flex items-center gap-1.5 truncate",
+                    "text-xl sm:text-2xl font-mono tabular-nums font-normal tracking-tight flex items-center gap-1.5 truncate",
                     liveDayPnl > 0 ? "text-bull" : liveDayPnl < 0 ? "text-bear" : "text-foreground/40"
                   )}>
                     {liveDayPnl > 0 ? <TrendingUp className="w-4 h-4 shrink-0" /> : liveDayPnl < 0 ? <TrendingDown className="w-4 h-4 shrink-0" /> : null}
@@ -239,8 +239,8 @@ export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClo
                   </span>
                 </motion.div>
                 <motion.div variants={staggerItem} className="flex flex-col gap-1 min-w-0 overflow-hidden">
-                  <span className="text-[10px] font-bold text-foreground/50 tracking-widest uppercase truncate">Open Positions</span>
-                  <span className="text-xl sm:text-2xl font-mono tabular-nums font-bold tracking-tight text-foreground/80 truncate">
+                  <span className="text-[10px] font-normal text-foreground/50 tracking-widest uppercase truncate">Open Positions</span>
+                  <span className="text-xl sm:text-2xl font-mono tabular-nums font-normal tracking-tight text-foreground/80 truncate">
                     {brokerPositions?.filter(p => p.quantity !== 0).length ?? 0}
                   </span>
                 </motion.div>
@@ -254,12 +254,12 @@ export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClo
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 sm:gap-6">
                 {/* Equity — Hero metric */}
                 <motion.div variants={staggerItem} className="flex flex-col gap-1 min-w-0 overflow-hidden" title={`₹${fmtNum(equity, 2)}`}>
-                  <span className="text-[10px] font-bold text-foreground/50 tracking-widest uppercase truncate">Equity</span>
-                  <span className="text-xl sm:text-2xl font-mono tabular-nums font-bold tracking-tight text-foreground truncate">
+                  <span className="text-[10px] font-normal text-foreground/50 tracking-widest uppercase truncate">Equity</span>
+                  <span className="text-xl sm:text-2xl font-mono tabular-nums font-normal tracking-tight text-foreground truncate">
                     ₹{fmtNum(equity, 2)}
                   </span>
                   <span className={cn(
-                    "text-[10px] font-mono tabular-nums font-bold truncate",
+                    "text-[10px] font-mono tabular-nums font-normal truncate",
                     totalReturn > 0 ? "text-bull" : totalReturn < 0 ? "text-bear" : "text-foreground/40"
                   )}>
                     {totalReturn > 0 ? '+' : ''}{toFixed(totalReturn, 2)}% return
@@ -268,19 +268,19 @@ export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClo
 
                 {/* Available Margin */}
                 <motion.div variants={staggerItem} className="flex flex-col gap-1 min-w-0 overflow-hidden" title={`₹${fmtNum(available, 2)}`}>
-                  <span className="text-[10px] font-bold text-foreground/50 tracking-widest uppercase truncate">Available</span>
-                  <span className="text-xl sm:text-2xl font-mono tabular-nums font-bold tracking-tight text-foreground/80 truncate">
+                  <span className="text-[10px] font-normal text-foreground/50 tracking-widest uppercase truncate">Available</span>
+                  <span className="text-xl sm:text-2xl font-mono tabular-nums font-normal tracking-tight text-foreground/80 truncate">
                     ₹{fmtNum(available, 2)}
                   </span>
                 </motion.div>
 
                 {/* Allocated */}
                 <motion.div variants={staggerItem} className="flex flex-col gap-1 min-w-0 overflow-hidden" title={`₹${fmtNum(allocated, 2)}`}>
-                  <span className="text-[10px] font-bold text-foreground/50 tracking-widest uppercase flex items-center justify-between gap-1">
+                  <span className="text-[10px] font-normal text-foreground/50 tracking-widest uppercase flex items-center justify-between gap-1">
                     <span className="truncate">Deployed</span>
                     <span className="shrink-0">{balance > 0 ? toFixed((allocated / balance) * 100, 0) : 0}%</span>
                   </span>
-                  <span className="text-xl sm:text-2xl font-mono tabular-nums font-bold tracking-tight text-foreground/40 truncate">
+                  <span className="text-xl sm:text-2xl font-mono tabular-nums font-normal tracking-tight text-foreground/40 truncate">
                     ₹{fmtNum(allocated, 2)}
                   </span>
                   <div className="h-1 w-full bg-border/10 rounded-full overflow-hidden mt-1 shrink-0">
@@ -295,8 +295,8 @@ export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClo
 
                 {/* Live PnL */}
                 <motion.div variants={staggerItem} className="flex flex-col gap-1 min-w-0 overflow-hidden" title={`₹${fmtNum(Math.abs(livePnl), 2)}`}>
-                  <span className="text-[10px] font-bold text-foreground/50 tracking-widest uppercase truncate">Unrealized</span>
-                  <span className={cn("text-xl sm:text-2xl font-mono tabular-nums font-bold tracking-tight flex items-center gap-1.5 truncate", isProfit ? "text-bull" : isLoss ? "text-bear" : "text-foreground/40")}>
+                  <span className="text-[10px] font-normal text-foreground/50 tracking-widest uppercase truncate">Unrealized</span>
+                  <span className={cn("text-xl sm:text-2xl font-mono tabular-nums font-normal tracking-tight flex items-center gap-1.5 truncate", isProfit ? "text-bull" : isLoss ? "text-bear" : "text-foreground/40")}>
                     {isProfit ? <TrendingUp className="w-4 h-4 shrink-0" /> : isLoss ? <TrendingDown className="w-4 h-4 shrink-0" /> : null}
                     {/* A loss must read as negative even in monochrome/screenshot/color-blind
                         contexts — never strip the minus sign. Matches the LIVE Day PnL above. */}
@@ -306,12 +306,12 @@ export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClo
 
                 {/* Win Rate */}
                 <motion.div variants={staggerItem} className="flex flex-col gap-1 min-w-0 overflow-hidden">
-                  <span className="text-[10px] font-bold text-foreground/50 tracking-widest uppercase truncate">Win Rate</span>
-                  <span className={cn("text-xl sm:text-2xl font-mono tabular-nums font-bold tracking-tight truncate", stats.winRate >= 50 ? "text-bull" : stats.winRate > 0 ? "text-bear" : "text-foreground/40")}>
+                  <span className="text-[10px] font-normal text-foreground/50 tracking-widest uppercase truncate">Win Rate</span>
+                  <span className={cn("text-xl sm:text-2xl font-mono tabular-nums font-normal tracking-tight truncate", stats.winRate >= 50 ? "text-bull" : stats.winRate > 0 ? "text-bear" : "text-foreground/40")}>
                     {history.length > 0 ? `${toFixed(stats.winRate, 0)}%` : '—'}
                   </span>
                   {history.length > 0 && (
-                    <span className="text-[10px] font-mono tabular-nums font-bold text-foreground/30 truncate">
+                    <span className="text-[10px] font-mono tabular-nums font-normal text-foreground/30 truncate">
                       {stats.wins}W / {stats.losses}L
                     </span>
                   )}
@@ -326,7 +326,7 @@ export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClo
               <button
                 onClick={() => setActiveTab("positions")}
                 className={cn(
-                  "pb-3 text-xs font-bold tracking-widest uppercase flex items-center gap-2 transition-all duration-300 relative",
+                  "pb-3 text-xs font-normal tracking-widest uppercase flex items-center gap-2 transition-all duration-300 relative",
                   activeTab === "positions" ? "text-foreground" : "text-foreground/40 hover:text-foreground/70"
                 )}
               >
@@ -338,7 +338,7 @@ export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClo
               <button
                 onClick={() => setActiveTab("history")}
                 className={cn(
-                  "pb-3 text-xs font-bold tracking-widest uppercase flex items-center gap-2 transition-all duration-300 relative",
+                  "pb-3 text-xs font-normal tracking-widest uppercase flex items-center gap-2 transition-all duration-300 relative",
                   activeTab === "history" ? "text-foreground" : "text-foreground/40 hover:text-foreground/70"
                 )}
               >
@@ -364,7 +364,7 @@ export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClo
                     {isLive ? (
                       (brokerPositions?.filter(p => p.quantity !== 0).length ?? 0) === 0 ? (
                         <motion.div variants={staggerItem} className="flex flex-col items-center justify-center py-16 text-foreground/30">
-                          <p className="text-xs font-medium tracking-wide">No open broker positions</p>
+                          <p className="text-xs font-normal tracking-wide">No open broker positions</p>
                         </motion.div>
                       ) : (
                         brokerPositions!.filter(p => p.quantity !== 0).map(pos => (
@@ -373,7 +373,7 @@ export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClo
                       )
                     ) : positions.length === 0 ? (
                       <motion.div variants={staggerItem} className="flex flex-col items-center justify-center py-16 text-foreground/30">
-                        <p className="text-xs font-medium tracking-wide">No open positions</p>
+                        <p className="text-xs font-normal tracking-wide">No open positions</p>
                       </motion.div>
                     ) : (
                       positions.map(pos => (
@@ -393,7 +393,7 @@ export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClo
                     {(liveOrders?.length ?? 0) === 0 ? (
                       <motion.div variants={staggerItem} className="flex flex-col items-center justify-center py-16 text-foreground/30">
                         <History className="w-10 h-10 mb-3 opacity-30" strokeWidth={1} />
-                        <p className="text-sm font-medium tracking-wide">No live orders yet</p>
+                        <p className="text-sm font-normal tracking-wide">No live orders yet</p>
                         <p className="text-xs text-foreground/20 mt-1">Every real order placed at the broker is audited here.</p>
                       </motion.div>
                     ) : (
@@ -414,17 +414,17 @@ export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClo
                     {/* History Summary Bar */}
                     {history.length > 0 && (
                       <motion.div variants={staggerItem} className="flex flex-wrap gap-6 py-3 mb-2 text-[11px] font-mono text-foreground/50">
-                        <span>Realized PnL: <span className={cn("font-bold", stats.totalRealizedPnl >= 0 ? "text-bull" : "text-bear")}>{stats.totalRealizedPnl >= 0 ? '+' : ''}₹{fmtNum(Math.abs(stats.totalRealizedPnl), 2)}</span></span>
-                        <span>Avg Win: <span className="font-bold text-bull">₹{fmtNum(stats.avgWin, 0)}</span></span>
-                        <span>Avg Loss: <span className="font-bold text-bear">₹{fmtNum(stats.avgLoss, 0)}</span></span>
+                        <span>Realized PnL: <span className={cn("font-normal", stats.totalRealizedPnl >= 0 ? "text-bull" : "text-bear")}>{stats.totalRealizedPnl >= 0 ? '+' : ''}₹{fmtNum(Math.abs(stats.totalRealizedPnl), 2)}</span></span>
+                        <span>Avg Win: <span className="font-normal text-bull">₹{fmtNum(stats.avgWin, 0)}</span></span>
+                        <span>Avg Loss: <span className="font-normal text-bear">₹{fmtNum(stats.avgLoss, 0)}</span></span>
                         {stats.profitFactor !== Infinity && stats.profitFactor > 0 && (
-                          <span>Profit Factor: <span className="font-bold text-foreground/80">{toFixed(stats.profitFactor, 2)}</span></span>
+                          <span>Profit Factor: <span className="font-normal text-foreground/80">{toFixed(stats.profitFactor, 2)}</span></span>
                         )}
                       </motion.div>
                     )}
                     {history.length === 0 ? (
                       <motion.div variants={staggerItem} className="flex flex-col items-center justify-center py-16 text-foreground/30">
-                        <p className="text-xs font-medium tracking-wide">No completed trades yet</p>
+                        <p className="text-xs font-normal tracking-wide">No completed trades yet</p>
                       </motion.div>
                     ) : (
                       history.map(hist => (
@@ -460,21 +460,21 @@ function BrokerPositionRow({ pos }: { pos: { symbol: string; quantity: number; a
     >
       <div className="flex flex-col gap-2 min-w-0">
         <div className="flex items-center gap-3">
-          <span className="font-bold text-base text-foreground tracking-tight">{pos.symbol}</span>
+          <span className="font-normal text-base text-foreground tracking-tight">{pos.symbol}</span>
           <span className={cn(
-            "text-[9px] font-extrabold tracking-widest uppercase px-1.5 py-0.5 rounded",
+            "text-[9px] font-normal tracking-widest uppercase px-1.5 py-0.5 rounded",
             isLong ? "text-bull bg-bull/10" : "text-bear bg-bear/10"
           )}>
             {isLong ? "LONG" : "SHORT"}
           </span>
-          <span className="text-[9px] font-bold tracking-widest uppercase text-destructive px-1.5 py-0.5 rounded bg-destructive/10">
+          <span className="text-[9px] font-normal tracking-widest uppercase text-destructive px-1.5 py-0.5 rounded bg-destructive/10">
             LIVE
           </span>
-          <span className="text-[9px] font-bold tracking-widest uppercase text-foreground/40">
+          <span className="text-[9px] font-normal tracking-widest uppercase text-foreground/40">
             {pos.product === "I" ? "MIS" : pos.product === "D" ? "CNC" : pos.product}
           </span>
         </div>
-        <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-[11px] font-mono font-medium text-foreground/50">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-[11px] font-mono font-normal text-foreground/50">
           <span className="flex items-center gap-1.5">
             QTY <span className="text-foreground/90">{Math.abs(pos.quantity)}</span>
           </span>
@@ -490,10 +490,10 @@ function BrokerPositionRow({ pos }: { pos: { symbol: string; quantity: number; a
         </div>
       </div>
       <div className="flex flex-col items-end gap-0.5 shrink-0">
-        <span className={cn("text-sm font-mono font-bold tabular-nums", isProfit ? "text-bull" : isLoss ? "text-bear" : "text-foreground/40")}>
+        <span className={cn("text-sm font-mono font-normal tabular-nums", isProfit ? "text-bull" : isLoss ? "text-bear" : "text-foreground/40")}>
           <AnimatedNumber value={pos.pnl} decimals={2} showSign={true} prefix="₹" duration={0.3} flashColor={true} />
         </span>
-        <span className={cn("text-[10px] font-mono font-bold", isProfit ? "text-bull/70" : isLoss ? "text-bear/70" : "text-foreground/30")}>
+        <span className={cn("text-[10px] font-mono font-normal", isProfit ? "text-bull/70" : isLoss ? "text-bear/70" : "text-foreground/30")}>
           <AnimatedNumber value={pnlPct} decimals={2} showSign={true} suffix="%" duration={0.3} flashColor={true} />
         </span>
       </div>
@@ -515,21 +515,21 @@ function LiveOrderRow({ order }: { order: { id: string; symbol: string; directio
     >
       <div className="flex flex-col gap-2 min-w-0">
         <div className="flex items-center gap-3">
-          <span className="font-bold text-base text-foreground tracking-tight">{order.symbol}</span>
+          <span className="font-normal text-base text-foreground tracking-tight">{order.symbol}</span>
           <span className={cn(
-            "text-[9px] font-extrabold tracking-widest uppercase px-1.5 py-0.5 rounded",
+            "text-[9px] font-normal tracking-widest uppercase px-1.5 py-0.5 rounded",
             order.direction === "BUY" ? "text-bull bg-bull/10" : "text-bear bg-bear/10"
           )}>
             {order.direction}
           </span>
-          <span className={cn("text-[9px] font-bold tracking-widest uppercase px-1.5 py-0.5 rounded", statusColor)}>
+          <span className={cn("text-[9px] font-normal tracking-widest uppercase px-1.5 py-0.5 rounded", statusColor)}>
             {order.status}
           </span>
-          <span className="text-[9px] font-bold tracking-widest uppercase text-foreground/40">
+          <span className="text-[9px] font-normal tracking-widest uppercase text-foreground/40">
             {order.orderType.replace(/_/g, " ")}
           </span>
         </div>
-        <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-[11px] font-mono font-medium text-foreground/50">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-[11px] font-mono font-normal text-foreground/50">
           <span className="flex items-center gap-1.5">
             QTY <span className="text-foreground/90">{order.quantity}</span>
           </span>
@@ -570,18 +570,18 @@ function PositionRow({ pos }: { pos: PaperPosition }) {
     >
       <div className="flex flex-col gap-2 min-w-0">
         <div className="flex items-center gap-3">
-          <span className="font-bold text-base text-foreground tracking-tight">{pos.symbol}</span>
+          <span className="font-normal text-base text-foreground tracking-tight">{pos.symbol}</span>
           <span className={cn(
-            "text-[9px] font-extrabold tracking-widest uppercase px-1.5 py-0.5 rounded",
+            "text-[9px] font-normal tracking-widest uppercase px-1.5 py-0.5 rounded",
             pos.direction === "BUY" ? "text-bull bg-bull/10" : "text-bear bg-bear/10"
           )}>
             {pos.direction}
           </span>
-          <span className="text-[9px] font-bold tracking-widest uppercase text-accent px-1.5 py-0.5 rounded bg-accent/10">
+          <span className="text-[9px] font-normal tracking-widest uppercase text-accent px-1.5 py-0.5 rounded bg-accent/10">
             OPEN
           </span>
         </div>
-        <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-[11px] font-mono font-medium text-foreground/50">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-[11px] font-mono font-normal text-foreground/50">
           <span className="flex items-center gap-1.5">
             QTY <span className="text-foreground/90">{pos.quantity}</span>
           </span>
@@ -593,7 +593,7 @@ function PositionRow({ pos }: { pos: PaperPosition }) {
           </span>
           {pos.trailingStopLoss && (
             <span className="flex items-center gap-1.5 text-accent">
-              TSL <span className="font-bold">₹{fmtNum(Number(pos.trailingStopLoss), 2)}</span>
+              TSL <span className="font-normal">₹{fmtNum(Number(pos.trailingStopLoss), 2)}</span>
             </span>
           )}
           <span className="text-foreground/30">
@@ -602,10 +602,10 @@ function PositionRow({ pos }: { pos: PaperPosition }) {
         </div>
       </div>
       <div className="flex flex-col items-end gap-0.5 shrink-0">
-        <span className={cn("text-sm font-mono font-bold tabular-nums", isProfit ? "text-bull" : isLoss ? "text-bear" : "text-foreground/40")}>
+        <span className={cn("text-sm font-mono font-normal tabular-nums", isProfit ? "text-bull" : isLoss ? "text-bear" : "text-foreground/40")}>
           <AnimatedNumber value={pnl} decimals={2} showSign={true} prefix="₹" duration={0.3} flashColor={true} />
         </span>
-        <span className={cn("text-[10px] font-mono font-bold", isProfit ? "text-bull/70" : isLoss ? "text-bear/70" : "text-foreground/30")}>
+        <span className={cn("text-[10px] font-mono font-normal", isProfit ? "text-bull/70" : isLoss ? "text-bear/70" : "text-foreground/30")}>
           <AnimatedNumber value={pnlPct} decimals={2} showSign={true} suffix="%" duration={0.3} flashColor={true} />
         </span>
       </div>
@@ -635,21 +635,21 @@ function HistoryRow({ hist }: { hist: PaperPosition }) {
     >
       <div className="flex flex-col gap-2 min-w-0">
         <div className="flex items-center gap-3">
-          <span className="font-bold text-base text-foreground tracking-tight">{hist.symbol}</span>
+          <span className="font-normal text-base text-foreground tracking-tight">{hist.symbol}</span>
           <span className={cn(
-            "text-[9px] font-extrabold tracking-widest uppercase px-1.5 py-0.5 rounded",
+            "text-[9px] font-normal tracking-widest uppercase px-1.5 py-0.5 rounded",
             hist.direction === "BUY" ? "text-bull bg-bull/10" : "text-bear bg-bear/10"
           )}>
             {hist.direction}
           </span>
           <span className={cn(
-            "text-[9px] font-bold tracking-widest uppercase px-1.5 py-0.5 rounded",
+            "text-[9px] font-normal tracking-widest uppercase px-1.5 py-0.5 rounded",
             isProfit ? "text-bull/70 bg-bull/5" : isLoss ? "text-bear/70 bg-bear/5" : "text-foreground/50 bg-foreground/5"
           )}>
             {exitLabel}
           </span>
         </div>
-        <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-[11px] font-mono font-medium text-foreground/50">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-[11px] font-mono font-normal text-foreground/50">
           <span className="flex items-center gap-1.5">
             QTY <span className="text-foreground/90">{hist.quantity}</span>
           </span>
@@ -666,10 +666,10 @@ function HistoryRow({ hist }: { hist: PaperPosition }) {
         </div>
       </div>
       <div className="flex flex-col items-end gap-0.5 shrink-0">
-        <span className={cn("text-sm font-mono font-bold tabular-nums", isProfit ? "text-bull" : isLoss ? "text-bear" : "text-foreground/40")}>
+        <span className={cn("text-sm font-mono font-normal tabular-nums", isProfit ? "text-bull" : isLoss ? "text-bear" : "text-foreground/40")}>
           {pnl >= 0 ? "+" : ""}₹{fmtNum(Math.abs(pnl), 2)}
         </span>
-        <span className={cn("text-[10px] font-mono font-bold", isProfit ? "text-bull/70" : isLoss ? "text-bear/70" : "text-foreground/30")}>
+        <span className={cn("text-[10px] font-mono font-normal", isProfit ? "text-bull/70" : isLoss ? "text-bear/70" : "text-foreground/30")}>
           {toFixedPct(pnlPct, 2)}
         </span>
       </div>
