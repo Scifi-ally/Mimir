@@ -64,6 +64,13 @@
       "when": 1784400000000,
       "tag": "0008_feature_persistence",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1784850000000,
+      "tag": "0009_rejected_candidates",
+      "breakpoints": true
     }
   ]
 }

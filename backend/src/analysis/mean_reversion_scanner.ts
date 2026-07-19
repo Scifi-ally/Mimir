@@ -3,7 +3,8 @@
  * ─────────────────────────────────────────────────────────────────────────────
  * Detects stocks at support/resistance extremes of their range with
  * RSI divergence, Bollinger Band extremes, and mean-reversion signals.
- * Active only in SIDEWAYS_RANGE and BEARISH_STEADY regimes.
+ * Activation is governed by scanner_activation.ts (SIDEWAYS_RANGE,
+ * BEARISH_STEADY and HIGH_VOLATILITY as of this writing).
  */
 import type { OHLCV, TechnicalSnapshot, SetupCandidate } from "./technical";
 import { computeRSI, computeBollingerBands } from "./technical";
@@ -144,7 +145,6 @@ function detectBullishDivergence(candles: OHLCV[], closes: number[]): boolean {
   if (candles.length < 20) return false;
   // Check if price made lower low but RSI made higher low in last 10-20 candles
   const recent = candles.slice(-20);
-  const recentCloses = closes.slice(-20);
 
   let priceLow1 = Infinity, priceLow1Idx = -1;
   let priceLow2 = Infinity, priceLow2Idx = -1;
@@ -167,9 +167,13 @@ function detectBullishDivergence(candles: OHLCV[], closes: number[]): boolean {
   if (priceLow1Idx < 0 || priceLow2Idx < 0) return false;
   if (Math.abs(priceLow1Idx - priceLow2Idx) < 3) return false;
 
-  // Check RSI at those points
-  const rsi1 = computeRSI(recentCloses.slice(0, priceLow1Idx + 1), 14);
-  const rsi2 = computeRSI(recentCloses.slice(0, priceLow2Idx + 1), 14);
+  // Check RSI at those points. Index into the FULL closes series: slicing only
+  // the 20-bar window gives computeRSI < 15 closes for early swings, and it
+  // returns a hardcoded neutral 50 — fabricating divergences against a real
+  // RSI at the other swing. Callers guarantee candles.length >= 40.
+  const offset = closes.length - recent.length;
+  const rsi1 = computeRSI(closes.slice(0, offset + priceLow1Idx + 1), 14);
+  const rsi2 = computeRSI(closes.slice(0, offset + priceLow2Idx + 1), 14);
 
   // Price lower low + RSI higher low = bullish divergence
   const earlierPrice = priceLow1Idx < priceLow2Idx ? priceLow1 : priceLow2;
@@ -183,7 +187,6 @@ function detectBullishDivergence(candles: OHLCV[], closes: number[]): boolean {
 function detectBearishDivergence(candles: OHLCV[], closes: number[]): boolean {
   if (candles.length < 20) return false;
   const recent = candles.slice(-20);
-  const recentCloses = closes.slice(-20);
 
   let priceHigh1 = -Infinity, priceHigh1Idx = -1;
   let priceHigh2 = -Infinity, priceHigh2Idx = -1;
@@ -205,8 +208,11 @@ function detectBearishDivergence(candles: OHLCV[], closes: number[]): boolean {
   if (priceHigh1Idx < 0 || priceHigh2Idx < 0) return false;
   if (Math.abs(priceHigh1Idx - priceHigh2Idx) < 3) return false;
 
-  const rsi1 = computeRSI(recentCloses.slice(0, priceHigh1Idx + 1), 14);
-  const rsi2 = computeRSI(recentCloses.slice(0, priceHigh2Idx + 1), 14);
+  // Full-series RSI — see detectBullishDivergence for why the 20-bar slice
+  // fabricated neutral RSI=50 at early swings.
+  const offset = closes.length - recent.length;
+  const rsi1 = computeRSI(closes.slice(0, offset + priceHigh1Idx + 1), 14);
+  const rsi2 = computeRSI(closes.slice(0, offset + priceHigh2Idx + 1), 14);
 
   const earlierPrice = priceHigh1Idx < priceHigh2Idx ? priceHigh1 : priceHigh2;
   const laterPrice = priceHigh1Idx < priceHigh2Idx ? priceHigh2 : priceHigh1;

@@ -235,22 +235,31 @@ async function rankAiOpportunities(
           }
         }
         
-        // Integrate RL Prediction if available
+        // Integrate RL Prediction if available.
+        // RL_WEIGHT deliberately near-zero: the RL agent's observation
+        // normalization is uncalibrated (no persisted scaler) and PCR was
+        // frozen at train time, so it has not earned real influence. Raise
+        // only after walk-forward validation shows positive expectancy.
+        // Env override MIMIR_RL_WEIGHT allows A/B without redeploys.
+        const RL_WEIGHT = (() => {
+          const w = Number(process.env["MIMIR_RL_WEIGHT"]);
+          return Number.isFinite(w) && w >= 0 && w <= 1 ? w : 0.15;
+        })();
         const rlPred = rlMap.get(opp.symbol);
         if (rlPred) {
-          aiScore += rlPred.score_adjustment * 10; // Boost or penalize based on RL
-          
+          aiScore += rlPred.score_adjustment * 10 * RL_WEIGHT; // Boost or penalize based on RL
+
           if (rlPred.action === "STRONG_BUY" && opp.direction === "BUY") {
-            aiScore = Math.min(10, aiScore + 1.5);
+            aiScore = Math.min(10, aiScore + 1.5 * RL_WEIGHT);
             opp.reasoning.push("RL Agent: Strong Buy (High Confidence)");
           } else if (rlPred.action === "STRONG_SELL" && opp.direction === "SELL") {
-            aiScore = Math.min(10, aiScore + 1.5);
+            aiScore = Math.min(10, aiScore + 1.5 * RL_WEIGHT);
             opp.reasoning.push("RL Agent: Strong Sell (High Confidence)");
           } else if (
             (rlPred.action === "STRONG_SELL" || rlPred.action === "SELL") && opp.direction === "BUY" ||
             (rlPred.action === "STRONG_BUY" || rlPred.action === "BUY") && opp.direction === "SELL"
           ) {
-            aiScore -= 3;
+            aiScore -= 3 * RL_WEIGHT;
             opp.reasoning.push(`RL Agent Disagrees (Recommends ${rlPred.action})`);
           }
         }

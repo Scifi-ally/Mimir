@@ -14,6 +14,7 @@ import { broadcast } from "../ws/websocket_server";
 import { createServerEvent } from "../ws/events";
 import { isLiveModeActive, placeLiveOrder } from "./broker_orders";
 import { stateStore } from "../lib/redis_state";
+import { getCalibration, ensureFresh } from "../analysis/calibration_engine";
 import Decimal from "decimal.js";
 
 let engineActive = false;
@@ -124,16 +125,18 @@ export async function initPaperEngine() {
       // ---------------------------------------------------------
 
       // ---------------------------------------------------------
-      // Dynamic Position Sizing - Simplified Risk-Based Approach
-      // HIGH FIX (Issue #17): Removed Kelly Criterion due to uncalibrated confidence
-      // Kelly requires actual win probability, but we only have AI confidence scores
-      // Using conservative fixed-percentage risk instead
+      // Dynamic Position Sizing — fixed-fractional risk scaled by realized edge.
+      // Issue #17 removed Kelly because AI confidence is not a win probability.
+      // The calibration engine now supplies EMPIRICAL per-setup win rates with
+      // sample counts, which is what Kelly actually needs — so risk is scaled
+      // by quarter-Kelly on measured edge, blended toward the base as samples
+      // grow, and hard-capped. Confidence still nudges only the base risk.
       // ---------------------------------------------------------
       const maxRiskCap = config.maxRiskPerTradePct || 2.0; // Hard cap at 2% risk
-      
+
       // Start with conservative base risk
       let riskPct = 1.0; // 1% base risk
-      
+
       // Scale up slightly for high confidence (but conservatively)
       const confidence = suggestion.confidence || 50;
       if (confidence >= 80) {
@@ -143,9 +146,27 @@ export async function initPaperEngine() {
       } else if (confidence < 60) {
         riskPct = 0.5; // Low confidence: reduce to 0.5%
       }
-      
+
+      // Quarter-Kelly on empirical edge: f* = p - (1-p)/b with b = risk:reward.
+      // Negative-edge setups shrink toward the floor instead of being skipped —
+      // the expectancy gate upstream is responsible for disabling them outright.
+      // ensureFresh guards against a stale cache (startup warm + TTL refresh
+      // usually cover it; this makes sizing not depend on scheduler health).
+      const KELLY_MIN_SAMPLES = 30;
+      await ensureFresh();
+      const cal = getCalibration(suggestion.setup, "INTRADAY");
+      if (cal && cal.samples >= KELLY_MIN_SAMPLES && suggestion.riskReward > 0) {
+        const p = cal.winRate;
+        const b = suggestion.riskReward;
+        const kellyFraction = p - (1 - p) / b;
+        const quarterKellyPct = Math.max(0, kellyFraction) * 100 * 0.25;
+        // Blend toward the empirical size as evidence accumulates (full weight at 100 samples)
+        const w = Math.min(cal.samples, 100) / 100;
+        riskPct = riskPct * (1 - w) + Math.min(quarterKellyPct, maxRiskCap) * w;
+      }
+
       // Ensure within bounds
-      riskPct = Math.min(Math.max(riskPct, 0.5), maxRiskCap);
+      riskPct = Math.min(Math.max(riskPct, 0.25), maxRiskCap);
       const riskAmount = balance.mul(riskPct).div(100);
       
       logger.info({ 
@@ -157,8 +178,14 @@ export async function initPaperEngine() {
       // ---------------------------------------------------------
       
       // ---------------------------------------------------------
-      // Bid-Ask Spread Blowout Guard
+      // Bid-Ask Spread Blowout Guard + observed half-spread capture
       // ---------------------------------------------------------
+      // Half-spread from the latest real quote doubles as the slippage model:
+      // crossing the spread costs half of it relative to mid. A flat 0.05% is
+      // brutal for liquid NIFTY-50 names and optimistic for small caps, so
+      // paper P&L was systematically off per-symbol. Capped at 0.5% so one
+      // junk quote can't model an absurd fill.
+      let observedHalfSpreadFrac: number | null = null;
       const ticks = await stateStore.getTicks(suggestion.symbol);
       if (ticks.length > 0) {
         const latestTick = ticks[ticks.length - 1];
@@ -168,13 +195,15 @@ export async function initPaperEngine() {
              logger.warn({ symbol: suggestion.symbol, spread: (spread * 100).toFixed(2) }, "PaperEngine: Aborted entry due to bid-ask spread blowout > 2%");
              return;
           }
+          if (spread >= 0) observedHalfSpreadFrac = Math.min(spread / 2, 0.005);
         }
       }
 
       const isBuy = suggestion.direction === "BUY";
-      // 0.05% slippage on entry
+      // Entry slippage: observed half-spread when a real quote exists, else flat 0.05%
+      const entrySlipFrac = observedHalfSpreadFrac ?? 0.0005;
       const rawEntry = new Decimal(suggestion.entry);
-      const entry = isBuy ? rawEntry.mul(1.0005) : rawEntry.mul(0.9995);
+      const entry = isBuy ? rawEntry.mul(1 + entrySlipFrac) : rawEntry.mul(1 - entrySlipFrac);
       const stopLoss = new Decimal(suggestion.stopLoss);
       
       // CRITICAL FIX (Issue #1): Check for zero/invalid stop distance BEFORE using it
@@ -521,14 +550,21 @@ export async function initPaperEngine() {
           // Previous code applied slippage to target/stop, which artificially reduced profits
           // Now we use actual LTP when condition triggers and apply realistic slippage
           const ltpAtTrigger = new Decimal(tick.ltp);
+          // Exit slippage from the triggering tick's own quote when present
+          // (half-spread vs mid, capped 0.5%); flat 0.05% only as fallback.
+          let exitSlipFrac = 0.0005;
+          if (tick.bid != null && tick.ask != null && tick.bid > 0 && tick.ask > 0 && tick.ltp > 0) {
+            const spreadFrac = (tick.ask - tick.bid) / tick.ltp;
+            if (spreadFrac >= 0) exitSlipFrac = Math.min(spreadFrac / 2, 0.005);
+          }
           let slippedLtp: Decimal;
-          
+
           if (isBuy) {
             // For BUY positions, we SELL on exit - slippage works against us
-            slippedLtp = ltpAtTrigger.mul(0.9995); // 0.05% slippage down
+            slippedLtp = ltpAtTrigger.mul(1 - exitSlipFrac);
           } else {
             // For SELL positions, we BUY on exit - slippage works against us
-            slippedLtp = ltpAtTrigger.mul(1.0005); // 0.05% slippage up
+            slippedLtp = ltpAtTrigger.mul(1 + exitSlipFrac);
           }
           
           const realizedPnl = isBuy ? slippedLtp.minus(entryPrice).mul(qty) : entryPrice.minus(slippedLtp).mul(qty);

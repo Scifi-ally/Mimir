@@ -26,6 +26,13 @@ const wssInstances: WebSocketServer[] = [];
 let connectedCount = 0;
 let lastTickLog = 0;
 
+// Backpressure: skip high-frequency tick sends to clients whose socket send
+// buffer has grown past this. Ticks are ephemeral — dropping a batch for a
+// slow reader is correct; letting the buffer grow unbounded is a memory leak.
+// Terminate outright past the hard cap (client answers pings but never reads).
+const TICK_BACKPRESSURE_BYTES = 1 * 1024 * 1024;
+const HARD_BACKPRESSURE_BYTES = 16 * 1024 * 1024;
+
 // SECURITY FIX (Issue #41): Rate limiting for auth attempts.
 // Module-scoped so bans persist across reconnects — a per-connection map
 // would reset on every new socket, letting attackers bypass the ban.
@@ -371,7 +378,7 @@ export function initWebSocketServer(server: Server): void {
         ws.ping();
       });
     });
-  }, 30000);
+  }, 30000).unref();
 
   logger.info("WebSocket servers initialized at /ws/intelligence and /ws/market-data");
 }
@@ -397,9 +404,19 @@ let broadcastFn = (event: ServerEvent, topic: string = "suggestions"): void => {
       wss.clients.forEach((client) => {
         const tc = client as WebSocket & { topics?: Set<string>; activeSymbol?: string | null; channelName?: string; subscribedSymbols?: Set<string>; isAuthenticated?: boolean };
         if (tc.readyState === WebSocket.OPEN && tc.isAuthenticated) {
+          // A reader that answers pings but never drains its socket would grow
+          // server memory unbounded — the heartbeat can't catch it.
+          if (tc.bufferedAmount > HARD_BACKPRESSURE_BYTES) {
+            logger.warn({ bufferedAmount: tc.bufferedAmount }, "Terminating WebSocket client: send buffer exceeded hard cap");
+            tc.terminate();
+            return;
+          }
           // Enforce channel routing
           if (isTickEvent && tc.channelName === "intelligence") return;
           if (!isTickEvent && tc.channelName === "market-data" && topic !== "monitoring") return;
+          // Drop tick batches (only) for slow readers; low-frequency analysis
+          // events still queue so state-changing messages aren't lost.
+          if (isTickEvent && tc.bufferedAmount > TICK_BACKPRESSURE_BYTES) return;
 
           if (topic === "all" || !tc.topics || tc.topics.has(topic)) {
             // Tick batches are high frequency. Only send symbols this client has
@@ -438,11 +455,13 @@ let broadcastFn = (event: ServerEvent, topic: string = "suggestions"): void => {
     });
 
     if (successCount > 0) {
-      logger.info({ 
-        event: event.event, 
+      // Debug level: broadcast() already logs at info with connectedCount;
+      // this one carries the actual recipient count for deep debugging.
+      logger.debug({
+        event: event.event,
         topic,
-        clients: successCount 
-      }, "Outbound WebSocket broadcast");
+        clients: successCount
+      }, "Outbound WebSocket broadcast delivered");
     }
   };
 

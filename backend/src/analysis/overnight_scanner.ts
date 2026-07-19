@@ -361,7 +361,7 @@ export async function runOvernightScanner(
       lastScanMessage = `Scan already completed for ${tomorrowStr}`;
       lastScanFinishedAt = new Date().toISOString();
       scanRunning = false;
-      endWorkflow("OFFHOURS_SCAN", true);
+      endWorkflow("OFFHOURS_SCAN", true, undefined, workflow.runToken);
       return;
     }
   }
@@ -390,7 +390,7 @@ export async function runOvernightScanner(
       "SKIPPED",
       "Upstox token not available",
     );
-    endWorkflow("OFFHOURS_SCAN", workflowSuccess, workflowFailureReason);
+    endWorkflow("OFFHOURS_SCAN", workflowSuccess, workflowFailureReason, workflow.runToken);
     return;
   }
 
@@ -607,7 +607,7 @@ export async function runOvernightScanner(
     }
     scanRunning = false;
     activeScanCandidates = [];
-    endWorkflow("OFFHOURS_SCAN", workflowSuccess, workflowFailureReason);
+    endWorkflow("OFFHOURS_SCAN", workflowSuccess, workflowFailureReason, workflow.runToken);
   }
 }
 

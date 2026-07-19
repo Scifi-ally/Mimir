@@ -20,6 +20,15 @@ type MarketHistoryCacheEntry<T> = {
 
 const marketHistoryCache = new Map<string, MarketHistoryCacheEntry<unknown>>();
 
+// Keys embed the request date range, so stale keys are never re-requested and
+// would otherwise accumulate for the life of the process. Sweep periodically.
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of marketHistoryCache) {
+    if (entry.expiresAt <= now && !entry.inFlight) marketHistoryCache.delete(key);
+  }
+}, 10 * 60 * 1000).unref();
+
 async function getCachedMarketHistory<T>(
   key: string,
   ttlMs: number,
@@ -56,7 +65,12 @@ router.get("/market/candles", async (req, res) => {
   try {
     const rawSymbol = String(req.query.symbol ?? "").trim().toUpperCase();
     const intervalStr = String(req.query.interval ?? "day");
-    const lookbackDays = Number(req.query.lookbackDays ?? 5);
+    const rawLookback = Number(req.query.lookbackDays ?? 5);
+    // Non-numeric input yields NaN, which survives Math.max and produces an
+    // Invalid Date in shiftISTDateStr — clamp to a sane window instead.
+    const lookbackDays = Number.isFinite(rawLookback)
+      ? Math.min(Math.max(Math.trunc(rawLookback), 1), 365)
+      : 5;
     const endDateParam = req.query.endDate ? String(req.query.endDate) : undefined;
 
     if (!rawSymbol) {

@@ -52,6 +52,10 @@ export class ThreadWorkerPool {
 
   private completed = 0;
   private failed = 0;
+  private shuttingDown = false;
+  // Workers whose replacement was already spawned (timeout path) — their
+  // exit event must not spawn another.
+  private readonly replacedWorkers = new Set<Worker>();
 
   constructor(
     public readonly name: WorkerPoolName,
@@ -121,6 +125,8 @@ export class ThreadWorkerPool {
         }
       }
       this.removeWorker(worker);
+      // No spawnWorker() here: terminate() fires the exit handler, which owns
+      // respawning (with the fast-exit spawn-loop guard).
     });
 
     worker.on("exit", (code) => {
@@ -130,7 +136,7 @@ export class ThreadWorkerPool {
         this.lastFailureAt = Date.now();
         this.addError(`Worker exited with code ${code}`);
       }
-       
+
       // Fail any pending tasks running on this worker
       for (const [id, pending] of this.pendingPromises.entries()) {
         if (pending.worker === worker) {
@@ -139,7 +145,11 @@ export class ThreadWorkerPool {
           pending.reject(new Error(`Worker exited with code ${code}`));
         }
       }
+
       this.removeWorker(worker);
+      // The timeout path already spawned this worker's replacement; spawning
+      // again here would grow the pool by one thread per timeout, unbounded.
+      if (this.replacedWorkers.delete(worker) || this.shuttingDown) return;
 
       // Guard against infinite spawn loops (broken worker script)
       const aliveMs = Date.now() - spawnedAt;
@@ -225,6 +235,7 @@ export class ThreadWorkerPool {
 
         logger.error({ taskId: task.id, pool: this.name, type: task.type }, `Worker task timed out in pool ${this.name}. Terminating and respawning worker.`);
 
+        this.replacedWorkers.add(worker);
         this.removeWorker(worker);
         this.spawnWorker();
       }, this.taskTimeoutMs);
@@ -280,12 +291,19 @@ export class ThreadWorkerPool {
   }
 
   async shutdown(): Promise<void> {
+    this.shuttingDown = true;
+    for (const task of this.taskQueue) {
+      task.reject(new Error(`Worker pool '${this.name}' shut down`));
+    }
     this.taskQueue = [];
-    const promises = this.workers.map((w) => w.terminate());
-    await Promise.all(promises);
+    for (const [, pending] of this.pendingPromises) {
+      pending.reject(new Error(`Worker pool '${this.name}' shut down`));
+    }
+    this.pendingPromises.clear();
+    const workers = this.workers;
     this.workers = [];
     this.idleWorkers = [];
-    this.pendingPromises.clear();
+    await Promise.all(workers.map((w) => w.terminate()));
   }
 }
 

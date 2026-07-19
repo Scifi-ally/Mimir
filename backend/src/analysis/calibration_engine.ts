@@ -226,6 +226,13 @@ const DEMOTION_LOOKBACK_DAYS = 90;
 const DEMOTION_MIN_TRADES = 15;
 
 let demotedSetups = new Set<string>();
+// setup|regime cells with proven negative expectancy (see refreshSetupDemotions)
+let demotedSetupRegimes = new Set<string>();
+const REGIME_DEMOTION_MIN_TRADES = 30;
+
+function regimeKey(setupType: string, regime: string): string {
+  return `${setupType}|${regime}`;
+}
 let demotionRefreshedAt = 0;
 
 export async function refreshSetupDemotions(): Promise<Set<string>> {
@@ -236,6 +243,7 @@ export async function refreshSetupDemotions(): Promise<Set<string>> {
         setupType: suggestionsTable.setupType,
         status: suggestionsTable.status,
         pnlInr: suggestionsTable.pnlInr,
+        marketRegime: suggestionsTable.marketRegime,
       })
       .from(suggestionsTable)
       .where(
@@ -246,6 +254,7 @@ export async function refreshSetupDemotions(): Promise<Set<string>> {
       );
 
     const agg = new Map<string, { pnl: number; trades: number }>();
+    const regimeAgg = new Map<string, { pnl: number; trades: number }>();
     for (const row of rows) {
       // Only decided trades count toward expectancy; EXPIRED carries no pnl
       if (row.pnlInr == null) continue;
@@ -255,12 +264,31 @@ export async function refreshSetupDemotions(): Promise<Set<string>> {
       a.pnl += pnl;
       a.trades += 1;
       agg.set(row.setupType, a);
+      // A setup can be profitable overall yet reliably lose in one regime
+      // (e.g. mean-reversion in TRENDING_UP) — track the finer cell too.
+      if (row.marketRegime) {
+        const rk = regimeKey(row.setupType, row.marketRegime);
+        const ra = regimeAgg.get(rk) ?? { pnl: 0, trades: 0 };
+        ra.pnl += pnl;
+        ra.trades += 1;
+        regimeAgg.set(rk, ra);
+      }
     }
 
     const next = new Set<string>();
     for (const [setupType, a] of agg) {
       if (a.trades >= DEMOTION_MIN_TRADES && a.pnl / a.trades < 0) {
         next.add(setupType);
+      }
+    }
+
+    // Per-regime cells need more samples than the setup-level gate: the finer
+    // slice is noisier, and a cell demotion silently disables a setup for as
+    // long as that regime persists.
+    const nextRegime = new Set<string>();
+    for (const [cell, ra] of regimeAgg) {
+      if (ra.trades >= REGIME_DEMOTION_MIN_TRADES && ra.pnl / ra.trades < 0) {
+        nextRegime.add(cell);
       }
     }
 
@@ -279,8 +307,23 @@ export async function refreshSetupDemotions(): Promise<Set<string>> {
         logger.info({ setupType: s }, "Setup RESTORED: rolling 90d expectancy back positive");
       }
     }
+    for (const cell of nextRegime) {
+      if (!demotedSetupRegimes.has(cell)) {
+        const ra = regimeAgg.get(cell)!;
+        logger.warn(
+          { cell, trades: ra.trades, expectancyInr: ra.pnl / ra.trades },
+          "Setup×Regime cell DEMOTED: negative expectancy in this regime",
+        );
+      }
+    }
+    for (const cell of demotedSetupRegimes) {
+      if (!nextRegime.has(cell)) {
+        logger.info({ cell }, "Setup×Regime cell RESTORED");
+      }
+    }
 
     demotedSetups = next;
+    demotedSetupRegimes = nextRegime;
     demotionRefreshedAt = Date.now();
     return next;
   } catch (err) {
@@ -293,6 +336,16 @@ export function isSetupDemoted(setupType: string): boolean {
   return demotedSetups.has(setupType);
 }
 
-export function getDemotedSetups(): { setups: string[]; refreshedAt: number } {
-  return { setups: Array.from(demotedSetups), refreshedAt: demotionRefreshedAt };
+/** True when this setup has proven negative expectancy in the CURRENT regime. */
+export function isSetupDemotedForRegime(setupType: string, regime: string | null | undefined): boolean {
+  if (!regime) return false;
+  return demotedSetupRegimes.has(regimeKey(setupType, regime));
+}
+
+export function getDemotedSetups(): { setups: string[]; regimeCells: string[]; refreshedAt: number } {
+  return {
+    setups: Array.from(demotedSetups),
+    regimeCells: Array.from(demotedSetupRegimes),
+    refreshedAt: demotionRefreshedAt,
+  };
 }

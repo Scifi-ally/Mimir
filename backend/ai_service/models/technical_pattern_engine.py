@@ -330,7 +330,10 @@ def _infer_engine(ohlcv: np.ndarray, features: Dict[str, Any]) -> TechnicalPatte
     macd_hist = features.get("macd_histogram")
     if macd_hist is not None:
         macd_hist = float(macd_hist)
-        bias += max(-0.1, min(0.1, macd_hist * 5))
+        # NaN guard: min(0.1, nan) returns 0.1 (nan comparisons are False), so an
+        # unguarded NaN would add a fixed +0.1 bullish tilt instead of nothing.
+        if math.isfinite(macd_hist):
+            bias += max(-0.1, min(0.1, macd_hist * 5))
 
     # POC distance: price above POC = institutional support for longs
     poc_dist = features.get("pocDistancePct")
@@ -370,7 +373,10 @@ def _infer_engine(ohlcv: np.ndarray, features: Dict[str, Any]) -> TechnicalPatte
 
     # Convert bias → probability via sigmoid-like mapping
     bullish_prob = 1.0 / (1.0 + math.exp(-5 * bias))  # steeper sigmoid
-    confidence = min(confidence_accum, 0.85)
+    # Clamp to [0, 0.85]: subtractive paths (ADX chop, high ATR) can push the
+    # accumulator negative, which would make the composite's confidence
+    # component subtract instead of contributing zero.
+    confidence = max(0.0, min(confidence_accum, 0.85))
 
     _last_inference_latency_ms = round((time.time() - started_at) * 1000, 2)
     _last_successful_inference_ts = time.strftime("%Y-%m-%d %H:%M:%S")

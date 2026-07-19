@@ -276,7 +276,7 @@ export async function runPostMarketFullScan(
     );
     return [];
   } finally {
-    endWorkflow("POSTMARKET_SCAN", workflowSuccess, workflowFailureReason);
+    endWorkflow("POSTMARKET_SCAN", workflowSuccess, workflowFailureReason, workflow.runToken);
   }
 }
 

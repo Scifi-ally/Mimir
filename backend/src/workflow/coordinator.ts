@@ -11,7 +11,13 @@ interface ActiveWorkflow {
   job: WorkflowJob;
   source: WorkflowSource;
   startedAt: string;
+  // Unique per beginWorkflow call — lets endWorkflow verify it is ending THIS
+  // run. Without it, a force-replaced (still-running) old run's eventual
+  // endWorkflow would null the replacement's slot and break the mutex.
+  runToken: number;
 }
+
+let nextRunToken = 1;
 
 interface WorkflowHistory {
   lastCompletedAt: string | null;
@@ -47,7 +53,7 @@ export function beginWorkflow(
   job: WorkflowJob,
   source: WorkflowSource,
   options?: { forceSameJob?: boolean },
-): { ok: boolean; reason?: string } {
+): { ok: boolean; reason?: string; runToken?: number } {
   if (activeWorkflow) {
     if (
       options?.forceSameJob &&
@@ -66,13 +72,22 @@ export function beginWorkflow(
     job,
     source,
     startedAt: new Date().toISOString(),
+    runToken: nextRunToken++,
   };
   logger.info({ workflow: activeWorkflow }, "Workflow job started");
-  return { ok: true };
+  return { ok: true, runToken: activeWorkflow.runToken };
 }
 
-export function endWorkflow(job: WorkflowJob, success = true, failureReason?: string): void {
+export function endWorkflow(job: WorkflowJob, success = true, failureReason?: string, runToken?: number): void {
   if (!activeWorkflow || activeWorkflow.job !== job) {
+    return;
+  }
+  // A force-replaced run finishing late must not clear its replacement.
+  if (runToken != null && activeWorkflow.runToken !== runToken) {
+    logger.info(
+      { job, staleToken: runToken, activeToken: activeWorkflow.runToken },
+      "Ignoring endWorkflow from a superseded run",
+    );
     return;
   }
   activeWorkflow = null;

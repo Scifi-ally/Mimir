@@ -51,6 +51,12 @@ async function getCachedAnalytics<T>(
 
 const FORECAST_CACHE_TTL_MS = 2 * 60 * 1000;
 const SYMBOL_INSIGHTS_CACHE_TTL_MS = 60 * 1000;
+// Stale-while-revalidate window: an expired insights payload up to this old is
+// served INSTANTLY while a fresh compute (two Upstox candle fetches + a Python
+// AI inference — seconds of latency) runs in the background. Panel loads feel
+// immediate; freshness converges one request later.
+const SYMBOL_INSIGHTS_STALE_MAX_MS = 15 * 60 * 1000;
+const insightsRefreshInFlight = new Set<string>();
 
 // GET /api/market/forecast?symbol=TCS
 router.get("/market/forecast", async (req, res) => {
@@ -180,11 +186,44 @@ router.get("/market/symbol-insights", async (req, res) => {
 
     const insightsCacheKey = `symbol-insights:${stock.symbol}`;
     const cachedInsights = analyticsCache.get(insightsCacheKey);
-    if (cachedInsights?.value !== undefined && cachedInsights.expiresAt > Date.now()) {
-      res.json(cachedInsights.value);
-      return;
+    const nowMs = Date.now();
+    if (cachedInsights?.value !== undefined) {
+      if (cachedInsights.expiresAt > nowMs) {
+        res.json(cachedInsights.value);
+        return;
+      }
+      // Stale-while-revalidate: answer from the last computed payload right
+      // away and refresh in the background (single-flight per symbol).
+      if (nowMs - cachedInsights.expiresAt < SYMBOL_INSIGHTS_STALE_MAX_MS) {
+        res.json(cachedInsights.value);
+        if (!insightsRefreshInFlight.has(insightsCacheKey)) {
+          insightsRefreshInFlight.add(insightsCacheKey);
+          void computeSymbolInsights(stock)
+            .then((payload) => {
+              analyticsCache.set(insightsCacheKey, { value: payload, expiresAt: Date.now() + SYMBOL_INSIGHTS_CACHE_TTL_MS });
+            })
+            .catch((err) => logger.warn({ err, symbol: stock.symbol }, "Background symbol-insights refresh failed"))
+            .finally(() => insightsRefreshInFlight.delete(insightsCacheKey));
+        }
+        return;
+      }
     }
 
+    const payload = await computeSymbolInsights(stock);
+    analyticsCache.set(insightsCacheKey, {
+      value: payload,
+      expiresAt: Date.now() + SYMBOL_INSIGHTS_CACHE_TTL_MS,
+    });
+    res.json(payload);
+  } catch (err: unknown) {
+    logApiError(req, err);
+    res.status(500).json({ error: "Failed to load symbol insights" });
+  }
+});
+
+type ResolvedStock = NonNullable<ReturnType<typeof resolveIndexAsStock>> | UniverseStock;
+
+async function computeSymbolInsights(stock: ResolvedStock) {
     const niftyCandles = await fetchNiftyDailyCandles(70);
     const context = await resolveSymbolInsightContext(stock, niftyCandles, true);
     const monitoring = getMonitoringStatus().monitoredStocks.find(
@@ -319,15 +358,7 @@ router.get("/market/symbol-insights", async (req, res) => {
       fetchedAt: new Date().toISOString(),
     };
 
-    analyticsCache.set(insightsCacheKey, {
-      value: payload,
-      expiresAt: Date.now() + SYMBOL_INSIGHTS_CACHE_TTL_MS,
-    });
-    res.json(payload);
-  } catch (err: unknown) {
-    logApiError(req, err);
-    res.status(500).json({ error: "Failed to load symbol insights" });
-  }
-});
+    return payload;
+}
 
 export default router;

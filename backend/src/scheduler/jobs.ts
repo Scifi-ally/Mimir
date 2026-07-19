@@ -1,4 +1,4 @@
-import cron from "node-cron";
+import cron, { type ScheduledTask } from "node-cron";
 import { logger } from "../lib/logger";
 import { detectRegime } from "../analysis/regime_detector";
 import { runLearningPipeline } from "../analysis/learning_engine";
@@ -72,9 +72,16 @@ import { createRedisClient } from "../lib/redis";
 const SCHEDULER_TIMEZONE = "Asia/Kolkata";
 let schedulerRunning = false;
 const runningJobs = new Set<string>();
+// Handles for every cron task registered by this scheduler run. stopScheduler
+// must stop these — clearing only the timers leaves ~25 crons firing against
+// a "stopped" scheduler, and a restart would register every job twice.
+const cronTasks: ScheduledTask[] = [];
 let marketFeedRealtimeTimer: ReturnType<typeof setInterval> | null = null;
 let intradayMonitoringTimer: ReturnType<typeof setTimeout> | null = null;
 let marketOpenRetryTimer: ReturnType<typeof setInterval> | null = null;
+// Incremented each time beginMarketOpenMonitoring starts a fresh monitoring
+// loop; stale loops observe the bump and stop re-arming themselves.
+let monitoringLoopGeneration = 0;
 const ENABLE_INTRADAY_WATCHLIST_ENRICHMENT =
   (process.env["ENABLE_INTRADAY_WATCHLIST_ENRICHMENT"] ?? "true").toLowerCase() === "true";
 const MONITORING_INTERVAL_MS = 300; // Run monitoring cycle every 300ms during market hours
@@ -150,8 +157,14 @@ async function beginMarketOpenMonitoring(): Promise<void> {
   startMonitoring();
 
   if (intradayMonitoringTimer) clearTimeout(intradayMonitoringTimer);
+  // Generation token: an in-flight cycle from a previous invocation re-arms
+  // itself in its finally block AFTER the clearTimeout above, which would
+  // leave two concurrent loops hammering runMonitoringCycle. Bumping the
+  // generation makes any older loop exit at its next iteration.
+  const myGeneration = ++monitoringLoopGeneration;
 
   async function scheduleNextMonitoringCycle() {
+    if (myGeneration !== monitoringLoopGeneration) return; // superseded loop
     if (!isMarketOpen()) {
       stopMonitoring();
       return;
@@ -163,11 +176,13 @@ async function beginMarketOpenMonitoring(): Promise<void> {
     } catch (err) {
       logger.error({ err }, "Monitoring cycle execution error");
     } finally {
-      const elapsed = Date.now() - startTime;
-      const delay = Math.max(10, MONITORING_INTERVAL_MS - elapsed);
-      intradayMonitoringTimer = setTimeout(() => {
-        void scheduleNextMonitoringCycle();
-      }, delay);
+      if (myGeneration === monitoringLoopGeneration) {
+        const elapsed = Date.now() - startTime;
+        const delay = Math.max(10, MONITORING_INTERVAL_MS - elapsed);
+        intradayMonitoringTimer = setTimeout(() => {
+          void scheduleNextMonitoringCycle();
+        }, delay);
+      }
     }
   }
 
@@ -196,7 +211,18 @@ export function stopScheduler(): void {
   }
   
   schedulerRunning = false;
-  
+
+  // Stop all cron tasks so no job fires against a stopped scheduler and a
+  // subsequent startScheduler() doesn't double-register every job.
+  for (const task of cronTasks) {
+    try {
+      task.stop();
+    } catch (err) {
+      logger.warn({ err }, "Failed to stop cron task");
+    }
+  }
+  cronTasks.length = 0;
+
   // Clear all timers
   if (marketFeedRealtimeTimer) {
     clearInterval(marketFeedRealtimeTimer);
@@ -286,9 +312,11 @@ function scheduleJob(
   expression: string,
   task: () => void | Promise<void>,
 ): void {
-  cron.schedule(expression, () => void runExclusive(name, task), {
-    timezone: SCHEDULER_TIMEZONE,
-  });
+  cronTasks.push(
+    cron.schedule(expression, () => void runExclusive(name, task), {
+      timezone: SCHEDULER_TIMEZONE,
+    }),
+  );
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -327,9 +355,12 @@ async function updateDailyLoss(): Promise<void> {
     const weeklyLimitHit = Math.abs(Math.min(weeklyPnl, 0)) >= weeklyLossLimit;
 
     const rollingRows = await db
-      .select({ pnlInr: suggestionsTable.pnlInr, status: suggestionsTable.status })
+      .select({ pnlInr: suggestionsTable.pnlInr, status: suggestionsTable.status, closedAt: suggestionsTable.closedAt })
       .from(suggestionsTable)
-      .where(gte(suggestionsTable.closedAt, weekStart));
+      .where(gte(suggestionsTable.closedAt, weekStart))
+      // Equity-curve walk requires chronological order — without it Postgres
+      // heap order shuffles the peak-to-trough sequence and maxDd is fiction.
+      .orderBy(suggestionsTable.closedAt);
     const realized = rollingRows
       .filter((r) => r.status !== "ACTIVE")
       .map((r) => (r.pnlInr != null ? parseFloat(r.pnlInr) : 0))
@@ -423,13 +454,17 @@ async function monitorAutomationHealth(): Promise<void> {
   }
 }
 
+let reconciliationWarned = false;
 async function runStateReconciliation(): Promise<void> {
   const config = getConfig();
   if (config.paperTradingEnabled) return; // Only applicable for live trading reconciliation
 
   try {
     // Fetch live positions from Upstox (aborting safely if getPositions is unimplemented rather than mocking 0 positions)
-    logger.warn("State reconciliation skipped — live trading order placement (placeOrder/getPositions) is not implemented. Set paperTradingEnabled=true or implement broker integration.");
+    if (!reconciliationWarned) {
+      reconciliationWarned = true;
+      logger.warn("State reconciliation skipped — live trading order placement (placeOrder/getPositions) is not implemented. Set paperTradingEnabled=true or implement broker integration. (logged once)");
+    }
     return;
   } catch (err) {
     logger.error({ err }, "State reconciliation failed");
@@ -459,13 +494,15 @@ export function startScheduler(): void {
   }, 5000);
 
   // Macro & Options Sentiment fetching (Every 5 minutes during market hours)
-  cron.schedule("*/5 9-15 * * 1-5", () => {
-    void runExclusive("macro-data-fetch", async () => {
-      logger.info("Fetching global macro & options sentiment data...");
-      await fetchGlobalMacroData();
-      await fetchOptionsSentimentData();
-    });
-  }, { timezone: SCHEDULER_TIMEZONE });
+  cronTasks.push(
+    cron.schedule("*/5 9-15 * * 1-5", () => {
+      void runExclusive("macro-data-fetch", async () => {
+        logger.info("Fetching global macro & options sentiment data...");
+        await fetchGlobalMacroData();
+        await fetchOptionsSentimentData();
+      });
+    }, { timezone: SCHEDULER_TIMEZONE }),
+  );
 
   // ── Every minute: update market status and session phase ─────────────────
   let lastBroadcastSession: string | null = null;
@@ -504,7 +541,7 @@ export function startScheduler(): void {
     }, 10_000);
   }
 
-  // ── Every 5 min during market hours: update Nifty + VIX, detect regime ───
+  // ── Every 2 min during market hours: update Nifty + VIX, detect regime ───
   scheduleJob("market-feed", "*/2 * * * *", async () => {
     if (isMarketOpen()) {
       await updateMarketFeed();
@@ -518,7 +555,7 @@ export function startScheduler(): void {
     }
   });
 
-  // ── Every 5 min during market hours: check suggestion outcomes ────────────
+  // ── Every minute during market hours: check suggestion outcomes ──────────
   scheduleJob("outcome-check", "* * * * *", async () => {
     if (isMarketOpen()) {
       await runOutcomeCheck();
@@ -537,8 +574,9 @@ export function startScheduler(): void {
     }
   });
 
-  // ── EVERY 45 min DURING MARKET HOURS: enrich watchlist with intraday opps ──
-  // Adds new high-confidence intraday setups to the watchlist as they develop
+  // ── At :45 of each market hour (09:45–14:45): enrich watchlist ───────────
+  // Adds new high-confidence intraday setups to the watchlist as they develop.
+  // (15:45 also matches but is dead — isMarketOpen() is false after 15:30.)
   scheduleJob("intraday-watchlist-enrichment", "45 9-15 * * 1-5", async () => {
     if (isMarketOpen() && ENABLE_INTRADAY_WATCHLIST_ENRICHMENT) {
       logger.info("Intraday: enriching watchlist with developing setups");
@@ -815,8 +853,10 @@ export function startScheduler(): void {
 
 
 
-  // ── MIDNIGHT IST (18:30 UTC) Mon–Fri — cleanup + reset ───────────────────
-  scheduleJob("midnight-cleanup", "0 0 * * 1-5", async () => {
+  // ── MIDNIGHT IST (18:30 UTC) daily — cleanup + reset ─────────────────────
+  // Runs every day: midnight after Friday's session is SATURDAY (dow 6), so a
+  // 1-5 restriction would leave Friday's leftovers un-expired all weekend.
+  scheduleJob("midnight-cleanup", "0 0 * * *", async () => {
     logger.info(
       "Midnight cleanup: expiring old suggestions, resetting market feed cache",
     );
@@ -834,7 +874,7 @@ export function startScheduler(): void {
       logger.info("Running weekly Alpha Score IC recalculation");
       const moduleDir = path.dirname(fileURLToPath(import.meta.url));
       const scriptPath = path.resolve(moduleDir, "../../ai_service/backtest/run_weekly_ic.py");
-      const { stdout, stderr } = await execAsync(`python ${scriptPath}`);
+      const { stdout, stderr } = await execAsync(`python "${scriptPath}"`);
       logger.info({ stdout, stderr }, "Weekly IC recalculation completed");
     } catch (err) {
       logger.error({ err }, "Weekly IC recalculation failed");

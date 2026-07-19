@@ -4,7 +4,8 @@
  * Detects stocks trading within established horizontal ranges (flat channels),
  * identifying buying opportunities at support levels and selling opportunities
  * at resistance levels with volume confirmation and RSI confirmation.
- * Active in SIDEWAYS_RANGE and LOW_VOLATILITY_SQUEEZE regimes.
+ * Activation is governed by scanner_activation.ts (SIDEWAYS_RANGE and
+ * HIGH_VOLATILITY as of this writing) — keep that matrix authoritative.
  */
 import type { OHLCV, TechnicalSnapshot, SetupCandidate } from "./technical";
 
@@ -35,7 +36,7 @@ export function identifyHorizontalRange(candles: OHLCV[]): RangeStructure {
 
   const rangeHeightPct = ((maxHigh - minLow) / minLow) * 100;
 
-  // Range should be broad enough to trade, but not too volatile (e.g. 3% to 15%)
+  // Range should be broad enough to trade, but not too volatile (2.5% to 18%)
   if (rangeHeightPct < 2.5 || rangeHeightPct > 18.0) {
     return { isInRange: false, support: minLow, resistance: maxHigh, rangeHeightPct, flatnessScore: 0 };
   }

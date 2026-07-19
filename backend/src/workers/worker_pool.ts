@@ -13,6 +13,7 @@ export class ScanWorkerPool {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private readonly pendingPromises = new Map<string, any>();
   private readonly size = Math.max(2, os.cpus().length - 1);
+  private shuttingDown = false;
 
   constructor(private readonly scriptPath: string | URL) {
     this.init();
@@ -68,8 +69,13 @@ export class ScanWorkerPool {
           pending.reject(new Error(`Worker exited with code ${code}`));
         }
       }
+      // Respawn only for UNEXPECTED exits (worker still registered). After an
+      // "error" the error handler has already removed + respawned; terminate()
+      // then fires this exit event, and respawning again here would grow the
+      // pool by one thread per error, unbounded.
+      const wasRegistered = this.workers.includes(worker);
       this.removeWorker(worker);
-      this.spawnWorker();
+      if (wasRegistered && !this.shuttingDown) this.spawnWorker();
     });
 
     this.workers.push(worker);
@@ -149,12 +155,21 @@ export class ScanWorkerPool {
   }
 
   async shutdown(): Promise<void> {
+    this.shuttingDown = true;
+    // Reject queued tasks instead of silently dropping them — callers'
+    // promises would otherwise hang forever.
+    for (const task of this.taskQueue) {
+      task.reject(new Error("Worker pool shut down"));
+    }
     this.taskQueue = [];
-    const promises = this.workers.map((w) => w.terminate());
-    await Promise.all(promises);
+    for (const [, pending] of this.pendingPromises) {
+      pending.reject(new Error("Worker pool shut down"));
+    }
+    this.pendingPromises.clear();
+    const workers = this.workers;
     this.workers = [];
     this.idleWorkers = [];
-    this.pendingPromises.clear();
+    await Promise.all(workers.map((w) => w.terminate()));
   }
 }
 

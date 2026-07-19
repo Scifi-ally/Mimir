@@ -96,7 +96,12 @@ class RLAgentService:
             
         vix = macro_data.get("vix", 15.0)
         fii = macro_data.get("fiiNet", 0.0)
-        pcr = macro_data.get("pcr", 1.0)
+        # PCR is frozen to the training constant: train_rl.py has no historical
+        # options data and hardcodes pcr=1.0 for every sample, so the policy
+        # never learned this axis. Feeding live PCR here would push the
+        # observation into an untrained input region and inject noise.
+        # Revisit when training data carries real PCR variation.
+        pcr = 1.0
         
         # In a real scenario, these must be normalized using the exact same scaler used during training.
         # This is a naive normalization for demonstration.

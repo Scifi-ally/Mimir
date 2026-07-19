@@ -6,7 +6,7 @@
  * then enforces all risk gates before inserting into the DB.
  */
 import { db } from "../../db/src";
-import { suggestionsTable, overnightWatchlistTable } from "../../db/src";
+import { suggestionsTable, overnightWatchlistTable, rejectedCandidatesTable } from "../../db/src";
 import { eq, and, desc, gte, or, inArray } from "drizzle-orm";
 import { getAccessToken } from "../upstox/auth";
 import { getConfig } from "../config";
@@ -21,10 +21,10 @@ import {
   ScanResult,
 } from "../analysis/stock_scanner";
 import { runIntelligencePipeline, type IntelligenceSignal } from "../analysis/signal_generator";
-import { checkSuggestionOutcomes, expireOldSuggestions } from "./accuracy_tracker";
+import { checkSuggestionOutcomes, expireOldSuggestions, resolveCounterfactuals } from "./accuracy_tracker";
 import { fetchCorporateActionBlacklist } from "../market_data/corporate_actions";
 import { isSymbolBanned, getDeliveryPct, getBulkDealSignal, refreshNSEFreeData } from "../market_data/nse_free_data";
-import { calibrateConfidence, isSetupDemoted } from "../analysis/calibration_engine";
+import { calibrateConfidence, isSetupDemoted, isSetupDemotedForRegime } from "../analysis/calibration_engine";
 import { checkMarketInternals } from "../analysis/market_internals";
 import { getGapRisk } from "../analysis/gap_risk";
 import { broadcast } from "../ws/websocket_server";
@@ -45,6 +45,17 @@ const PER_CANDIDATE_TIMEOUT_MS = 45_000;
 const SCAN_CONCURRENCY = 4; // reduced from 6 to minimize memory spikes
 const MIN_GENERATION_GAP_MS = 90_000;
 const CANDIDATE_OVERSAMPLE_FACTOR = 4;
+
+// Counterfactual-capture dedupe: one rejected-candidate row per
+// symbol|setup|direction per window (see logRejectedCandidate).
+const REJECTED_DEDUPE_MS = 2 * 60 * 60 * 1000;
+const rejectedCandidateDedupe = new Map<string, number>();
+setInterval(() => {
+  const cutoff = Date.now() - REJECTED_DEDUPE_MS;
+  for (const [k, ts] of rejectedCandidateDedupe) {
+    if (ts < cutoff) rejectedCandidateDedupe.delete(k);
+  }
+}, 30 * 60 * 1000).unref();
 let consecutiveZeroGenerationCycles = 0;
 let lastGenerationStartedAtMs = 0;
 let totalGenerationDurationMs = 0;
@@ -255,13 +266,26 @@ export async function runOutcomeCheck(): Promise<void> {
       .from(suggestionsTable)
       .where(inArray(suggestionsTable.status, ["ACTIVE", "PENDING"]));
 
-    if (!active.length) return;
+    // Pending counterfactuals need prices too, or they only ever resolve by
+    // expiry (NEVER_TRIGGERED) and the negative-label capture produces nothing.
+    let cfSymbols: { symbol: string }[] = [];
+    try {
+      cfSymbols = await db
+        .selectDistinct({ symbol: rejectedCandidatesTable.symbol })
+        .from(rejectedCandidatesTable)
+        .where(eq(rejectedCandidatesTable.cfStatus, "PENDING"));
+    } catch (err) {
+      logger.warn({ err }, "Failed to fetch counterfactual symbols for outcome check");
+    }
 
-    const symbols = [...new Set(active.map((r) => r.symbol))];
+    if (!active.length && !cfSymbols.length) return;
+
+    const symbols = [...new Set([...active, ...cfSymbols].map((r) => r.symbol))];
     const prices = await fetchLTPForSymbols(symbols);
     if (Object.keys(prices).length === 0) return;
 
-    await checkSuggestionOutcomes(prices);
+    if (active.length) await checkSuggestionOutcomes(prices);
+    if (cfSymbols.length) await resolveCounterfactuals(prices);
   } catch (err) {
     logger.error({ err }, "runOutcomeCheck failed");
   }
@@ -522,6 +546,36 @@ export async function generateSuggestionsFromWatchlist(options?: {
       rejectionCounts[reason] = (rejectionCounts[reason] ?? 0) + 1;
     };
 
+    // Counterfactual capture: persist rejected candidates with their feature
+    // vector and planned levels so the outcome poller can resolve what WOULD
+    // have happened. Without this the ranker only ever trains on survivors.
+    // Fire-and-forget — logging must never slow or fail generation.
+    // Deduped per symbol|setup|direction within a 2h window: scans run every
+    // 5 min and would otherwise insert ~24 near-identical rows per rejected
+    // setup per session, skewing the training distribution toward whatever
+    // gets rejected most often.
+    const logRejectedCandidate = (signal: IntelligenceSignal, reason: string) => {
+      const dedupeKey = `${signal.symbol}|${signal.setupType}|${signal.signal}`;
+      const nowMs = Date.now();
+      const lastLogged = rejectedCandidateDedupe.get(dedupeKey);
+      if (lastLogged != null && nowMs - lastLogged < REJECTED_DEDUPE_MS) return;
+      rejectedCandidateDedupe.set(dedupeKey, nowMs);
+      db.insert(rejectedCandidatesTable)
+        .values({
+          symbol: signal.symbol,
+          direction: signal.signal,
+          setupType: signal.setupType,
+          rejectionReason: reason.slice(0, 50),
+          entryPrice: signal.entryPrice.toFixed(2),
+          stopLoss: signal.stopLoss.toFixed(2),
+          target1: signal.target1.toFixed(2),
+          confidence: Math.round(signal.confidence),
+          marketRegime: signal.regime,
+          featureVector: signal.featureVector ?? null,
+        })
+        .catch((err) => logger.warn({ err, symbol: signal.symbol }, "Failed to log rejected candidate"));
+    };
+
 
     let completedCount = 0;
     const analyzed = await runInBatches(
@@ -694,10 +748,13 @@ export async function generateSuggestionsFromWatchlist(options?: {
       const sector = STOCK_SECTOR_MAP[signal.symbol] ?? "Other";
       if ((sectorCounts[sector] ?? 0) >= cfg.maxSectorExposure) {
         addRejection("sector_cap");
+        logRejectedCandidate(signal, "sector_cap");
         continue;
       }
       if ((directionCounts[signal.signal] ?? 0) >= cfg.maxSameDirectionOpenPositions) {
-        addRejection(signal.signal === "BUY" ? "direction_cap_buy" : "direction_cap_sell");
+        const capReason = signal.signal === "BUY" ? "direction_cap_buy" : "direction_cap_sell";
+        addRejection(capReason);
+        logRejectedCandidate(signal, capReason);
         continue;
       }
 
@@ -715,6 +772,7 @@ export async function generateSuggestionsFromWatchlist(options?: {
         directionCounts[signal.signal] = (directionCounts[signal.signal] ?? 0) + 1;
       } else {
         addRejection(rejectionReason);
+        logRejectedCandidate(signal, rejectionReason);
       }
     }
 
@@ -770,7 +828,7 @@ export async function generateSuggestionsFromWatchlist(options?: {
   } finally {
     lastGenerationDiagnostics.running = false;
     generationInProgress = false;
-    endWorkflow("INTRADAY_GENERATION", workflowSuccess, workflowFailureReason);
+    endWorkflow("INTRADAY_GENERATION", workflowSuccess, workflowFailureReason, workflow.runToken);
   }
 }
 
@@ -857,6 +915,21 @@ export async function ingestSignal(
   if (isSetupDemoted(signal.setupType)) {
     logger.warn({ symbol: signal.symbol, setupType: signal.setupType }, "Discarding suggestion: setup demoted by walk-forward expectancy check");
     return "setup_demoted";
+  }
+
+  // Finer gate: setup is fine overall but has proven negative expectancy in
+  // the CURRENT regime (>=30 samples in that cell). Cheapest accuracy gain
+  // available — pure subtraction based on our own outcome history.
+  // Key with signal.regime (fine-grained detector regime): that is the unit
+  // stored in suggestions.marketRegime and thus the unit of the demotion
+  // cells. marketState.regime is the COARSE legacy mapping and would never
+  // match a cell key.
+  if (isSetupDemotedForRegime(signal.setupType, signal.regime)) {
+    logger.warn(
+      { symbol: signal.symbol, setupType: signal.setupType, regime: signal.regime },
+      "Discarding suggestion: setup×regime cell demoted by expectancy check",
+    );
+    return "setup_regime_demoted";
   }
 
   // F&O ban period: OI limits make these erratic — hard reject.
