@@ -179,9 +179,11 @@ export const TopBar = memo(function TopBar({
           <div className="flex w-full min-w-0 items-center justify-between gap-3 sm:gap-4 whitespace-nowrap">
             <div className="flex min-w-0 flex-1 items-center gap-x-3 pr-2 relative">
 
-          <div className="hidden sm:flex min-w-0 shrink items-center gap-3 text-[11px] font-normal text-foreground/60 overflow-x-auto [&::-webkit-scrollbar]:hidden">
+          <div className="flex min-w-0 shrink items-center gap-3 text-[11px] font-normal text-foreground/50 overflow-x-auto [&::-webkit-scrollbar]:hidden">
             <IndexMetric label="NIFTY 50" ltp={indices?.nifty50.ltp} changePct={indices?.nifty50.changePct} storeKey="nifty" onSelect={() => onSelectSymbol?.("NIFTY 50")} />
-            <IndexMetric label="SENSEX" ltp={indices?.sensex.ltp} changePct={indices?.sensex.changePct} storeKey="sensex" onSelect={() => onSelectSymbol?.("SENSEX")} />
+            <div className="hidden sm:contents">
+              <IndexMetric label="SENSEX" ltp={indices?.sensex.ltp} changePct={indices?.sensex.changePct} storeKey="sensex" onSelect={() => onSelectSymbol?.("SENSEX")} />
+            </div>
             <div className="hidden lg:contents">
               <IndexMetric label="BANK NIFTY" ltp={indices?.bankNifty.ltp} changePct={indices?.bankNifty.changePct} storeKey="banknifty" onSelect={() => onSelectSymbol?.("BANKNIFTY")} />
             </div>
@@ -201,7 +203,7 @@ export const TopBar = memo(function TopBar({
               onClick={handleScanButtonClick}
               disabled={startingScan || stoppingScan}
               className={cn(
-                "apple-hover relative overflow-hidden h-7 text-[10px] px-3 font-bold bg-foreground/[0.03] transition-all duration-200 rounded-lg",
+                "apple-hover relative overflow-hidden h-7 text-[10px] px-3 font-medium bg-foreground/[0.03] transition-all duration-200 rounded-lg",
                 scanning
                   ? "text-foreground hover:bg-red-500/10 hover:text-red-500"
                   : "text-foreground/70 hover:bg-foreground/[0.08] hover:text-foreground"
@@ -216,7 +218,7 @@ export const TopBar = memo(function TopBar({
               )}
               <span className="relative z-10 flex items-center justify-center min-w-[32px]">
                 {scanning && scanProgress !== undefined ? (
-                  <span className="text-[10px] font-mono font-bold text-foreground px-1">
+                  <span className="text-[10px] font-mono font-medium text-foreground px-1">
                     {scanProgress > 0 && scanProgress < 100 ? toFixed(scanProgress, 1) : Math.round(scanProgress || 0)}%
                   </span>
                 ) : (
@@ -231,13 +233,13 @@ export const TopBar = memo(function TopBar({
               variant="ghost"
               size="sm"
               onClick={onOpenSuggestions}
-              className="apple-hover h-7 flex items-center gap-1.5 text-[10px] px-3 font-bold bg-foreground/[0.03] text-foreground/70 hover:bg-foreground/[0.08] hover:text-foreground transition-all duration-200 rounded-lg"
+              className="apple-hover h-7 flex items-center gap-1.5 text-[10px] px-3 font-medium bg-foreground/[0.03] text-foreground/70 hover:bg-foreground/[0.08] hover:text-foreground transition-all duration-200 rounded-lg"
               title="View Signals Generated"
             >
               <BarChart2 strokeWidth={3} className="h-3.5 w-3.5 sm:mr-0.5" />
               <span className="hidden sm:inline">Signals</span>
               {totalActiveSignals > 0 && (
-                <span className="ml-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-bull px-1 text-[9px] font-normal text-black">
+                <span className="ml-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-bull px-1 text-[10px] font-normal text-black">
                   {totalActiveSignals}
                 </span>
               )}
@@ -408,7 +410,7 @@ export const TopBar = memo(function TopBar({
                   }}
                   disabled={authorizing}
                   className={cn(
-                    "apple-hover h-7 flex items-center gap-1.5 text-[11px] px-3 font-bold transition-all rounded-lg",
+                    "apple-hover h-7 flex items-center gap-1.5 text-[11px] px-3 font-medium transition-all rounded-lg",
                     isDualKeyConfigured
                       ? authorizedKeysCount === 2
                         ? "text-bull bg-bull/10 hover:bg-bull/20"
@@ -429,7 +431,7 @@ export const TopBar = memo(function TopBar({
                   ) : isDualKeyConfigured ? (
                     <>
                       <KeyRound className={cn("h-4 w-4", authorizedKeysCount > 0 ? "text-current" : "text-red-500")} />
-                      <span className="flex items-center gap-1 font-mono font-bold text-[12px] tracking-tight">
+                      <span className="flex items-center gap-1 font-mono font-medium text-[12px] tracking-tight">
                         {authorizedKeysCount}/2
                       </span>
                     </>
@@ -463,7 +465,7 @@ export const TopBar = memo(function TopBar({
           </Button>
           </motion.div>
           
-          <span className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-foreground/70 px-1">
+          <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.12em] text-foreground/60 px-1 font-sans">
             <span className={cn(
               "h-1.5 w-1.5 rounded-full", 
               wsConnected ? "bg-[#34C759] shadow-[0_0_8px_rgba(52,199,89,0.6)] animate-[pulse-bloom_4s_ease-in-out_infinite]" : "bg-red-500/80"
@@ -530,8 +532,8 @@ function IndexMetric({
       onClick={onSelect}
       className="flex shrink-0 items-baseline gap-1.5 whitespace-nowrap cursor-pointer hover:bg-foreground/5 px-1.5 py-0.5 rounded transition-colors"
     >
-      <span className="text-foreground/70">{label}</span>
-      <strong className="text-foreground">
+      <span className="text-foreground/45 font-sans">{label}</span>
+      <strong className="text-foreground font-mono font-medium">
         <AnimatedNumber
           value={displayLtp}
           decimals={2}
@@ -540,7 +542,7 @@ function IndexMetric({
         />
       </strong>
       {!isVix && displayPct != null && (
-        <strong className={cn(tone)}>
+        <strong className={cn(tone, "font-mono font-medium")}>
           <AnimatedNumber
             value={displayPct}
             decimals={1}

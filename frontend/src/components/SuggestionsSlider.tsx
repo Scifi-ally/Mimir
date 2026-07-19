@@ -8,6 +8,7 @@ import { useSymbolDataSelector } from '@/providers/MarketDataProvider';
 import { LivePrice } from '@/components/atoms/LivePrice';
 import { AnimatedNumber } from '@/components/atoms/AnimatedNumber';
 import { FADE_STANDARD, SPRING_GENTLE } from "@/lib/motion";
+import { Skeleton } from "@/components/atoms/Skeleton";
 
 
 
@@ -85,7 +86,7 @@ export function SuggestionsSlider({ isOpen, onClose, onSelectSymbol, activeSugge
           >
             {/* Header */}
             <div className="relative px-8 pr-12 pt-6 pb-4 flex flex-col sm:flex-row items-center justify-between gap-4 shrink-0">
-              <h2 className="text-[9px] font-mono font-normal tracking-[0.15em] uppercase text-muted-foreground/80">
+              <h2 className="text-[10px] font-mono font-normal tracking-[0.15em] uppercase text-muted-foreground/80">
                 Active Signals
               </h2>
 
@@ -117,12 +118,27 @@ export function SuggestionsSlider({ isOpen, onClose, onSelectSymbol, activeSugge
             {/* Scrollable Content */}
             <div className="flex-1 overflow-y-auto p-8 flex flex-col gap-10">
               {isPending ? (
-                <div className="flex-1 flex items-center justify-center py-20">
-                  <div className="animate-pulse flex gap-2 items-center text-muted-foreground">
-                    <div className="w-2.5 h-2.5 rounded-full bg-primary animate-bounce" />
-                    <div className="w-2.5 h-2.5 rounded-full bg-primary animate-bounce delay-100" />
-                    <div className="w-2.5 h-2.5 rounded-full bg-primary animate-bounce delay-200" />
-                  </div>
+                <div className="flex flex-col gap-4 pt-2">
+                  <Skeleton className="h-3 w-28" />
+                  {[0, 1, 2].map((i) => (
+                    <div key={i} className="flex flex-col gap-3 rounded-2xl border border-border/10 p-5">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <Skeleton className="h-5 w-24" />
+                          <Skeleton className="h-4 w-12 rounded" />
+                        </div>
+                        <Skeleton className="h-4 w-16" />
+                      </div>
+                      <div className="grid grid-cols-4 gap-4">
+                        {[0, 1, 2, 3].map((j) => (
+                          <div key={j} className="flex flex-col gap-1.5">
+                            <Skeleton className="h-2.5 w-12" />
+                            <Skeleton className="h-4 w-16" />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               ) : error ? (
                 <div className="flex-1 flex items-center justify-center py-20 text-destructive text-sm font-normal">
@@ -143,7 +159,7 @@ export function SuggestionsSlider({ isOpen, onClose, onSelectSymbol, activeSugge
                     <div className="flex flex-col gap-6 relative">
                       <div className="flex flex-col gap-6 pl-2">
                         <div className="flex flex-col gap-3">
-                          <h3 className="text-[10px] font-normal tracking-widest uppercase text-bull flex items-center gap-2">
+                          <h3 className="text-[10px] font-normal tracking-[0.08em] uppercase text-bull flex items-center gap-2">
                             Active Trades ({activeTrades.length})
                           </h3>
                           <div className="grid pl-4 ml-1">
@@ -157,7 +173,7 @@ export function SuggestionsSlider({ isOpen, onClose, onSelectSymbol, activeSugge
                   )}
                   {completedTrades.length > 0 && (
                     <div className="flex flex-col gap-3 pl-2">
-                      <h3 className="text-[10px] font-normal tracking-widest uppercase text-muted-foreground flex items-center gap-2">
+                      <h3 className="text-[10px] font-normal tracking-[0.08em] uppercase text-muted-foreground flex items-center gap-2">
                         Completed ({completedTrades.length})
                       </h3>
                       <div className="grid pl-4 ml-1">
@@ -169,7 +185,7 @@ export function SuggestionsSlider({ isOpen, onClose, onSelectSymbol, activeSugge
                   )}
                   {expiredTrades.length > 0 && (
                     <div className="flex flex-col gap-3 pl-2">
-                      <h3 className="text-[10px] font-normal tracking-widest uppercase text-muted-foreground/60 flex items-center gap-2">
+                      <h3 className="text-[10px] font-normal tracking-[0.08em] uppercase text-muted-foreground/60 flex items-center gap-2">
                         Expired ({expiredTrades.length})
                       </h3>
                       <div className="grid pl-4 ml-1">
@@ -343,7 +359,7 @@ function SuggestionCard({ s, onSelectSymbol, onClose }: {
       <div className="flex items-center justify-between sm:justify-end gap-6 sm:w-1/3">
         {/* Current Price / Outcome */}
         <div className="flex flex-col items-start sm:items-end">
-          <span className="text-[10px] font-normal tracking-widest uppercase text-muted-foreground mb-1">
+          <span className="text-[10px] font-normal tracking-[0.08em] uppercase text-muted-foreground mb-1">
             {isPending ? "Awaiting Entry" : isActive ? "Current" : "Outcome"}
           </span>
           <span className="font-mono font-normal text-sm">
@@ -357,7 +373,7 @@ function SuggestionCard({ s, onSelectSymbol, onClose }: {
 
         {/* P&L */}
         <div className="flex flex-col items-end min-w-[70px]">
-          <span className="text-[10px] font-normal tracking-widest uppercase text-muted-foreground mb-1">
+          <span className="text-[10px] font-normal tracking-[0.08em] uppercase text-muted-foreground mb-1">
             P&L
           </span>
           {isWin ? (

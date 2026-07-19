@@ -6,8 +6,8 @@ import { useSymbolDataSelector } from "@/providers/MarketDataProvider";
 import { fmtNum } from "@/lib/format";
 import { Activity } from "lucide-react";
 import { cn } from "@/lib/format";
-import { LivePrice } from "@/components/atoms/LivePrice";
 import { AnimatedNumber } from "@/components/atoms/AnimatedNumber";
+import { Skeleton } from "@/components/atoms/Skeleton";
 
 interface SupportResistancePanelProps {
   selectedSymbol: string;
@@ -54,18 +54,27 @@ export const SupportResistancePanel = React.memo(function SupportResistancePanel
     );
   }
 
-  if (candlesQuery.isPending && !levels) {
+  if (candlesQuery.isPending || candlesQuery.isError || !levels || !currentPrice) {
+    // Ladder-shaped skeleton mirroring the loaded layout: while candles load
+    // it shimmers; once resolved-but-empty it reads "awaiting data". Never a
+    // spinner — the placeholder keeps the panel's silhouette stable.
+    const pending = candlesQuery.isPending;
     return (
-      <div className="h-full bg-transparent flex flex-col items-center justify-center text-neutral-600">
-        <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent mb-3" />
-      </div>
-    );
-  }
-
-  if (candlesQuery.isError || !levels || !currentPrice) {
-    return (
-      <div className="h-full bg-transparent flex flex-col items-center justify-center text-muted-foreground/60 p-4 text-center">
-        <span className="text-[11px] font-mono">No support/resistance computed (awaiting market data)</span>
+      <div className="bg-transparent h-full flex flex-col pt-1 overflow-hidden">
+        <div className="text-[9px] font-medium font-sans uppercase tracking-[0.2em] text-muted-foreground/90 mb-1.5 shrink-0 flex items-center justify-between">
+          <span>Key Levels</span>
+          {!pending && <span className="font-mono text-neutral-600 normal-case tracking-normal">awaiting data</span>}
+        </div>
+        <div className={cn("flex flex-col justify-evenly flex-1 min-h-0 py-1", !pending && "opacity-50")}>
+          {["w-[52%]", "w-[68%]", "w-[84%]", "w-[68%]", "w-[52%]"].map((w, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <Skeleton className="h-[9px] w-5 shrink-0" />
+              <Skeleton className={cn("h-[3px] rounded-full", w)} />
+              <div className="flex-1" />
+              <Skeleton className="h-[9px] w-14 shrink-0" />
+            </div>
+          ))}
+        </div>
       </div>
     );
   }
@@ -82,73 +91,78 @@ export const SupportResistancePanel = React.memo(function SupportResistancePanel
   const r1Dist = r1 && currentPrice > 0 ? ((r1.price - currentPrice) / currentPrice) * 100 : 0;
   const s1Dist = s1 && currentPrice > 0 ? ((s1.price - currentPrice) / currentPrice) * 100 : 0;
   const r2Dist = r2 && currentPrice > 0 ? ((r2.price - currentPrice) / currentPrice) * 100 : 0;
-  const s2Dist = s2 && currentPrice > 0 ? ((s2.price - currentPrice) / currentPrice) * 100 : 0; 
+  const s2Dist = s2 && currentPrice > 0 ? ((s2.price - currentPrice) / currentPrice) * 100 : 0;
+
+  // Max absolute distance drives proximity bar scaling (closest level = longest bar)
+  const maxDist = Math.max(Math.abs(r1Dist), Math.abs(r2Dist), Math.abs(s1Dist), Math.abs(s2Dist), 0.01);
+  const proximity = (dist: number) => Math.round((1 - Math.abs(dist) / maxDist) * 88) + 12;
+
+  // Where LTP sits inside the S1–R1 trading range (0 = at support, 100 = at resistance)
+  const rangePos = s1 && r1 && r1.price > s1.price
+    ? Math.min(100, Math.max(0, ((currentPrice - s1.price) / (r1.price - s1.price)) * 100))
+    : null;
+
+  // Plain render helper (NOT a component) — invoked as levelRow(...) so it does
+  // not create a new component identity each tick, which would remount the
+  // subtree and reset AnimatedNumber's flash/entry animation on every price update.
+  const levelRow = ({ label, level, dist, side }: { label: string; level: SRLevel; dist: number; side: "R" | "S" }) => {
+    const isRes = side === "R";
+    const tone = isRes ? "text-bear" : "text-bull";
+    const barTone = isRes ? "bg-bear/70" : "bg-bull/70";
+    return (
+      <div className="group relative flex items-center gap-2 py-[5px] font-mono text-xs">
+        <span className={cn("w-5 shrink-0 font-sans font-medium tracking-[0.06em] text-[11px]", tone)}>{label}</span>
+        <div className="flex-1 flex items-center gap-1.5 min-w-0">
+          <div className="relative h-[3px] flex-1 max-w-[64px] bg-foreground/[0.07] rounded-full overflow-hidden">
+            <div className={cn("absolute inset-y-0 left-0 rounded-full", barTone)} style={{ width: `${proximity(dist)}%` }} />
+          </div>
+          <span className={cn("text-[10px] tabular-nums shrink-0", isRes ? "text-bear/70" : "text-bull/70")}>
+            <AnimatedNumber value={dist} decimals={Math.abs(dist) < 0.1 ? 2 : 1} showSign={true} suffix="%" duration={0.3} flashColor={true} />
+          </span>
+        </div>
+        <span className={cn("tabular-nums tracking-tight shrink-0", isRes ? "text-bear/90" : "text-bull/90")}>₹{fmtNum(level.price, 2)}</span>
+      </div>
+    );
+  };
+
 
   return (
-    <div className="bg-transparent flex flex-col text-card-foreground pt-1 pb-0 overflow-hidden border-0 shrink-0">
-      <div className="text-[10px] font-normal font-sans uppercase tracking-widest text-neutral-500 mb-1.5 shrink-0 flex items-center justify-between">
-         <span>Support & Resistance</span>
-         <span className={cn("font-mono", confluenceScore > 80 ? "text-bull" : confluenceScore > 50 ? "text-yellow-500" : "text-neutral-500")}>
-           {fmtNum(confluenceScore, 0)}% CONF
+    <div className="bg-transparent h-full flex flex-col text-card-foreground pt-1 pb-0 overflow-hidden border-0">
+      <div className="text-[9px] font-medium font-sans uppercase tracking-[0.2em] text-muted-foreground/90 mb-1.5 shrink-0 flex items-center justify-between">
+         <span className="flex items-center gap-1.5">Key Levels</span>
+         <span className={cn("font-mono font-medium tracking-[-0.01em] normal-case text-[10px]", confluenceScore > 80 ? "text-bull/80" : confluenceScore > 50 ? "text-yellow-500/80" : "text-neutral-500")}>
+           {fmtNum(confluenceScore, 0)}% <span className="uppercase tracking-[0.08em] text-muted-foreground/80 font-sans font-medium">conf</span>
          </span>
       </div>
 
-      {/* Diagram Section */}
-      <div className="flex flex-col gap-1 font-mono text-xs w-full shrink-0 mb-2 tabular-nums">
-        {r2 && (
-          <div className="flex justify-between items-center text-bear/80">
-            <div className="flex items-center gap-1.5">
-              <span className="font-normal">R2</span>
-              <span className="text-[10px] font-mono opacity-80">
-                <AnimatedNumber value={r2Dist} decimals={Math.abs(r2Dist) < 0.1 ? 2 : 1} showSign={true} suffix="%" duration={0.3} flashColor={true} />
-              </span>
-            </div>
-            <span>₹{fmtNum(r2.price, 2)}</span>
+      {/* Price ladder — flex-1 + justify-evenly so it stretches to the bottom of
+          the panel and the rows breathe into whatever height is available,
+          instead of hugging the top and leaving a dead void below. */}
+      <div className="flex flex-col justify-evenly flex-1 min-h-0 w-full tabular-nums tracking-tight py-1 mb-1 relative overflow-hidden">
+        {r2 && levelRow({ label: "R2", level: r2, dist: r2Dist, side: "R" })}
+        {r1 && levelRow({ label: "R1", level: r1, dist: r1Dist, side: "R" })}
+
+        {/* LTP band — spatial read only: where price sits inside S1–R1.
+            The price number itself is NOT repeated (the hero LTP above owns
+            it); this row shows range position, which the hero can't. */}
+        <div className="relative flex items-center gap-2 py-[6px] my-[2px] font-mono text-xs shrink-0">
+          <span className="w-5 shrink-0 font-sans font-medium tracking-[0.06em] text-[11px] text-foreground">LTP</span>
+          <div className="flex-1 flex items-center min-w-0">
+            {rangePos != null && (
+              <div className="relative h-[3px] flex-1 rounded-full overflow-hidden bg-gradient-to-r from-bull/30 via-foreground/10 to-bear/30">
+                <div className="absolute top-1/2 -translate-y-1/2 h-[7px] w-[2px] rounded-full bg-foreground shadow-[0_0_4px_rgba(255,255,255,0.5)]" style={{ left: `calc(${rangePos}% - 1px)` }} />
+              </div>
+            )}
           </div>
-        )}
-        {r1 && (
-          <div className="flex justify-between items-center text-bear/90">
-            <div className="flex items-center gap-1.5">
-              <span className="font-normal">R1</span>
-              <span className="text-[10px] font-mono opacity-80">
-                <AnimatedNumber value={r1Dist} decimals={Math.abs(r1Dist) < 0.1 ? 2 : 1} showSign={true} suffix="%" duration={0.3} flashColor={true} />
-              </span>
-            </div>
-            <span>₹{fmtNum(r1.price, 2)}</span>
-          </div>
-        )}
-        
-        <div className="w-full h-px bg-border/20 my-0.5" />
-        
-        <div className="flex justify-between items-center text-foreground font-normal py-0.5">
-          <span>LTP</span>
-          <LivePrice symbol={selectedSymbol} decimals={2} fallback={currentPrice} className="font-mono text-xs" />
+          {rangePos != null && (
+            <span className="text-[10px] tabular-nums shrink-0 text-muted-foreground/80" title="Position inside the S1–R1 range (0% = at support, 100% = at resistance)">
+              {fmtNum(rangePos, 0)}% <span className="text-muted-foreground/80">of range</span>
+            </span>
+          )}
         </div>
 
-        <div className="w-full h-px bg-border/20 my-0.5" />
-
-        {s1 && (
-          <div className="flex justify-between items-center text-bull/90">
-            <div className="flex items-center gap-1.5">
-              <span className="font-normal">S1</span>
-              <span className="text-[10px] font-mono opacity-80">
-                <AnimatedNumber value={s1Dist} decimals={Math.abs(s1Dist) < 0.1 ? 2 : 1} showSign={true} suffix="%" duration={0.3} flashColor={true} />
-              </span>
-            </div>
-            <span>₹{fmtNum(s1.price, 2)}</span>
-          </div>
-        )}
-        {s2 && (
-          <div className="flex justify-between items-center text-bull/80">
-            <div className="flex items-center gap-1.5">
-              <span className="font-normal">S2</span>
-              <span className="text-[10px] font-mono opacity-80">
-                <AnimatedNumber value={s2Dist} decimals={Math.abs(s2Dist) < 0.1 ? 2 : 1} showSign={true} suffix="%" duration={0.3} flashColor={true} />
-              </span>
-            </div>
-            <span>₹{fmtNum(s2.price, 2)}</span>
-          </div>
-        )}
+        {s1 && levelRow({ label: "S1", level: s1, dist: s1Dist, side: "S" })}
+        {s2 && levelRow({ label: "S2", level: s2, dist: s2Dist, side: "S" })}
       </div>
     </div>
   );

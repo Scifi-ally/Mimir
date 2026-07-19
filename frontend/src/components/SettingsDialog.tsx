@@ -6,6 +6,7 @@ import type { SystemConfig, UpdateSystemConfig } from "@/types/api";
 import { cn } from "@/lib/format";
 import { Tooltip } from "@/components/mimir/tooltip";
 import { FADE_SLOW, FADE_STANDARD } from "@/lib/motion";
+import { Skeleton } from "@/components/atoms/Skeleton";
 
 interface SettingsDialogProps {
   isOpen: boolean;
@@ -257,7 +258,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
             <button
               type="button"
               onClick={() => toggleSecretVisibility(secretKey)}
-              className="absolute right-0 top-1.5 text-[9px] font-normal text-muted-foreground hover:text-foreground transition-colors outline-none ring-0 border border-foreground/10 hover:border-foreground/20 rounded px-2 py-1 uppercase tracking-widest"
+              className="absolute right-0 top-1.5 text-[10px] font-normal text-muted-foreground hover:text-foreground transition-colors outline-none ring-0 border border-foreground/10 hover:border-foreground/20 rounded px-2 py-1 uppercase tracking-[0.1em]"
             >
               {showSecrets[secretKey] ? "Hide" : "Show"}
             </button>
@@ -325,15 +326,16 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
               </button>
             </div>
 
-            <div className="flex flex-1 overflow-hidden">
-              {/* Sidebar Tabs */}
-              <div className="w-56 shrink-0 flex flex-col gap-1 px-8 pt-8 overflow-y-auto no-scrollbar">
+            <div className="flex flex-col sm:flex-row flex-1 overflow-hidden">
+              {/* Tabs: sidebar on desktop, horizontal scroll strip on phones —
+                  a fixed 224px sidebar left ~150px of content at 375px wide. */}
+              <div className="flex sm:flex-col shrink-0 gap-1 px-4 pt-3 pb-1 sm:w-56 sm:px-8 sm:pt-8 sm:pb-0 overflow-x-auto sm:overflow-x-visible sm:overflow-y-auto no-scrollbar whitespace-nowrap">
                 {TAB_ITEMS.map((tab) => (
                   <button
                     key={tab.key}
                     onClick={() => setActiveTab(tab.key)}
                     className={cn(
-                      "text-xs tracking-wider text-left transition-colors py-2.5 px-3 rounded-md",
+                      "text-xs tracking-[0.08em] text-left transition-colors py-2.5 px-3 rounded-md shrink-0",
                       activeTab === tab.key
                         ? "text-primary font-normal bg-foreground/5"
                         : "text-muted-foreground font-normal hover:text-foreground hover:bg-foreground/5"
@@ -345,10 +347,23 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
               </div>
 
               {/* Scrollable Content Area */}
-              <div className="flex-1 overflow-y-auto px-10 py-8 relative">
+              <div className="flex-1 overflow-y-auto px-5 py-6 sm:px-10 sm:py-8 relative">
                 {isLoading ? (
-                  <div className="h-full flex items-center justify-center text-muted-foreground">
-                    <div className="w-8 h-8 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+                  <div className="max-w-4xl flex flex-col gap-8 pt-1">
+                    <div className="flex flex-col gap-2">
+                      <Skeleton className="h-3.5 w-40" />
+                      <Skeleton className="h-2.5 w-72" />
+                    </div>
+                    {[0, 1, 2, 3].map((i) => (
+                      <div key={i} className="flex flex-col gap-2.5">
+                        <Skeleton className="h-2.5 w-28" />
+                        <Skeleton className="h-9 w-full max-w-md rounded-lg" />
+                      </div>
+                    ))}
+                    <div className="flex gap-3 pt-2">
+                      <Skeleton className="h-8 w-32 rounded-lg" />
+                      <Skeleton className="h-8 w-24 rounded-lg" />
+                    </div>
                   </div>
                 ) : (
                 <div className="max-w-4xl pb-4">
@@ -546,12 +561,12 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                             {tradingModeQuery.data?.mode === "LIVE" ? (
                               <>
                                 <span className="w-2 h-2 rounded-full bg-destructive animate-pulse" />
-                                <span className="text-xs font-normal text-destructive tracking-widest">LIVE — REAL ORDERS ACTIVE</span>
+                                <span className="text-xs font-normal text-destructive tracking-[0.1em]">LIVE — REAL ORDERS ACTIVE</span>
                               </>
                             ) : (
                               <>
                                 <span className="w-2 h-2 rounded-full bg-bull" />
-                                <span className="text-xs font-normal text-bull tracking-widest">PAPER — SIMULATED FILLS</span>
+                                <span className="text-xs font-normal text-bull tracking-[0.1em]">PAPER — SIMULATED FILLS</span>
                               </>
                             )}
                           </div>
@@ -559,7 +574,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                             <button
                               onClick={() => setModeMutation.mutate({ mode: "PAPER" })}
                               disabled={setModeMutation.isPending}
-                              className="text-[10px] font-normal text-bull border border-bull/30 hover:border-bull hover:bg-bull/5 px-4 py-1.5 rounded uppercase tracking-widest transition-colors disabled:opacity-50"
+                              className="text-[10px] font-normal text-bull border border-bull/30 hover:border-bull hover:bg-bull/5 px-4 py-1.5 rounded uppercase tracking-[0.1em] transition-colors disabled:opacity-50"
                             >
                               {setModeMutation.isPending ? "Disarming..." : "Disarm → Paper"}
                             </button>
@@ -568,7 +583,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                               onClick={() => setArmingLive(true)}
                               disabled={!tradingModeQuery.data?.brokerAuthenticated}
                               className={cn(
-                                "text-[10px] font-normal px-4 py-1.5 rounded uppercase tracking-widest transition-colors border",
+                                "text-[10px] font-normal px-4 py-1.5 rounded uppercase tracking-[0.1em] transition-colors border",
                                 tradingModeQuery.data?.brokerAuthenticated
                                   ? "text-destructive border-destructive/30 hover:border-destructive hover:bg-destructive/5"
                                   : "text-muted-foreground border-foreground/10 opacity-50 cursor-not-allowed"
@@ -614,7 +629,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                                     onClick={() => setModeMutation.mutate({ mode: "LIVE", confirmationPhrase: armPhraseInput })}
                                     disabled={armPhraseInput !== tradingModeQuery.data?.armPhrase || setModeMutation.isPending}
                                     className={cn(
-                                      "text-[10px] font-normal px-4 py-1.5 rounded uppercase tracking-widest transition-colors border",
+                                      "text-[10px] font-normal px-4 py-1.5 rounded uppercase tracking-[0.1em] transition-colors border",
                                       armPhraseInput === tradingModeQuery.data?.armPhrase && !setModeMutation.isPending
                                         ? "text-white bg-destructive border-destructive hover:bg-destructive/90"
                                         : "text-muted-foreground border-foreground/10 opacity-50 cursor-not-allowed"
@@ -624,7 +639,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                                   </button>
                                   <button
                                     onClick={() => { setArmingLive(false); setArmPhraseInput(""); }}
-                                    className="text-[10px] font-normal text-muted-foreground hover:text-foreground border border-foreground/10 hover:border-foreground/20 px-4 py-1.5 rounded uppercase tracking-widest transition-colors"
+                                    className="text-[10px] font-normal text-muted-foreground hover:text-foreground border border-foreground/10 hover:border-foreground/20 px-4 py-1.5 rounded uppercase tracking-[0.1em] transition-colors"
                                   >
                                     Cancel
                                   </button>
@@ -676,7 +691,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                             disabled={triggerScanMutation.isPending}
                             className="px-6 py-2.5 rounded flex items-center justify-center gap-2 border border-foreground/10 hover:border-foreground/20 bg-transparent transition-colors disabled:opacity-50 outline-none ring-0"
                           >
-                            <span className="text-[10px] font-normal text-bull uppercase tracking-widest">
+                            <span className="text-[10px] font-normal text-bull uppercase tracking-[0.1em]">
                               {triggerScanMutation.isPending ? "Scanning..." : "Start Manual Scan"}
                             </span>
                           </button>
@@ -686,7 +701,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                             disabled={stopScanMutation.isPending}
                             className="px-6 py-2.5 rounded flex items-center justify-center gap-2 border border-foreground/10 hover:border-foreground/20 bg-transparent transition-colors disabled:opacity-50 outline-none ring-0"
                           >
-                            <span className="text-[10px] font-normal text-amber-500 uppercase tracking-widest">
+                            <span className="text-[10px] font-normal text-amber-500 uppercase tracking-[0.1em]">
                               {stopScanMutation.isPending ? "Terminating..." : "Terminate Active Scan"}
                             </span>
                           </button>
@@ -695,7 +710,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                             onClick={clearLocalTokensAndCache}
                             className="px-6 py-2.5 rounded flex items-center justify-center gap-2 border border-foreground/10 hover:border-foreground/20 bg-transparent transition-colors outline-none ring-0"
                           >
-                            <span className="text-[10px] font-normal text-destructive uppercase tracking-widest">
+                            <span className="text-[10px] font-normal text-destructive uppercase tracking-[0.1em]">
                               Purge Local Cache
                             </span>
                           </button>
@@ -732,25 +747,25 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
 
             {/* Footer */}
             <div className="px-8 py-6 flex justify-between items-center bg-background shrink-0 relative z-[90]">
-              <button onClick={handleReset} className="text-[10px] font-normal text-muted-foreground hover:text-foreground outline-none ring-0 border border-foreground/10 hover:border-foreground/20 bg-transparent px-3 py-1.5 rounded uppercase tracking-widest transition-colors">
+              <button onClick={handleReset} className="text-[10px] font-normal text-muted-foreground hover:text-foreground outline-none ring-0 border border-foreground/10 hover:border-foreground/20 bg-transparent px-3 py-1.5 rounded uppercase tracking-[0.1em] transition-colors">
                 Reset
               </button>
               
               <div className="flex items-center gap-6">
                 {tradingModeQuery.data?.mode === "LIVE" ? (
-                  <div className="text-[10px] font-normal text-destructive animate-pulse tracking-widest flex items-center gap-1.5"><div className="w-1.5 h-1.5 bg-destructive rounded-full"/>LIVE BROKER EXECUTION</div>
+                  <div className="text-[10px] font-normal text-destructive animate-pulse tracking-[0.1em] flex items-center gap-1.5"><div className="w-1.5 h-1.5 bg-destructive rounded-full"/>LIVE BROKER EXECUTION</div>
                 ) : (
-                  <div className="text-[10px] font-normal text-bull tracking-widest flex items-center gap-1.5"><div className="w-1.5 h-1.5 bg-bull rounded-full"/>PAPER TRADING (SAFE)</div>
+                  <div className="text-[10px] font-normal text-bull tracking-[0.1em] flex items-center gap-1.5"><div className="w-1.5 h-1.5 bg-bull rounded-full"/>PAPER TRADING (SAFE)</div>
                 )}
                 <div className="flex gap-3">
-                  <button onClick={onClose} className="text-[10px] font-normal text-muted-foreground hover:text-foreground outline-none ring-0 border border-foreground/10 hover:border-foreground/20 bg-transparent px-4 py-1.5 rounded uppercase tracking-widest transition-colors">
+                  <button onClick={onClose} className="text-[10px] font-normal text-muted-foreground hover:text-foreground outline-none ring-0 border border-foreground/10 hover:border-foreground/20 bg-transparent px-4 py-1.5 rounded uppercase tracking-[0.1em] transition-colors">
                     Cancel
                   </button>
                   <button
                     onClick={handleSave}
                     disabled={!isDirty || saveMutation.isPending}
                     className={cn(
-                      "text-[10px] font-normal outline-none ring-0 border px-4 py-1.5 rounded uppercase tracking-widest transition-colors",
+                      "text-[10px] font-normal outline-none ring-0 border px-4 py-1.5 rounded uppercase tracking-[0.1em] transition-colors",
                       isDirty && !saveMutation.isPending ? "text-primary border-primary/30 hover:border-primary hover:bg-primary/5 bg-primary/10" : "text-muted-foreground border-foreground/10 opacity-50 cursor-not-allowed bg-transparent"
                     )}
                   >

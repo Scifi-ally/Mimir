@@ -1,13 +1,21 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
-/* SF Pro Display for proportional UI text.
-   Geist Mono reserved for numeric/tabular data (prices, P&L). */
+/* ─── Font Stack ────────────────────────────────────────────────────────────
+   Geist Sans       → Primary UI font (pixel-hinted, pairs with Geist Mono)
+   SF Pro           → Apple platforms override (loaded from system)
+   Geist Mono       → All numeric / tabular data (prices, P&L, scores)
+   ──────────────────────────────────────────────────────────────────────────── */
+@import "@fontsource/geist-sans/400.css";
+@import "@fontsource/geist-sans/500.css";
+@import "@fontsource/geist-sans/600.css";
+@import "@fontsource/geist-sans/700.css";
 @import "@fontsource/geist-mono/400.css";
 @import "@fontsource/geist-mono/500.css";
 @import "@fontsource/geist-mono/600.css";
+@import "@fontsource/geist-mono/700.css";
 
 @theme {
-  --font-sans: "SF Pro Display", "SF Pro Text", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-sans: "Geist Mono", "SF Mono", ui-monospace, monospace;
   --font-mono: "Geist Mono", "SF Mono", ui-monospace, monospace;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -122,14 +130,17 @@
     @apply bg-background text-foreground font-sans;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    text-rendering: optimizeLegibility;
-    /* Inter reads best with a hair of negative tracking at UI sizes. */
-    letter-spacing: -0.011em;
-    /* Enable contextual alternates + kerning for crisper proportional text. */
-    font-feature-settings: "cv11", "ss01", "kern";
+    /* geometricPrecision gives sharper glyph outlines on Windows */
+    text-rendering: geometricPrecision;
+    /* Geist Sans reads cleanly at 0 tracking — no negative needed */
+    letter-spacing: 0;
+    /* Prevent browser from synthesizing bold/italic — looks terrible */
+    font-synthesis: none;
+    font-weight: 400;
+    line-height: 1.5;
   }
 
-  /* Numeric data uses monospace with tabular, lining figures so live-updating
+  /* Numeric data uses Geist Mono with tabular, lining figures so live-updating
      prices and P&L never shift width as digits change — a core "crafted" detail.
      Apply .font-mono (or the .tnum utility) to any number that ticks. */
   .font-mono,
@@ -139,7 +150,7 @@
   pre {
     font-family: var(--font-mono);
     font-feature-settings: "tnum", "lnum", "zero";
-    letter-spacing: 0;
+    letter-spacing: -0.01em;
   }
 
   /* Utility: tabular figures without forcing the mono family (for sans numbers
@@ -148,10 +159,11 @@
     font-variant-numeric: tabular-nums lining-nums;
   }
 
-  /* Headings get slightly tighter tracking, the way SF Pro Display does at size. */
-  h1, h2, h3, h4 {
-    letter-spacing: -0.02em;
-  }
+  /* Headings — Geist Sans looks sharp with tight tracking at display sizes */
+  h1 { letter-spacing: -0.03em; font-weight: 600; }
+  h2 { letter-spacing: -0.025em; font-weight: 600; }
+  h3 { letter-spacing: -0.02em; font-weight: 500; }
+  h4 { letter-spacing: -0.015em; font-weight: 500; }
 
   .scrollbar-none::-webkit-scrollbar {
     display: none;
@@ -264,6 +276,9 @@
 @keyframes icon-spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
+}
+@keyframes skeleton-shimmer {
+  100% { transform: translateX(100%); }
 }
 @keyframes icon-spin-reverse {
   from { transform: rotate(0deg); }

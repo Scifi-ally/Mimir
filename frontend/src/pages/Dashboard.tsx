@@ -555,7 +555,9 @@ export default function Dashboard() {
 
           {/* Mobile Fallback */}
           <div className="flex lg:hidden flex-col gap-4 h-full overflow-y-auto">
-            <div className="h-[500px]">
+            {/* Chart scales with the viewport instead of a fixed 500px so short
+                phones aren't dominated by it and tablets get more chart. */}
+            <div className="h-[55svh] min-h-[320px] max-h-[560px] shrink-0">
               <AnimatePresence mode="wait">
                 {isScanActive ? (
                   <motion.div 
@@ -595,7 +597,7 @@ export default function Dashboard() {
                 )}
               </AnimatePresence>
             </div>
-            <div className="h-[400px] flex flex-col">
+            <div className="h-[400px] shrink-0 flex flex-col">
               <div className="flex-1 min-h-0 relative">
                 {sidebarTab === "watchlist" ? (
                   <WatchlistStack
@@ -610,7 +612,9 @@ export default function Dashboard() {
                 )}
               </div>
             </div>
-            <div className="h-[400px]">
+            {/* The detail panel is a fixed non-scrolling composition — it needs
+                real height to breathe; 400px crushed the ladder + matrix. */}
+            <div className="h-[600px] shrink-0 px-1">
               <DetailPanel key={activeSymbol} suggestions={suggestions} selectedSymbol={activeSymbol} session={session} isScanActive={isScanActive} />
             </div>
           </div>

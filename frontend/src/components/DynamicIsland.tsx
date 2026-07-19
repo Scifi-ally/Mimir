@@ -47,7 +47,7 @@ function AppleTick() {
         <circle className="confirmation-ring" cx="58" cy="58" r="39" />
         <path className="confirmation-check" d="m40 59 12 13 25-30" />
       </svg>
-      <span className="text-[12px] font-normal tracking-tight text-[#8cf58d]">
+      <span className="text-[12px] font-medium font-sans tracking-tight text-[#8cf58d]">
         Done
       </span>
     </div>
@@ -60,14 +60,32 @@ export function DynamicIsland() {
   const commandPaletteOpen = useStore((s) => s.commandPaletteOpen);
   const setCommandPaletteOpen = useStore((s) => s.setCommandPaletteOpen);
   const commandPaletteSearch = useStore((s) => s.commandPaletteSearch);
+  const commandPaletteEditRuleId = useStore((s) => s.commandPaletteEditRuleId);
   const eventFeedOpen = useStore((s) => s.eventFeedOpen);
   const setEventFeedOpen = useStore((s) => s.setEventFeedOpen);
 
   const [isProcessing, setIsProcessing] = useState(false);
   const [isSuccessState, setIsSuccessState] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [paletteWidth, setPaletteWidth] = useState(commandPaletteSearch.toLowerCase().startsWith('scan ') ? 650 : 480);
+  const [paletteWidth, setPaletteWidth] = useState(480);
   const [mounted, setMounted] = useState(false);
+
+  // Set the pill's width for THIS open synchronously, during render, before
+  // the descent starts. paletteWidth persists across opens, so without this
+  // the first rule-builder open descended at the stale 480px and snapped to
+  // 650px when CommandPalette's effect fired mid-flight — the "different
+  // first animation". (Render-time state adjustment per React docs.)
+  const [wasPaletteOpen, setWasPaletteOpen] = useState(commandPaletteOpen);
+  if (commandPaletteOpen !== wasPaletteOpen) {
+    setWasPaletteOpen(commandPaletteOpen);
+    if (commandPaletteOpen) {
+      // Must mirror CommandPalette's isBuildingRule initializer exactly.
+      const opensAsRuleBuilder =
+        commandPaletteEditRuleId != null ||
+        commandPaletteSearch.toLowerCase().startsWith("scan ");
+      setPaletteWidth(opensAsRuleBuilder ? 650 : 480);
+    }
+  }
   // Don't open the island for the palette until its code has actually arrived —
   // an empty Suspense pill that snaps to size mid-descent is the "different
   // first animation". The chunk is prefetched at module load, so this wait is
@@ -155,7 +173,9 @@ export function DynamicIsland() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={FADE_SLOW}
-            className={`fixed inset-0 z-[9998] ${isNotification ? "pointer-events-none" : "pointer-events-auto"}`}
+            // Dim to focus for modal tasks (palette/prompt); notifications are
+            // non-blocking so the scrim stays fully transparent for them.
+            className={`fixed inset-0 z-[9998] ${isNotification ? "pointer-events-none" : "pointer-events-auto bg-black/25 [backdrop-filter:blur(2px)]"}`}
             onClick={() => {
               if (isNotification) {
                 hideIsland();
@@ -204,8 +224,8 @@ export function DynamicIsland() {
                   )}
                 </div>
                 <div className="flex flex-col truncate flex-1 min-w-0">
-                  {title && <span className="text-[13px] font-normal text-foreground tracking-tight truncate">{title}</span>}
-                  {subtitle && <span className="text-[12px] font-normal text-muted-foreground truncate">{subtitle}</span>}
+                  {title && <span className="text-[13px] font-medium font-sans text-foreground tracking-[-0.01em] truncate">{title}</span>}
+                  {subtitle && <span className="text-[11px] font-normal font-sans text-muted-foreground/70 truncate">{subtitle}</span>}
                 </div>
               </div>
             ) : islandConfig ? (
@@ -217,7 +237,7 @@ export function DynamicIsland() {
                         {icon}
                       </div>
                     )}
-                    <h3 style={{ fontSize: "16px", fontWeight: 700, color: TOKENS.colors.textPrimary, marginBottom: TOKENS.spacing.controlGap, letterSpacing: "-0.015em" }}>
+                    <h3 style={{ fontSize: "16px", fontWeight: 600, color: TOKENS.colors.textPrimary, marginBottom: TOKENS.spacing.controlGap, letterSpacing: "-0.02em", fontFamily: "var(--font-sans)" }}>
                       {title}
                     </h3>
                     {subtitle && (
@@ -266,7 +286,9 @@ export function DynamicIsland() {
                 </>
               </div>
             ) : (
-              <div className="w-full flex flex-col" style={{ width: paletteWidth }}>
+              // Clamp to viewport: a fixed 650px pill would clip (the island
+              // has overflow:hidden) on phones.
+              <div className="w-full flex flex-col" style={{ width: `min(${paletteWidth}px, calc(100vw - 48px))` }}>
                 <Suspense fallback={null}>
                   <CommandPalette onClose={() => setCommandPaletteOpen(false)} onWidthChange={setPaletteWidth} />
                 </Suspense>

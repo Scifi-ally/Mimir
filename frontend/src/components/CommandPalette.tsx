@@ -8,6 +8,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { AdvancedRuleBuilder } from './AdvancedRuleBuilder';
 import type { SymbolSearchResult } from '@/types/api';
 import { FADE_FAST, FADE_STANDARD } from "@/lib/motion";
+import { Skeleton } from "@/components/atoms/Skeleton";
 
 type ScreenerRule = {
   id: number;
@@ -262,9 +263,17 @@ export function CommandPalette({ onClose, onWidthChange }: { onClose: () => void
               <Command.Empty className="hidden" />
 
               {isPending && search.length > 0 && (
-                <div className="flex items-center justify-center py-6 text-sm text-muted-foreground">
-                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent mr-2" />
-                  Searching...
+                <div className="flex flex-col gap-1 p-2">
+                  {[0, 1, 2, 3].map((i) => (
+                    <div key={i} className="flex items-center gap-3 px-3 py-2.5 rounded-lg">
+                      <Skeleton className="h-7 w-7 rounded-md shrink-0" />
+                      <div className="flex-1 flex flex-col gap-1.5 min-w-0">
+                        <Skeleton className="h-3 w-24" />
+                        <Skeleton className="h-2.5 w-40" />
+                      </div>
+                      <Skeleton className="h-3 w-12 shrink-0" />
+                    </div>
+                  ))}
                 </div>
               )}
 
@@ -293,7 +302,7 @@ export function CommandPalette({ onClose, onWidthChange }: { onClose: () => void
               )}
 
               {searchResults?.items && searchResults.items.length > 0 && (
-                <Command.Group heading="Symbols" className="px-2 pt-2 text-[11px] font-normal tracking-wider text-foreground/40 uppercase">
+                <Command.Group heading="Symbols" className="px-2 pt-2 text-[10px] font-medium font-sans tracking-[0.12em] text-foreground/35 uppercase">
                   {searchResults.items.map((item: SymbolSearchResult) => {
                     return (
                       <Command.Item
@@ -306,11 +315,11 @@ export function CommandPalette({ onClose, onWidthChange }: { onClose: () => void
                         className="apple-hover flex cursor-pointer select-none items-center justify-between rounded-xl px-3 py-2.5 text-sm outline-none hover:bg-foreground/10 aria-selected:bg-foreground/10 aria-selected:text-foreground data-[selected=true]:bg-foreground/10 data-[selected=true]:text-foreground mt-1 transition-all duration-200"
                       >
                         <div className="flex flex-1 items-center gap-3 min-w-0 mr-3">
-                          <span className="font-normal text-foreground font-mono tracking-tight shrink-0">{item.symbol}</span>
-                          <span className="text-foreground/50 truncate text-xs">{item.name}</span>
+                          <span className="font-medium text-foreground font-mono tracking-tight shrink-0">{item.symbol}</span>
+                          <span className="text-foreground/40 truncate text-xs font-sans">{item.name}</span>
                         </div>
                         {item.sector && (
-                          <span className="text-[10px] uppercase tracking-widest font-normal text-foreground/30 shrink-0 rounded-full px-2 py-0.5 bg-foreground/5">{item.sector}</span>
+                          <span className="text-[10px] uppercase tracking-[0.1em] font-medium font-sans text-foreground/25 shrink-0 rounded-full px-2 py-0.5 bg-foreground/5">{item.sector}</span>
                         )}
                       </Command.Item>
                     );

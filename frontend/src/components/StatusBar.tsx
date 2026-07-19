@@ -46,7 +46,7 @@ export const StatusBar = memo(function StatusBar({ status, regime, wsConnected, 
     : "UNKNOWN";
 
   return (
-    <div className="shrink-0 h-9 lg:h-10 w-full bg-background flex items-center px-4 sm:px-6 text-[9px] sm:text-[10px] xl:text-[11px] font-mono text-muted-foreground/80 tracking-[0.08em] uppercase z-50 overflow-x-auto whitespace-nowrap [&::-webkit-scrollbar]:hidden">
+    <div className="shrink-0 h-9 lg:h-10 w-full bg-background flex items-center px-4 sm:px-6 text-[10px] sm:text-[10px] xl:text-[10px] font-sans text-muted-foreground/60 tracking-[0.1em] uppercase z-50 overflow-x-auto whitespace-nowrap [&::-webkit-scrollbar]:hidden">
       <div className="flex shrink-0 items-center gap-5 sm:gap-6 text-foreground/60">
         {isLiveTrading && (
           <span className="flex items-center gap-1.5 cursor-help" title="Live trading armed — engine fills place real broker orders">

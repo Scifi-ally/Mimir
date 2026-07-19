@@ -8,6 +8,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { X, Target, ChevronRight, ArrowLeft, Plus, Trash2, Play, Activity, Clock, Sparkles, ListTree, Settings2, Loader2 } from "lucide-react";
 import { LivePrice } from "@/components/atoms/LivePrice";
 import { LiveChangePct } from "@/components/atoms/LiveChangePct";
+import { prefetchSymbol } from "@/lib/prefetch";
 
 interface ScreenerTargetsStackProps {
   selectedSymbol: string;
@@ -241,6 +242,7 @@ export function ScreenerTargetsStack({ selectedSymbol, onSelect, headerLeft }: S
           role="option"
           aria-selected={selected}
           onClick={() => onSelect(row.symbol)}
+          onPointerEnter={() => prefetchSymbol(queryClient, row.symbol)}
           className="absolute inset-0 z-0 cursor-pointer"
         />
         <div className="flex flex-col justify-center gap-1 min-w-0 flex-1 z-10 pointer-events-none">
@@ -427,7 +429,7 @@ export function ScreenerTargetsStack({ selectedSymbol, onSelect, headerLeft }: S
                 <Target className="h-8 w-8 mb-2 opacity-20" />
                 <p>This watchlist is empty.</p>
                 <div className="mt-4 flex flex-wrap justify-center gap-2">
-                  <button onClick={() => setCommandPaletteOpen(true, "", activeWatchlist as number)} className="flex items-center gap-1 rounded-lg bg-primary px-3 py-2 text-[11px] font-normal text-primary-foreground transition-transform hover:scale-105">
+                  <button onClick={() => setCommandPaletteOpen(true, "", activeWatchlist as number)} className="flex items-center gap-1 rounded-lg bg-primary px-3 py-2 text-[11px] font-normal text-primary-foreground transition-all duration-150 hover:brightness-110 active:scale-[0.97]">
                     <Plus className="h-3.5 w-3.5" /> Add Stock
                   </button>
                   <button onClick={() => setCommandPaletteOpen(true, "scan ")} className="flex items-center gap-1 rounded-lg bg-secondary/30 px-3 py-2 text-[11px] font-normal text-foreground transition-colors hover:bg-secondary/50">
@@ -443,7 +445,7 @@ export function ScreenerTargetsStack({ selectedSymbol, onSelect, headerLeft }: S
               <AnimatePresence>
                 {autoTargets.length > 0 && (
                   <div className="flex flex-col gap-2.5">
-                    <div className="px-1 text-[11px] font-normal uppercase tracking-widest text-muted-foreground">Auto matches</div>
+                    <div className="px-1 text-[10px] font-medium font-sans uppercase tracking-[0.12em] text-muted-foreground/70">Auto matches</div>
                     <div className="grid grid-cols-[repeat(auto-fit,minmax(310px,1fr))] gap-3">
                       {autoTargets.map((row) => renderTargetRow(row, title))}
                     </div>
@@ -451,7 +453,7 @@ export function ScreenerTargetsStack({ selectedSymbol, onSelect, headerLeft }: S
                 )}
                 {manualTargets.length > 0 && (
                   <div className="flex flex-col gap-2.5">
-                    <div className="px-1 text-[11px] font-normal uppercase tracking-widest text-muted-foreground">Manual stocks</div>
+                    <div className="px-1 text-[10px] font-medium font-sans uppercase tracking-[0.12em] text-muted-foreground/70">Manual stocks</div>
                     <div className="grid grid-cols-[repeat(auto-fit,minmax(310px,1fr))] gap-3">
                       {manualTargets.map((row) => renderTargetRow(row, title))}
                     </div>
@@ -462,7 +464,7 @@ export function ScreenerTargetsStack({ selectedSymbol, onSelect, headerLeft }: S
 
             {recentMatches.length > 0 && (
               <motion.div layout className="mt-1 rounded-xl bg-background/30 p-3">
-                <div className="mb-2 text-[10px] font-normal uppercase tracking-widest text-muted-foreground">Recent activity</div>
+                <div className="mb-2 text-[10px] font-medium font-sans uppercase tracking-[0.12em] text-muted-foreground/70">Recent activity</div>
                 <div className="flex flex-col gap-2">
                   {recentMatches.map((match) => (
                     <div key={match.id} className="flex items-start justify-between gap-3 text-xs">
@@ -492,7 +494,7 @@ export function ScreenerTargetsStack({ selectedSymbol, onSelect, headerLeft }: S
           {headerLeft}
         </CardHeader>
         <div className="flex-1 flex items-center justify-center p-6">
-          <button onClick={() => setCommandPaletteOpen(true, "scan ")} className="flex items-center gap-2 rounded-xl bg-primary px-6 py-2.5 text-xs font-normal text-primary-foreground transition-all hover:scale-105 shadow-md shadow-primary/20">
+          <button onClick={() => setCommandPaletteOpen(true, "scan ")} className="flex items-center gap-2 rounded-xl bg-primary px-6 py-2.5 text-xs font-normal text-primary-foreground transition-all duration-150 hover:brightness-110 active:scale-[0.97] shadow-md shadow-primary/20">
             <Plus className="h-4 w-4" /> Create Watchlist
           </button>
         </div>
@@ -509,7 +511,7 @@ export function ScreenerTargetsStack({ selectedSymbol, onSelect, headerLeft }: S
             <CardTitle className="text-sm font-normal tracking-tight text-foreground whitespace-nowrap">
               Custom Watchlists
             </CardTitle>
-            <div className="flex items-center gap-1.5 font-mono text-[10px] font-normal uppercase tracking-widest text-muted-foreground/80 whitespace-nowrap hidden @min-md:flex">
+            <div className="flex items-center gap-1.5 font-mono text-[10px] font-medium uppercase tracking-[0.1em] text-muted-foreground/60 whitespace-nowrap hidden @min-md:flex">
               <span className="text-foreground/70">{customWatchlists.length} lists</span>
               <span className="text-foreground/20">/</span>
               <span className="text-foreground/70">{totalCustomTargets} symbols</span>
@@ -520,7 +522,7 @@ export function ScreenerTargetsStack({ selectedSymbol, onSelect, headerLeft }: S
           <button
             type="button"
             onClick={() => setCommandPaletteOpen(true, "scan ")}
-            className="group relative flex shrink-0 items-center gap-1.5 overflow-hidden rounded-full bg-white/5 px-4 py-1.5 text-[11px] font-normal text-foreground transition-all hover:bg-white/10 hover:shadow-[0_0_20px_rgba(255,255,255,0.1)] hover:scale-105 active:scale-95"
+            className="group relative flex shrink-0 items-center gap-1.5 overflow-hidden rounded-full bg-white/5 px-4 py-1.5 text-[11px] font-normal text-foreground transition-all hover:bg-white/10 hover:shadow-[0_0_20px_rgba(255,255,255,0.1)] active:scale-[0.97]"
           >
             <div className="absolute inset-0 bg-gradient-to-r from-primary/10 to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
             <Plus className="relative h-3.5 w-3.5 text-primary" />

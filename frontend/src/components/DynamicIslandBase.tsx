@@ -113,7 +113,7 @@ export function DynamicIsland({
         layout={entryDone}
         onClick={() => toggleOnClick && setExpanded(!expanded)}
         transition={{ layout: ISLAND_SPRING }}
-        className="bg-background text-foreground font-mono"
+        className="bg-background text-foreground font-sans"
         style={{
           ...islandStyle,
           pointerEvents: "auto",

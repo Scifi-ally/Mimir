@@ -13,6 +13,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { cn, fmtNum, fmtPct } from "@/lib/format";
 import { Card, CardHeader, CardContent } from "@/components/mimir/card";
+import { Skeleton } from "@/components/atoms/Skeleton";
 import { api } from "@/lib/api";
 import { marketDataStore } from "@/providers/MarketDataProvider";
 import type { Candle, SymbolForecast, Suggestion } from "@/types/api";
@@ -804,7 +805,7 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
         </div>
         <div className="flex shrink-0 items-center gap-4 w-full sm:w-auto justify-between sm:justify-end overflow-x-auto pb-1 [&::-webkit-scrollbar]:hidden">
           {chartMode === "actual" && (
-            <div className="flex items-center gap-3 text-xs font-bold tracking-wider text-foreground/70">
+            <div className="flex items-center gap-3 text-xs font-semibold tracking-[0.1em] text-foreground/70 font-sans">
             <div className="flex bg-foreground/5 rounded-full p-0.5 items-center">
               {TIMEFRAMES.map((tf) => (
                 <button
@@ -812,7 +813,7 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
                   type="button"
                   onClick={() => setTimeframe(tf)}
                   className={cn(
-                    "relative px-2.5 py-1 text-[10px] font-bold tracking-widest rounded-full transition-colors",
+                    "relative px-2.5 py-1 text-[10px] font-semibold tracking-[0.1em] rounded-full transition-colors",
                     timeframe.label === tf.label
                       ? "text-background"
                       : "text-foreground/50 hover:text-foreground"
@@ -856,13 +857,13 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
               </button>
             </div>
           )}
-          <div className="flex items-center gap-3 text-xs font-bold tracking-wider text-foreground/70 pl-3">
+          <div className="flex items-center gap-3 text-xs font-semibold tracking-[0.1em] text-foreground/70 pl-3 font-sans">
           <div className="flex bg-foreground/5 rounded-full p-0.5 items-center pl-1">
             <button
               type="button"
               onClick={() => onChartModeChange("actual")}
               className={cn(
-                "relative px-2.5 py-1 text-[10px] font-bold tracking-widest rounded-full transition-colors",
+                "relative px-2.5 py-1 text-[10px] font-semibold tracking-[0.1em] rounded-full transition-colors",
                 chartMode === "actual"
                   ? "text-background"
                   : "text-foreground/50 hover:text-foreground"
@@ -882,7 +883,7 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
               onClick={() => onChartModeChange("forecast")}
               disabled={!forecast}
               className={cn(
-                "relative px-2.5 py-1 text-[10px] font-bold tracking-widest rounded-full transition-colors",
+                "relative px-2.5 py-1 text-[10px] font-semibold tracking-[0.1em] rounded-full transition-colors",
                 chartMode === "forecast"
                   ? "text-background"
                   : "text-foreground/50 hover:text-foreground",
@@ -913,7 +914,7 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
           <div 
             ref={legendRef}
             style={{ display: 'none' }}
-            className="absolute top-2 left-2 z-10 flex-wrap gap-2 text-[10px] sm:text-xs font-mono font-normal text-muted-foreground bg-background/80 backdrop-blur-sm px-2 py-1 rounded shadow-sm pointer-events-none"
+            className="absolute top-2 left-2 z-10 flex-wrap gap-2 text-[10px] sm:text-xs font-mono font-normal text-foreground/70 pointer-events-none [text-shadow:0_0_6px_var(--background),0_0_2px_var(--background)]"
           />
         )}
 
@@ -923,7 +924,7 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
             animate={{ opacity: 1, y: 0 }}
             className="absolute bottom-6 left-6 z-10 flex flex-col gap-1.5 text-xs font-mono bg-background/90 backdrop-blur-md px-3 py-2 border border-border/20 rounded shadow-lg pointer-events-none min-w-[160px]"
           >
-            <div className="font-normal border-b border-border/20 pb-1 mb-1 text-foreground/90 uppercase tracking-widest text-[10px]">
+            <div className="font-normal border-b border-border/20 pb-1 mb-1 text-foreground/90 uppercase tracking-[0.08em] text-[10px]">
               Chronos Projection
               {forecastIsFallback && <span className="text-yellow-500"> · Heuristic</span>}
             </div>
@@ -943,31 +944,25 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
         )}
         
         {loading && (
-          <motion.div 
-            className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none gap-4 bg-background/40 backdrop-blur-sm"
+          <motion.div
+            className="absolute inset-0 pointer-events-none bg-background/40 backdrop-blur-sm flex flex-col justify-end overflow-hidden"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={FADE_FAST}
           >
-            <motion.div 
-              className="flex flex-col items-center gap-2"
-              animate={{ scale: [1, 1.05, 1] }}
-              transition={{ repeat: Infinity, duration: 2 }}
-            >
-              <div className="h-8 w-8 rounded-full border-2 border-accent border-t-transparent animate-spin" />
-              <motion.span 
-                className="text-xs font-normal text-foreground/70"
-                animate={{ opacity: [0.6, 1, 0.6] }}
-                transition={{ repeat: Infinity, duration: 2 }}
-              >
-                Loading chart...
-              </motion.span>
-            </motion.div>
-            <div className="flex flex-col justify-end p-4 gap-2 w-full h-1/2">
-              <div className="w-full h-1/2 animate-pulse bg-secondary/20 rounded-md" />
-              <div className="w-full h-1/4 animate-pulse bg-secondary/10 rounded-md" />
-              <div className="w-full h-1/6 animate-pulse bg-secondary/5 rounded-md" />
+            {/* Candlestick-shaped skeleton: staggered bars along a fake price
+                path so the placeholder reads "chart", not "wait". */}
+            <div className="flex items-end gap-[6px] px-6 pb-14 h-[70%] w-full">
+              {[38, 52, 44, 60, 55, 70, 62, 78, 66, 58, 72, 84, 76, 64, 70, 88, 80, 68, 74, 60, 66, 78, 72, 86].map((h, i) => (
+                <Skeleton key={i} className="flex-1 min-w-0 rounded-[2px]" style={{ height: `${h}%` }} />
+              ))}
+            </div>
+            {/* Time axis */}
+            <div className="flex justify-between px-6 pb-4">
+              {[0, 1, 2, 3, 4, 5].map((i) => (
+                <Skeleton key={i} className="h-2.5 w-10" />
+              ))}
             </div>
           </motion.div>
         )}

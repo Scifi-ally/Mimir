@@ -4,6 +4,7 @@ import { X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { api } from "@/lib/api";
 import { FADE_FAST, FADE_SLOW } from "@/lib/motion";
+import { Skeleton } from "@/components/atoms/Skeleton";
 
 interface ReportsLibraryProps {
   isOpen: boolean;
@@ -51,7 +52,7 @@ export function ReportsLibrary({ isOpen, onClose }: ReportsLibraryProps) {
           >
             {/* Header */}
             <div className="relative px-8 pt-6 pb-4 flex flex-col sm:flex-row items-center justify-between shrink-0 border-b border-border/10">
-              <h2 className="text-[10px] font-mono font-normal tracking-widest uppercase text-muted-foreground flex items-center gap-2">
+              <h2 className="text-[10px] font-mono font-normal tracking-[0.08em] uppercase text-muted-foreground flex items-center gap-2">
                 Daily Reports
                 <span className="text-foreground/40 hidden sm:inline ml-2">— End of day market summaries</span>
               </h2>
@@ -67,12 +68,17 @@ export function ReportsLibrary({ isOpen, onClose }: ReportsLibraryProps) {
             {/* Content */}
             <div className="flex-1 overflow-y-auto px-8 py-4 flex flex-col">
               {reportsQuery.isPending ? (
-                <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground">
-                  <div className="animate-pulse flex gap-2 items-center">
-                    <div className="w-2 h-2 rounded-full bg-primary animate-bounce" />
-                    <div className="w-2 h-2 rounded-full bg-primary animate-bounce delay-100" />
-                    <div className="w-2 h-2 rounded-full bg-primary animate-bounce delay-200" />
-                  </div>
+                <div className="flex flex-col gap-3 pt-2">
+                  {[0, 1, 2, 3, 4].map((i) => (
+                    <div key={i} className="flex flex-col gap-2 rounded-xl border border-border/10 p-4">
+                      <div className="flex items-center justify-between">
+                        <Skeleton className="h-3.5 w-32" />
+                        <Skeleton className="h-2.5 w-20" />
+                      </div>
+                      <Skeleton className="h-2.5 w-full max-w-lg" />
+                      <Skeleton className="h-2.5 w-2/3" />
+                    </div>
+                  ))}
                 </div>
               ) : reportsQuery.isError ? (
                 <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground">

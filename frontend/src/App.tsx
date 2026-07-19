@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { MotionConfig } from "framer-motion";
 import Dashboard from "@/pages/Dashboard";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { DynamicIsland } from "@/components/DynamicIsland";
@@ -31,8 +32,12 @@ export default function App() {
 
   return (
     <ErrorBoundary>
-      <Dashboard />
-      <DynamicIsland />
+      {/* System-level reduced-motion: Framer swaps transforms/springs for
+          opacity cross-fades app-wide when the OS asks for less motion. */}
+      <MotionConfig reducedMotion="user">
+        <Dashboard />
+        <DynamicIsland />
+      </MotionConfig>
     </ErrorBoundary>
   );
 }

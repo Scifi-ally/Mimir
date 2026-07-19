@@ -5,6 +5,7 @@ import { AlertCircle, ArrowRight, Plus, X, Loader2 } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/format";
 import { useStore } from "@/store/useStore";
+import { FADE_FAST, SPRING_SNAPPY } from "@/lib/motion";
 
 type Operator = ">" | "<" | ">=" | "<=" | "==" | "!=" | "CROSSES_ABOVE" | "CROSSES_BELOW";
 type ScheduleMode = "MARKET_OPEN" | "MARKET_CLOSE" | "EVERY_MINUTE" | "TIME" | "ON_DEMAND" | "EVERY_CANDLE";
@@ -203,11 +204,13 @@ function CustomSelect({ value, onChange, options, editable = false, placeholder 
             <>
               <button aria-label="Close options" className="fixed inset-0 z-[10000] cursor-default" onClick={() => setOpen(false)} />
               <motion.div
-                initial={{ opacity: 0, y: 3, scale: 0.98 }}
+                initial={{ opacity: 0, y: -4, scale: 0.96 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: 3, scale: 0.98 }}
-                transition={{ duration: 0.14 }}
-                style={{ top: coords.top, left: coords.left }}
+                exit={{ opacity: 0, y: -4, scale: 0.96 }}
+                transition={FADE_FAST}
+                // Anchored origin: the menu grows down-and-out from its trigger,
+                // not from its own center — keeps the spatial relationship.
+                style={{ top: coords.top, left: coords.left, transformOrigin: "top left" }}
                 className="fixed z-[10001] flex max-h-[300px] min-w-[140px] flex-col overflow-y-auto rounded-lg border border-border/20 bg-popover p-1 shadow-2xl backdrop-blur-xl text-popover-foreground"
               >
                 {filteredOptions.length ? filteredOptions.map((option, index) => (
@@ -395,7 +398,9 @@ export function AdvancedRuleBuilder({ onComplete, initialRule }: { onComplete: (
   const renderNode = (node: RuleNode, path: number[], depth: number) => {
     if (node.type === "CONDITION") {
       return (
-        <div key={path.join("-")} className="group flex flex-wrap items-center gap-1.5 rounded-lg hover:bg-secondary/10 px-1 py-1 transition-colors">
+        // Entrance only — keys are positional (index paths), so exit animations
+        // would play on the wrong row after a removal; removals are instant.
+        <motion.div layout="position" initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} transition={SPRING_SNAPPY} key={path.join("-")} className="group flex flex-wrap items-center gap-1.5 rounded-lg hover:bg-secondary/10 px-1 py-1 transition-colors">
           <CustomSelect editable placeholder="Indicator" value={node.indicatorA} onChange={(value) => updateAt(path, () => ({ ...node, indicatorA: value }))} options={INDICATORS} />
           <CustomSelect value={node.operator} onChange={(value) => updateAt(path, () => ({ ...node, operator: value as Operator }))} options={OPERATORS} />
           <CustomSelect editable placeholder="Indicator or number" value={node.indicatorB} onChange={(value) => updateAt(path, () => ({ ...node, indicatorB: value }))} options={INDICATORS} />
@@ -418,7 +423,7 @@ export function AdvancedRuleBuilder({ onComplete, initialRule }: { onComplete: (
               <X className="h-3 w-3" />
             </button>
           )}
-        </div>
+        </motion.div>
       );
     }
 
@@ -430,20 +435,20 @@ export function AdvancedRuleBuilder({ onComplete, initialRule }: { onComplete: (
             onChange={(value) => updateAt(path, () => ({ ...node, type: value as "AND" | "OR" }))}
             options={[{ label: "All of the following are true", value: "AND" }, { label: "Any of the following are true", value: "OR" }]}
           />
-          <span className="text-[9px] uppercase tracking-widest text-muted-foreground">{node.rules.length} item{node.rules.length === 1 ? "" : "s"}</span>
+          <span className="text-[10px] uppercase tracking-[0.08em] text-muted-foreground">{node.rules.length} item{node.rules.length === 1 ? "" : "s"}</span>
           {depth > 0 && (
-            <button type="button" onClick={() => removeAt(path)} className="ml-auto text-[9px] font-normal uppercase tracking-wider text-destructive/70 hover:text-destructive">Remove group</button>
+            <button type="button" onClick={() => removeAt(path)} className="ml-auto text-[10px] font-normal uppercase tracking-wider text-destructive/70 hover:text-destructive">Remove group</button>
           )}
         </div>
         <div className="flex flex-col gap-1">
           {node.rules.map((child, index) => renderNode(child, [...path, index], depth + 1))}
         </div>
         <div className="flex items-center gap-2 px-1">
-          <button type="button" onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); appendTo(path, { type: "CONDITION", indicatorA: "RSI14", operator: "<", indicatorB: "30" }); }} className="flex items-center gap-1 rounded px-1.5 py-1 text-[9px] font-normal uppercase tracking-wider text-foreground/60 hover:bg-foreground/5 hover:text-foreground">
+          <button type="button" onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); appendTo(path, { type: "CONDITION", indicatorA: "RSI14", operator: "<", indicatorB: "30" }); }} className="flex items-center gap-1 rounded px-1.5 py-1 text-[10px] font-normal uppercase tracking-wider text-foreground/60 hover:bg-foreground/5 hover:text-foreground">
             <Plus className="h-2.5 w-2.5" /> Condition
           </button>
           {depth < 5 && (
-            <button type="button" onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); appendTo(path, { type: "AND", rules: [{ type: "CONDITION", indicatorA: "CLOSE", operator: ">", indicatorB: "SMA50" }] }); }} className="flex items-center gap-1 rounded px-1.5 py-1 text-[9px] font-normal uppercase tracking-wider text-foreground/60 hover:bg-foreground/5 hover:text-foreground">
+            <button type="button" onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); appendTo(path, { type: "AND", rules: [{ type: "CONDITION", indicatorA: "CLOSE", operator: ">", indicatorB: "SMA50" }] }); }} className="flex items-center gap-1 rounded px-1.5 py-1 text-[10px] font-normal uppercase tracking-wider text-foreground/60 hover:bg-foreground/5 hover:text-foreground">
               <Plus className="h-2.5 w-2.5" /> Group
             </button>
           )}
@@ -453,7 +458,7 @@ export function AdvancedRuleBuilder({ onComplete, initialRule }: { onComplete: (
   };
 
   return (
-    <div className="mx-auto flex w-[610px] shrink-0 flex-col gap-1 px-1 pb-1">
+    <div className="mx-auto flex w-full max-w-[610px] shrink-0 flex-col gap-1 px-1 pb-1">
       <div className="px-1 py-1">
         <div className="grid grid-cols-[auto_1fr_auto_auto] items-center gap-x-2 gap-y-1 text-[11px]">
           <span className="font-normal text-foreground/60">Scan</span>
@@ -518,7 +523,7 @@ export function AdvancedRuleBuilder({ onComplete, initialRule }: { onComplete: (
 
       <AnimatePresence mode="wait">
         {(validationError || createRuleMutation.error) && (
-          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="flex items-center gap-2 rounded-lg bg-destructive/10 px-3 py-1.5 text-xs text-destructive">
+          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} transition={FADE_FAST} className="flex items-center gap-2 rounded-lg bg-destructive/10 px-3 py-1.5 text-xs text-destructive">
             <AlertCircle className="h-4 w-4 shrink-0" />
             <span>{validationError || createRuleMutation.error?.message}</span>
           </motion.div>
