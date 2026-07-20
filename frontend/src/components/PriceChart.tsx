@@ -20,10 +20,10 @@ import type { Candle, SymbolForecast, Suggestion } from "@/types/api";
 import { FADE_FAST, SPRING_SNAPPY } from "@/lib/motion";
 
 const TIMEFRAMES = [
-  { label: "1D", days: 5, interval: "1minute" }, // 5 days to ensure we hit a trading session even on long weekends
-  { label: "1W", days: 7, interval: "15minute" },
-  { label: "1M", days: 30, interval: "60minute" },
-  { label: "1Y", days: 365, interval: "day" },
+  { label: "1m", days: 5, interval: "1minute" }, // 5 days to ensure we hit a trading session even on long weekends
+  { label: "15m", days: 7, interval: "15minute" },
+  { label: "1H", days: 30, interval: "60minute" },
+  { label: "1D", days: 365, interval: "day" },
 ] as const;
 
 const PROJECTION_LOOKBACK = { label: "90D", days: 90, interval: "day" as const };
@@ -79,7 +79,7 @@ interface PriceChartProps {
 // + several series). Dashboard re-renders ~4×/s during scans and on every query
 // refetch; without memo each of those re-runs the whole chart function body.
 export const PriceChart = memo(function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, position, isAuthenticated }: PriceChartProps) {
-  const [timeframe, setTimeframe] = useState<(typeof TIMEFRAMES)[number]>(TIMEFRAMES[0]); // Default to 1D
+  const [timeframe, setTimeframe] = useState<(typeof TIMEFRAMES)[number]>(TIMEFRAMES[3]); // Default to 1D
   const [showEma, setShowEma] = useState(true);
   const [showVwap, setShowVwap] = useState(true);
   const legendRef = useRef<HTMLDivElement>(null);

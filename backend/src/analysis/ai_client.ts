@@ -144,7 +144,17 @@ export async function checkAIHealth(): Promise<HealthResponse> {
     // slow. Probe the endpoint directly and let its own status speak for itself.
     const res = await axios.get(url, { timeout: AI_HEALTH_TIMEOUT_MS });
     const health = res.data as HealthResponse;
+    const previousStatus = cachedAIHealth?.value.status;
     cachedAIHealth = { value: health, checkedAt: Date.now() };
+
+    if (previousStatus && previousStatus !== health.status) {
+      import("../ws/websocket_server").then(({ broadcast }) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        broadcast({ event: "session_state_changed", data: {} } as any);
+      }).catch((err) => {
+        logger.error({ err }, "Failed to broadcast AI status change");
+      });
+    }
     return health;
   })();
 

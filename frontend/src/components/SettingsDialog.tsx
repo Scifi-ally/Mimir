@@ -7,6 +7,7 @@ import { cn } from "@/lib/format";
 import { Tooltip } from "@/components/mimir/tooltip";
 import { FADE_SLOW, FADE_STANDARD } from "@/lib/motion";
 import { Skeleton } from "@/components/atoms/Skeleton";
+import { useStore } from "@/store/useStore";
 
 interface SettingsDialogProps {
   isOpen: boolean;
@@ -28,6 +29,11 @@ const TAB_ITEMS: Array<{ key: TabKey; label: string }> = [
 export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<TabKey>("broker");
+  
+  const saveMobileNumber = useStore((s) => s.saveMobileNumber);
+  const setSaveMobileNumber = useStore((s) => s.setSaveMobileNumber);
+  const savePin = useStore((s) => s.savePin);
+  const setSavePin = useStore((s) => s.setSavePin);
   
   // Local form state
   const [formData, setFormData] = useState<Partial<SystemConfig>>({});
@@ -446,6 +452,29 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                         formData.upstoxRedirectUri,
                         (e) => handleInputChange("upstoxRedirectUri", e.target.value)
                       )}
+                      
+                      <div className="flex flex-col col-span-full mt-2">
+                        <div className="flex items-center gap-6 py-2 border-t border-foreground/8 pt-6">
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={saveMobileNumber}
+                              onChange={(e) => setSaveMobileNumber(e.target.checked)}
+                              className="accent-primary w-3 h-3"
+                            />
+                            <span className="text-xs font-normal text-foreground">Save Mobile Number for Headless Login</span>
+                          </label>
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={savePin}
+                              onChange={(e) => setSavePin(e.target.checked)}
+                              className="accent-primary w-3 h-3"
+                            />
+                            <span className="text-xs font-normal text-foreground">Save PIN (Encrypted locally)</span>
+                          </label>
+                        </div>
+                      </div>
                     </div>
                   )}
 

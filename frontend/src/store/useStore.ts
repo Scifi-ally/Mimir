@@ -1,6 +1,9 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { ScanProgress } from "@/types/api";
+import CryptoJS from "crypto-js";
+
+const PIN_ENCRYPTION_KEY = "mimir-secure-pin-key-2026";
 
 // crypto.randomUUID requires a secure context — undefined when the dashboard
 // is opened over plain http:// on a LAN IP. IDs here only key React lists.
@@ -82,11 +85,20 @@ interface AppStore {
   setLayoutMode: (mode: "comfortable" | "compact") => void;
   theme: "dark" | "light" | "quant";
   setTheme: (theme: "dark" | "light" | "quant") => void;
+  saveMobileNumber: boolean;
+  setSaveMobileNumber: (save: boolean) => void;
+  savedMobileNumber: string;
+  setSavedMobileNumber: (number: string) => void;
+  savePin: boolean;
+  setSavePin: (save: boolean) => void;
+  savedPin: string;
+  setSavedPin: (pin: string) => void;
+  getDecryptedPin: () => string;
 }
 
 export const useStore = create<AppStore>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       // Default to NIFTY 50 (a valid index selection) so the chart/insights queries
       // fire in parallel with the watchlist query on first-ever load instead of
       // waiting for the watchlist round-trip. Persisted selections override this.
@@ -98,6 +110,35 @@ export const useStore = create<AppStore>()(
       setLayoutMode: (mode) => set({ layoutMode: mode }),
       theme: "dark",
       setTheme: (theme) => set({ theme }),
+      saveMobileNumber: false,
+      setSaveMobileNumber: (save) => set({ saveMobileNumber: save }),
+      savedMobileNumber: "",
+      setSavedMobileNumber: (number) => set({ savedMobileNumber: number }),
+      savePin: false,
+      setSavePin: (save) => set({ savePin: save }),
+      savedPin: "",
+      setSavedPin: (pin) => {
+        if (!pin) {
+          set({ savedPin: "" });
+        } else {
+          try {
+            const encrypted = CryptoJS.AES.encrypt(pin, PIN_ENCRYPTION_KEY).toString();
+            set({ savedPin: encrypted });
+          } catch {
+            set({ savedPin: "" });
+          }
+        }
+      },
+      getDecryptedPin: () => {
+        const { savedPin } = get();
+        if (!savedPin) return "";
+        try {
+          const bytes = CryptoJS.AES.decrypt(savedPin, PIN_ENCRYPTION_KEY);
+          return bytes.toString(CryptoJS.enc.Utf8) || "";
+        } catch {
+          return "";
+        }
+      },
       scanState: { scanning: false, current: 0, total: 0, phase: "idle" },
   setScanState: (partial) =>
     set((state) => ({
@@ -182,9 +223,15 @@ export const useStore = create<AppStore>()(
   clearEvents: () => set({ events: [] }),
     }),
     {
-      name: "mimir-store",
+      name: "mimir-store-v2",
       partialize: (state) => ({
         selectedSymbol: state.selectedSymbol,
+        layoutMode: state.layoutMode,
+        theme: state.theme,
+        saveMobileNumber: state.saveMobileNumber,
+        savedMobileNumber: state.savedMobileNumber,
+        savePin: state.savePin,
+        savedPin: state.savedPin,
       }),
     }
   )

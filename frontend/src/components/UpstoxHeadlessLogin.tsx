@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import type { Variants } from "framer-motion";
 import { Loader2, ArrowRight, ShieldCheck, KeyRound, Phone } from "lucide-react";
 import { api } from "@/lib/api";
+import { useStore } from "@/store/useStore";
 
 interface Props {
   type: "trading" | "data";
@@ -26,10 +27,17 @@ const morphVariants: Variants = {
 };
 
 export function UpstoxHeadlessLogin({ type, onSuccess }: Props) {
+  const saveMobileNumber = useStore(s => s.saveMobileNumber);
+  const savedMobileNumber = useStore(s => s.savedMobileNumber);
+  const setSavedMobileNumber = useStore(s => s.setSavedMobileNumber);
+  const savePin = useStore(s => s.savePin);
+  const getDecryptedPin = useStore(s => s.getDecryptedPin);
+  const setSavedPin = useStore(s => s.setSavedPin);
+
   const [step, setStep] = useState<"detecting" | "phone" | "otp" | "pin">("detecting");
-  const [phone, setPhone] = useState("");
+  const [phone, setPhone] = useState(saveMobileNumber ? savedMobileNumber : "");
   const [otp, setOtp] = useState("");
-  const [pin, setPin] = useState("");
+  const [pin, setPin] = useState(savePin ? getDecryptedPin() : "");
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -88,6 +96,9 @@ export function UpstoxHeadlessLogin({ type, onSuccess }: Props) {
     setError(null);
     try {
       const res = await api.headlessAuth.startPhone(type, phone);
+      if (saveMobileNumber) {
+        setSavedMobileNumber(phone);
+      }
       if (res.status === "awaiting_otp") {
         setStep("otp");
       }
@@ -123,6 +134,9 @@ export function UpstoxHeadlessLogin({ type, onSuccess }: Props) {
     try {
       const res = await api.headlessAuth.submitPin(pin);
       if (res.status === "success") {
+        if (savePin) {
+          setSavedPin(pin);
+        }
         hasSucceeded.current = true;
         onSuccess();
       }

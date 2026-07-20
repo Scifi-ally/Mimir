@@ -138,9 +138,13 @@ export function useWebSocket() {
         nextSocketInt.send(JSON.stringify({ event: "subscribe", data: { topic: "system" } }));
         nextSocketInt.send(JSON.stringify({ event: "subscribe", data: { topic: "suggestions" } }));
         nextSocketInt.send(JSON.stringify({ event: "subscribe", data: { topic: "alerts" } }));
-        void queryClient.invalidateQueries({ queryKey: ["scan-status"] });
+        void queryClient.invalidateQueries({ queryKey: ["session"] });
+        void queryClient.invalidateQueries({ queryKey: ["status"] });
+        void queryClient.invalidateQueries({ queryKey: ["watchlist"] });
         void queryClient.invalidateQueries({ queryKey: ["monitoring"] });
         void queryClient.invalidateQueries({ queryKey: ["suggestions"] });
+        void queryClient.invalidateQueries({ queryKey: ["regime"] });
+        void queryClient.invalidateQueries({ queryKey: ["indian-context"] });
       };
 
       const handleCloseInt = () => {
@@ -431,6 +435,7 @@ export function useWebSocket() {
               break;
             case "session_state_changed":
               debouncedInvalidate(["session"]);
+              debouncedInvalidate(["status"]);
               debouncedInvalidate(["watchlist"]);
               break;
             case "indices_update":

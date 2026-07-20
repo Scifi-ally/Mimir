@@ -113,6 +113,7 @@ class UpstoxHeadlessAuth {
     try {
       const mobileInput = this.page.locator('#mobileNum, input[type="tel"]').first();
       await mobileInput.waitFor({ state: "visible", timeout: 10000 });
+      await mobileInput.fill('');
       await mobileInput.pressSequentially(phone, { delay: 100 });
 
       const getOtpBtn = this.page.locator('#getOtp, button:has-text("Get OTP")').first();
@@ -125,15 +126,14 @@ class UpstoxHeadlessAuth {
     } catch (e) {
       let errorMsg = null;
       try {
-        errorMsg = await this.page.locator('.eb.ap.aq.ar.as').first().innerText({ timeout: 1000 });
+        errorMsg = await this.page.locator('.eb.ap.aq.ar.as, .error, [role="alert"], .error-msg').first().innerText({ timeout: 1000 });
       } catch { /* ignore */ }
+      
       if (errorMsg) {
-        await this.cleanup();
-        throw new Error(errorMsg, { cause: e });
+        throw new Error(errorMsg); // Do not cleanup() on validation error
       }
 
       logger.error({ err: e }, "Failed to find phone input or click Get OTP");
-      await this.cleanup();
       throw new Error("Failed to start phone verification", { cause: e });
     }
   }
@@ -150,23 +150,48 @@ class UpstoxHeadlessAuth {
     try {
       const otpInput = this.page.locator('#otpNum, input[type="number"], input[name="otp"]').first();
       await otpInput.waitFor({ state: "visible", timeout: 10000 });
+      await otpInput.fill('');
       await otpInput.pressSequentially(otp, { delay: 100 });
 
       const continueBtn = this.page.locator('#continueBtn, button:has-text("Continue")').first();
+
+      const errorPromise = this.page.waitForFunction(() => {
+        const bodyText = document.body.innerText.toLowerCase();
+        if (bodyText.includes('incorrect otp') || bodyText.includes('invalid otp') || bodyText.includes('wrong otp')) {
+           return "Incorrect OTP entered";
+        }
+        const errs = document.querySelectorAll('.eb.ap.aq.ar.as, .error, [role="alert"], .error-msg, .invalid-feedback, .error-text');
+        for (const err of Array.from(errs)) {
+          if (err instanceof HTMLElement && err.innerText && err.innerText.trim().length > 0 && err.offsetParent !== null) {
+            return err.innerText.trim();
+          }
+        }
+        return false;
+      }, { timeout: 14500 }).then(res => res ? res.jsonValue() : null).catch(() => null);
+
+      const pinInputPromise = this.page.waitForSelector('#val, input[type="password"], input[name="pin"]', { state: "visible", timeout: 15000 }).catch(() => null);
+
       await continueBtn.click();
 
-      const pinInput = this.page.locator('#val, input[type="password"], input[name="pin"]').first();
-      try {
-        await pinInput.waitFor({ state: "visible", timeout: 5000 });
-        return { status: "awaiting_pin" };
-      } catch (err) {
-        const errorMsg = await this.page.locator('.eb.ap.aq.ar.as, .error, [role="alert"], .error-msg').first().innerText({ timeout: 1000 }).catch(() => null);
-        if (errorMsg) throw new Error(errorMsg, { cause: err });
-        throw new Error("Invalid OTP or Upstox didn't proceed", { cause: err });
+      const raceResult = await Promise.race([
+        pinInputPromise,
+        errorPromise
+      ]);
+
+      if (typeof raceResult === 'string') {
+        throw new Error("VALIDATION:" + raceResult);
       }
+
+      const pinInput = await pinInputPromise;
+      if (pinInput) {
+        return { status: "awaiting_pin" };
+      }
+      throw new Error("Invalid OTP or Upstox didn't proceed");
     } catch (e) {
       logger.error({ err: e }, "Failed to submit OTP");
-      await this.cleanup();
+      if (e instanceof Error && e.message.startsWith("VALIDATION:")) {
+        throw new Error(e.message.replace("VALIDATION:", ""));
+      }
       throw new Error("Failed to submit OTP", { cause: e });
     }
   }
@@ -178,12 +203,37 @@ class UpstoxHeadlessAuth {
     try {
       const pinInput = this.page.locator('#val, input[type="password"], input[name="pin"]').first();
       await pinInput.waitFor({ state: "visible", timeout: 10000 });
+      await pinInput.fill('');
       await pinInput.pressSequentially(pin, { delay: 100 });
 
       const continueBtn = this.page.locator('#continueBtn, button:has-text("Continue")').first();
 
+      const errorPromise = this.page.waitForFunction(() => {
+        const bodyText = document.body.innerText.toLowerCase();
+        if (bodyText.includes('incorrect pin') || bodyText.includes('invalid pin') || bodyText.includes('wrong pin')) {
+           return "Incorrect PIN entered";
+        }
+        const errs = document.querySelectorAll('.eb.ap.aq.ar.as, .error, [role="alert"], .error-msg, #pin-error, .invalid-feedback, .error-text');
+        for (const err of Array.from(errs)) {
+          if (err instanceof HTMLElement && err.innerText && err.innerText.trim().length > 0 && err.offsetParent !== null) {
+            return err.innerText.trim();
+          }
+        }
+        return false;
+      }, { timeout: 14500 }).then(res => res ? res.jsonValue() : null).catch(() => null);
+
       const redirectPromise = this.page.waitForNavigation({ url: /code=/, timeout: 15000 }).catch(() => null);
+      
       await continueBtn.click();
+
+      const raceResult = await Promise.race([
+        redirectPromise,
+        errorPromise
+      ]);
+
+      if (typeof raceResult === 'string') {
+        throw new Error("VALIDATION:" + raceResult);
+      }
 
       const response = await redirectPromise;
       let finalCode: string | null = null;
@@ -217,7 +267,9 @@ class UpstoxHeadlessAuth {
       throw new Error("Did not receive authorization code");
     } catch (e) {
       logger.error({ err: e }, "Failed to submit PIN");
-      await this.cleanup();
+      if (e instanceof Error && e.message.startsWith("VALIDATION:")) {
+        throw new Error(e.message.replace("VALIDATION:", ""));
+      }
       throw new Error("Failed to complete login", { cause: e });
     }
   }
