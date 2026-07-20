@@ -1,0 +1,10 @@
+# Cloudflare Tunnel — exposes the locally-running Mimir stack at mimir.dpdns.org
+# Run with:  cloudflared tunnel --config deploy\cloudflared-config.yml run mimir
+#
+# The frontend server on :3000 (vite dev or `vite preview`) proxies /api and /ws
+# to the backend on :5000, so a single ingress rule covers the whole app,
+# including WebSockets (wss:// works automatically through the tunnel).
+ingress:
+  - hostname: mimir.dpdns.org
+    service: http://localhost:3000
+  - service: http_status:404

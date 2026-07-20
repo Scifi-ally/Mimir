@@ -64,3 +64,12 @@ backend/complete.csv.gz
 # AI Agent Configuration
 .agents/
 backend/mimir.db
+
+# Upstox saved browser session (cookies) for fast re-auth
+backend/.upstox_session.json
+.upstox_session.json
+
+# Sweep/AI Temp Files
+.sweep_out/
+.sweep_tmp/
+.claude/
