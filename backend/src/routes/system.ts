@@ -20,6 +20,7 @@ import {
 } from "../market_data/market_state";
 import { getMarketFeedSnapshot } from "../market_data/market_feed";
 import { upstoxConnectionManager } from "../intelligence/connection_manager";
+import { upstoxHeadlessAuth } from "../upstox/headless_auth";
 import { getEffectiveUniverse } from "../analysis/stock_scanner";
 import { getConnectedClients, broadcast } from "../ws/websocket_server";
 import { isSchedulerRunning } from "../scheduler/jobs";
@@ -443,6 +444,77 @@ router.get("/system/auth-url", (req, res) => {
 
   const url = getAuthorizationUrl(state, type);
   res.json({ url });
+});
+
+// POST /api/system/headless/begin — reuses saved Upstox session; usually lands
+// straight on the PIN step (or completes outright) so phone + OTP are skipped.
+router.post("/system/headless/begin", async (req, res) => {
+  const cfg = getConfig();
+  const type = req.body.type === "data" ? "data" : "trading";
+
+  if (type === "trading" && (!cfg.upstoxApiKey || !cfg.upstoxApiSecret)) {
+    res.status(400).json({ error: "Upstox API key and secret are required" });
+    return;
+  } else if (type === "data" && (!cfg.upstoxDataApiKey || !cfg.upstoxDataApiSecret)) {
+    res.status(400).json({ error: "Upstox Data API key and secret are required" });
+    return;
+  }
+
+  try {
+    const result = await upstoxHeadlessAuth.begin(type);
+    res.json(result);
+  } catch (err: unknown) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "Failed to start authorization" });
+  }
+});
+
+// POST /api/system/headless/phone
+router.post("/system/headless/phone", async (req, res) => {
+  const cfg = getConfig();
+  const type = req.body.type === "data" ? "data" : "trading";
+  const phone = req.body.phone;
+
+  if (type === "trading" && (!cfg.upstoxApiKey || !cfg.upstoxApiSecret)) {
+    res.status(400).json({ error: "Upstox API key and secret are required" });
+    return;
+  }
+
+  try {
+    // If begin() already opened the login page, just type into it; otherwise
+    // fall back to launching a fresh session (old flow).
+    const result = await upstoxHeadlessAuth.submitPhone(phone).catch(async () =>
+      upstoxHeadlessAuth.start(type, phone)
+    );
+    res.json(result);
+  } catch (err: unknown) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "Failed to start phone verification" });
+  }
+});
+
+// POST /api/system/headless/otp
+router.post("/system/headless/otp", async (req, res) => {
+  try {
+    const result = await upstoxHeadlessAuth.submitOTP(req.body.otp);
+    res.json(result);
+  } catch (err: unknown) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "Failed to submit OTP" });
+  }
+});
+
+// POST /api/system/headless/pin
+router.post("/system/headless/pin", async (req, res) => {
+  try {
+    const result = await upstoxHeadlessAuth.submitPIN(req.body.pin);
+    res.json(result);
+  } catch (err: unknown) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "Failed to submit PIN" });
+  }
+});
+
+// POST /api/system/headless/cancel
+router.post("/system/headless/cancel", async (_req, res) => {
+  await upstoxHeadlessAuth.cleanup();
+  res.json({ status: "cancelled" });
 });
 
 // GET /api/system/offhours-scan

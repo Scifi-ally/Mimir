@@ -95,8 +95,10 @@ async function doFetchOptionChain(): Promise<OptionChainSnapshot | null> {
     logger.info({ pcr: cache.pcr, maxPain: cache.maxPain }, "Option Chain data updated");
     return cache;
 
-  } catch (err: any) {
-    logger.warn({ error: err?.message || String(err), status: err?.response?.status }, "Option Chain fetch failed — no data available");
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    const status = (err as Record<string, Record<string, unknown>>)?.response?.status;
+    logger.warn({ error: errorMsg, status }, "Option Chain fetch failed — no data available");
     // Return null, never fabricated PCR/max-pain: these feed the UI and regime logic.
     return null;
   } finally {

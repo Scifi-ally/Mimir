@@ -113,6 +113,7 @@ describe("risk engine", async () => {
       maxSectorExposure: 2,
       minRiskReward: 1.8,
       minDailyVolume: 100_000,
+      minDailyTurnoverInr: 10_000_000,
       maxSameDirectionOpenPositions: 2,
       maxDeployedCapitalPct: 90,
     });

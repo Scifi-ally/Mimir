@@ -9,7 +9,7 @@
  * calendar awareness to handle transient failures and market holidays properly.
  */
 import axios from "axios";
-import { getAccessToken, invalidateAccessToken } from "../upstox/auth";
+import { getAccessToken, invalidateTokenByValue } from "../upstox/auth";
 import { updateMarketState } from "./market_state";
 import { recordVixSample } from "../analysis/market_internals";
 import { detectRegime } from "../analysis/regime_detector";
@@ -69,7 +69,7 @@ let prevCloseFetchedDate: string | null = null;
  * Called once per day at market open (09:15 IST).
  */
 export async function initMarketFeed(): Promise<void> {
-  const token = getAccessToken("trading");
+  const token = getAccessToken("data");
   if (!token) {
     feedSnapshot = {
       ...feedSnapshot,
@@ -130,7 +130,7 @@ export async function initMarketFeed(): Promise<void> {
       return;
     }
 
-    const prevCandle = candles.find((c) => {
+    const prevCandle = candles.find((c: unknown[]) => {
       const ts = c?.[0];
       return typeof ts === "string" && getISTDateStr(new Date(ts)) < todayIST;
     });
@@ -165,7 +165,7 @@ export async function initMarketFeed(): Promise<void> {
  * HIGH FIX (Issue #9): Added retry logic with exponential backoff for transient failures
  */
 export async function updateMarketFeed(): Promise<void> {
-  const token = getAccessToken("trading");
+  const token = getAccessToken("data");
   if (!token) {
     feedSnapshot = {
       ...feedSnapshot,
@@ -182,7 +182,7 @@ export async function updateMarketFeed(): Promise<void> {
   }
 
   // HIGH FIX (Issue #9): Implement retry logic with exponential backoff
-  let lastError: any = null;
+  let lastError: unknown = null;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
       const prices = await marketFeedClient.fetchLTPForInstruments(
@@ -267,7 +267,9 @@ export async function updateMarketFeed(): Promise<void> {
       const status = err?.response?.status;
       
       if (status === 401 || status === 403) {
-        await invalidateAccessToken(`market_feed_http_${status}`);
+        // getAccessToken("data") may have fallen back to the trading token —
+        // invalidate whichever token was actually used, not a guessed type
+        await invalidateTokenByValue(token, `market_feed_http_${status}`);
         feedSnapshot = {
           ...feedSnapshot,
           status: "unauthenticated",
@@ -301,13 +303,15 @@ export async function updateMarketFeed(): Promise<void> {
     note: `Market feed poll failed after ${MAX_RETRIES} retries`,
   };
 
-  if (lastError && (lastError.name === "AxiosError" || lastError.isAxiosError)) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const errData = lastError as any;
+  if (errData && (errData.name === "AxiosError" || errData.isAxiosError)) {
     logger.error(
       {
-        status: lastError.response?.status,
-        message: lastError.message,
-        code: lastError.code,
-        url: lastError.config?.url,
+        status: errData.response?.status,
+        message: errData.message,
+        code: errData.code,
+        url: errData.config?.url,
         retries: MAX_RETRIES
       },
       "Market feed poll failed after all retries (AxiosError)",
@@ -334,7 +338,7 @@ export function resetMarketFeedCache(): void {
 }
 
 export function getMarketFeedSnapshot(): MarketFeedSnapshot {
-  const tokenPresent = getAccessToken("trading") !== null;
+  const tokenPresent = getAccessToken("data") !== null;
   return {
     ...feedSnapshot,
     authenticated: feedSnapshot.authenticated || tokenPresent,

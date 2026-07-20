@@ -318,6 +318,15 @@
   animation: pulse-dot 1.4s ease-in-out infinite;
 }
 
+/* Status-LED breathe — compositor-only (opacity), replaces per-LED framer loops */
+@keyframes led-breathe {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+.animate-led-breathe {
+  animation: led-breathe 3s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
 
 
 ::-webkit-scrollbar {

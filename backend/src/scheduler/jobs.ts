@@ -711,9 +711,7 @@ export function startScheduler(): void {
       },
     });
 
-    let attempts = 0;
     marketOpenRetryTimer = setInterval(() => {
-      attempts += 1;
       const status = getOffHoursScanStatus();
       if (!status.running) {
         if (marketOpenRetryTimer) {

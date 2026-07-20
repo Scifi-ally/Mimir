@@ -3,7 +3,6 @@ import { cn, fmtNum, toFixed, fmtPct } from "@/lib/format";
 import type { SystemStatus, MarketRegime } from "@/types/api";
 import { ArrowUpRight, ArrowDownRight } from "lucide-react";
 import { Tooltip } from "@/components/mimir/tooltip";
-import { motion } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 
@@ -11,11 +10,12 @@ function StatusLed({ status }: { status: "ok" | "warn" | "error" | "unknown" }) 
   const color = status === "ok" ? "bg-green-500" : status === "warn" ? "bg-yellow-500" : status === "error" ? "bg-red-500" : "bg-neutral-500";
   const shadow = status === "ok" ? "rgba(34,197,94,0.5)" : status === "warn" ? "rgba(234,179,8,0.5)" : status === "error" ? "rgba(239,68,68,0.5)" : "rgba(115,115,115,0.3)";
 
+  // CSS keyframe (led-breathe) instead of a framer-motion animate loop: each
+  // motion-driven LED is a persistent JS animation frame consumer; the status
+  // bar renders 4+ of them. Compositor-driven CSS is visually identical.
   return (
-    <motion.div
-      animate={{ opacity: [0.6, 1, 0.6] }}
-      transition={{ duration: 3, repeat: Infinity, ease: [0.45, 0, 0.55, 1] }}
-      className={cn("w-[5px] h-[5px] rounded-full shrink-0", color)}
+    <div
+      className={cn("w-[5px] h-[5px] rounded-full shrink-0 animate-led-breathe", color)}
       style={{ boxShadow: `0 0 6px ${shadow}` }}
     />
   );

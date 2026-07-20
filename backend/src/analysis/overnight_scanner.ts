@@ -39,7 +39,7 @@ interface AggregatedWatchlistCandidate {
 function fitConditionForStorage(condition: string): string {
   // Sanitize non-ASCII characters (e.g., ₹ -> Rs., … -> ...) to prevent Postgres WIN1252 encoding errors
   let sanitized = condition.replace(/₹/g, 'Rs.').replace(/…/g, '...');
-  sanitized = sanitized.replace(/[^\x00-\x7F]/g, '');
+  sanitized = sanitized.replace(/[^\x20-\x7E]/g, '');
 
   // If it's a JSON string, don't truncate it as that would break JSON validity
   if (sanitized.startsWith('{') && sanitized.endsWith('}')) {
@@ -524,7 +524,7 @@ export async function runOvernightScanner(
         if (errorMsg.length > 150) {
           errorMsg = errorMsg.substring(0, 150) + "...";
         }
-        throw new Error(`Database error: ${errorMsg}`);
+        throw new Error(`Database error: ${errorMsg}`, { cause: dbErr });
       }
     }
 

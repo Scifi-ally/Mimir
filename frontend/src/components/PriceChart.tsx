@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useMemo, useId } from "react";
+import { useEffect, useRef, useState, useMemo, useId, memo } from "react";
 import { motion } from "framer-motion";
 import {
   CandlestickSeries,
@@ -28,6 +28,43 @@ const TIMEFRAMES = [
 
 const PROJECTION_LOOKBACK = { label: "90D", days: 90, interval: "day" as const };
 
+function getNSECandleStart(epochSec: number, interval: string): number {
+  const IST_OFFSET = 19800; // +05:30 in seconds
+  const istEpoch = epochSec + IST_OFFSET;
+  
+  if (interval === "day") {
+    return istEpoch - (istEpoch % 86400) - IST_OFFSET;
+  }
+  
+  const d = new Date(istEpoch * 1000);
+  const h = d.getUTCHours();
+  const m = d.getUTCMinutes();
+  
+  // NSE Market Open: 09:15 IST, Close: 15:30 IST
+  const openMins = 9 * 60 + 15;
+  const closeMins = 15 * 60 + 30;
+  let currentMins = h * 60 + m;
+  
+  // If a tick arrives before 09:15, snap it to 09:15
+  if (currentMins < openMins) currentMins = openMins;
+  // If a tick arrives at or after 15:30, clamp it to the final bucket of the day
+  if (currentMins >= closeMins) currentMins = closeMins - 1;
+  
+  const bucketElapsed = currentMins - openMins;
+  
+  let intervalMins = 1;
+  if (interval === "15minute") intervalMins = 15;
+  else if (interval === "60minute") intervalMins = 60;
+  
+  const bucketStartElapsed = Math.floor(bucketElapsed / intervalMins) * intervalMins;
+  const bucketStartMins = openMins + bucketStartElapsed;
+  
+  const startOfDayIst = istEpoch - (istEpoch % 86400);
+  const bucketStartIst = startOfDayIst + bucketStartMins * 60;
+  
+  return bucketStartIst - IST_OFFSET;
+}
+
 interface PriceChartProps {
   symbol: string;
   chartMode: "actual" | "forecast";
@@ -38,7 +75,10 @@ interface PriceChartProps {
   isAuthenticated?: boolean;
 }
 
-export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, position, isAuthenticated }: PriceChartProps) {
+// memo: the chart is the single heaviest component (lightweight-charts instance
+// + several series). Dashboard re-renders ~4×/s during scans and on every query
+// refetch; without memo each of those re-runs the whole chart function body.
+export const PriceChart = memo(function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, position, isAuthenticated }: PriceChartProps) {
   const [timeframe, setTimeframe] = useState<(typeof TIMEFRAMES)[number]>(TIMEFRAMES[0]); // Default to 1D
   const [showEma, setShowEma] = useState(true);
   const [showVwap, setShowVwap] = useState(true);
@@ -68,14 +108,20 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
   const candles = useMemo(() => {
     const raw = candleData?.candles ?? [];
     if (!raw.length) return [];
-    
-    const sorted = [...raw].sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
+
+    // Parse timestamps once — avoids repeated Date.parse per candle (#11)
+    const withEpoch = raw.map(c => ({ ...c, _epoch: Date.parse(c.ts) }));
+    // Guard against malformed timestamps (#2)
+    const valid = withEpoch.filter(c => Number.isFinite(c._epoch));
+    valid.sort((a, b) => a._epoch - b._epoch);
+
     const clean: Candle[] = [];
-    
-    for (let i = 0; i < sorted.length; i++) {
-      const c = sorted[i]!;
-      if (i > 0 && Date.parse(c.ts) === Date.parse(sorted[i - 1]!.ts)) continue;
-      
+
+    for (let i = 0; i < valid.length; i++) {
+      const c = valid[i]!;
+      // Dedup by parsed epoch
+      if (i > 0 && c._epoch === valid[i - 1]!._epoch) continue;
+
       if (!Number.isFinite(c.close) || c.close <= 0 || !Number.isFinite(c.open) || c.open <= 0) continue;
 
       // Clamp outlier wicks (bad exchange prints) to the body so one bad high/low can't blow up y-axis autoscale
@@ -83,7 +129,8 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
       const bodyLow = Math.min(c.open, c.close);
       const hi = Number.isFinite(c.high) ? c.high : bodyHigh;
       const lo = Number.isFinite(c.low) ? c.low : bodyLow;
-      if (hi <= 0 || lo <= 0 || hi > c.close * 1.5 || lo < c.close * 0.5) {
+      // Compare against body range, not just close (#3)
+      if (hi <= 0 || lo <= 0 || hi > bodyHigh * 1.5 || lo < bodyLow * 0.5) {
         clean.push({ ...c, high: bodyHigh, low: bodyLow });
         continue;
       }
@@ -92,9 +139,22 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
     }
     return clean;
   }, [candleData?.candles]);
+
+  const atr = useMemo(() => {
+    if (candles.length < 14) return 0;
+    let sumTR = 0;
+    for (let i = candles.length - 14; i < candles.length; i++) {
+      const c = candles[i]!;
+      const prevC = candles[i - 1];
+      const prevClose = prevC ? prevC.close : c.open;
+      const tr = Math.max(c.high - c.low, Math.abs(c.high - prevClose), Math.abs(c.low - prevClose));
+      sumTR += tr;
+    }
+    return sumTR / 14;
+  }, [candles]);
+
   const forecast = forecastData?.available ? forecastData : null;
-  // Backend sends isFallback on the forecast payload; frontend SymbolForecast type doesn't declare it yet.
-  const forecastIsFallback = Boolean((forecast as (SymbolForecast & { isFallback?: boolean }) | null)?.isFallback);
+  const forecastIsFallback = Boolean(forecast?.isFallback);
   const loading = isCandlesLoading;
   const error = isCandlesError ? "Unavailable" : null;
   
@@ -125,7 +185,10 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
   const posStopLineRef = useRef<import("lightweight-charts").IPriceLine | null>(null);
   const posTargetLineRef = useRef<import("lightweight-charts").IPriceLine | null>(null);
   const aiTargetLineRef = useRef<import("lightweight-charts").IPriceLine | null>(null);
-  const liveBarRef = useRef<{ time: Time; open: number; high: number; low: number; close: number } | null>(null);
+  const liveBarRef = useRef<{ time: Time; open: number; high: number; low: number; close: number; volume: number; vwapTurnover: number } | null>(null);
+  // Keep activeTf in a ref so the tick handler always reads the latest value (#1)
+  const activeTfRef = useRef(activeTf);
+  activeTfRef.current = activeTf;
 
 
   // displayPrice and changePct removed to use LivePrice and LiveChangePct
@@ -293,14 +356,14 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
     chartRef.current = chart;
 
     chart.subscribeCrosshairMove((param) => {
-      if (!legendRef.current) return;
+      if (!legendRef.current || !containerRef.current) return;
       if (
         param.point === undefined ||
         !param.time ||
         param.point.x < 0 ||
-        param.point.x > containerRef.current!.clientWidth ||
+        param.point.x > containerRef.current.clientWidth ||
         param.point.y < 0 ||
-        param.point.y > containerRef.current!.clientHeight ||
+        param.point.y > containerRef.current.clientHeight ||
         !candleRef.current
       ) {
         legendRef.current.style.display = 'none';
@@ -340,10 +403,10 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
     if (clrLine && emaRef.current) {
       emaRef.current.applyOptions({ color: clrLine });
       vwapRef.current?.applyOptions({ color: "#f59e0b" });
-      lowerRef.current?.applyOptions({ color: clrLine + " 0.25)" });
-      upper90Ref.current?.applyOptions({ color: clrLine + " 0.1)" });
-      lower10Ref.current?.applyOptions({ color: clrLine + " 0.1)" });
-      medianRef.current?.applyOptions({ color: clrLine + " 0.9)" });
+      lowerRef.current?.applyOptions({ color: `color-mix(in srgb, ${clrLine} 25%, transparent)` });
+      upper90Ref.current?.applyOptions({ color: `color-mix(in srgb, ${clrLine} 10%, transparent)` });
+      lower10Ref.current?.applyOptions({ color: `color-mix(in srgb, ${clrLine} 10%, transparent)` });
+      medianRef.current?.applyOptions({ color: `color-mix(in srgb, ${clrLine} 90%, transparent)` });
     }
 
     const handleThemeChange = () => {
@@ -363,10 +426,10 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
       });
       emaRef.current.applyOptions({ color: clrLine });
       vwapRef.current?.applyOptions({ color: "#f59e0b" });
-      lowerRef.current?.applyOptions({ color: clrLine + " 0.25)" });
-      upper90Ref.current?.applyOptions({ color: clrLine + " 0.1)" });
-      lower10Ref.current?.applyOptions({ color: clrLine + " 0.1)" });
-      medianRef.current?.applyOptions({ color: clrLine + " 0.9)" });
+      lowerRef.current?.applyOptions({ color: `color-mix(in srgb, ${clrLine} 25%, transparent)` });
+      upper90Ref.current?.applyOptions({ color: `color-mix(in srgb, ${clrLine} 10%, transparent)` });
+      lower10Ref.current?.applyOptions({ color: `color-mix(in srgb, ${clrLine} 10%, transparent)` });
+      medianRef.current?.applyOptions({ color: `color-mix(in srgb, ${clrLine} 90%, transparent)` });
     };
 
     window.addEventListener("themechange", handleThemeChange);
@@ -388,6 +451,14 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
       if (upper90Ref.current) upper90Ref.current.setData([]);
       if (lower10Ref.current) lower10Ref.current.setData([]);
       liveBarRef.current = null;
+      // Clear price line refs so stale lines from previous symbol aren't leaked (#10)
+      entryLineRef.current = null;
+      stopLineRef.current = null;
+      targetLineRef.current = null;
+      posEntryLineRef.current = null;
+      posStopLineRef.current = null;
+      posTargetLineRef.current = null;
+      aiTargetLineRef.current = null;
     }
   }, [currentChartKey]);
 
@@ -431,6 +502,10 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
       value: c.close,
     }));
 
+    // Set candle data first so time scale is established before overlays (#7)
+    const loadedChartKey = `${symbol}-${activeTf.label}-${chartMode}`;
+    candleRef.current.setData(formatted);
+
     if (showEma && chartMode === "actual") {
       emaRef.current.setData(calcEma(closes, 20));
     }
@@ -443,23 +518,20 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
             high: liveBarRef.current.high,
             low: liveBarRef.current.low,
             close: liveBarRef.current.close,
-            volume: 1
+            volume: liveBarRef.current.volume,
+            vwapTurnover: liveBarRef.current.vwapTurnover
           }]
         : uniqueLiveCandles;
-      vwapRef.current.setData(calcVwap(vwapInput as Candle[]));
+      vwapRef.current.setData(calcVwap(vwapInput));
     }
 
-    const loadedChartKey = `${symbol}-${activeTf.label}-${chartMode}`;
-
-    candleRef.current.setData(formatted);
-
-    const volumes = uniqueLiveCandles.map((c, i) => {
-      const prevClose = i > 0 ? uniqueLiveCandles[i - 1].close : c.open;
+    const volumes = uniqueLiveCandles.map((c) => {
       return {
         time: c.parsedTime,
         value: Number.isFinite(c.volume) ? c.volume : 0,
+        // Use close >= open (body color) convention consistently (#8)
         color:
-          c.close >= prevClose
+          c.close >= c.open
             ? "rgba(34, 197, 94, 0.3)"
             : "rgba(239, 68, 68, 0.3)",
       };
@@ -656,7 +728,7 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
         });
       }
     }
-  }, [candles, suggestion, position, forecast, symbol, chartMode]);
+  }, [candles, suggestion, position, forecast, forecastIsFallback, symbol, chartMode]);
 
   // 4. Visibility & Chart Options Effect
   useEffect(() => {
@@ -705,24 +777,48 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
       const lastCandle = candles[candles.length - 1];
       if (!lastCandle || lastCandle.close <= 0) return;
 
-      // Ignore bad exchange ticks/spikes (>10% move in 1 tick). Compare against the freshest
-      // known close (live bar if present) so a legit trending move never wedges the chart.
+      // Ignore bad exchange ticks/spikes (dynamic threshold based on ATR).
       const refClose = liveBarRef.current?.close ?? lastCandle.close;
-      if (Math.abs(tickLtp - refClose) / refClose > 0.10) return;
+      const spikeThreshold = Math.max(atr * 5, refClose * 0.02); // #2: 5x ATR or 2%, whichever is larger
+      if (Math.abs(tickLtp - refClose) > spikeThreshold) return;
       prevLtp = tickLtp;
 
       const lastCandleSec = Math.floor(Date.parse(lastCandle.ts) / 1000);
       const nowSec = Math.floor(Date.now() / 1000);
-      const intervalSec = activeTf.interval === "1minute" ? 60 : activeTf.interval === "15minute" ? 900 : activeTf.interval === "60minute" ? 3600 : 86400;
+      const interval = activeTfRef.current.interval;
+      const intervalSec = interval === "1minute" ? 60 : interval === "15minute" ? 900 : interval === "60minute" ? 3600 : 86400;
 
-      // Align to the historical candle grid (IST for daily) — never local midnight,
-      // which mismatches Upstox IST buckets and gaps/kills daily live updates.
-      let targetTime = lastCandleSec;
-      if (nowSec - lastCandleSec >= intervalSec) {
-        targetTime = lastCandleSec + Math.floor((nowSec - lastCandleSec) / intervalSec) * intervalSec;
-      }
+      // #1: Align precisely to NSE market hours to prevent weekend gap bucket shifting
+      const nseBucket = getNSECandleStart(nowSec, interval);
+      const targetTime = Math.max(nseBucket, lastCandleSec); // Prevent going backwards
       const time = targetTime as Time;
       const isOpenNewBar = targetTime > lastCandleSec;
+
+      // Volume tracking
+      const cumVol = Number.isFinite(data.volume) ? (data.volume as number) : null;
+      let tickVolDelta = 0;
+
+      if (cumVol != null) {
+        if (lastCumVol != null && cumVol >= lastCumVol) {
+          tickVolDelta = cumVol - lastCumVol;
+        } else if (lastCumVol == null) {
+          tickVolDelta = 1; // Fallback for first tick
+        }
+
+        // Reset the base at each new bar (or when the daily counter resets on a new session)
+        if (barVolTime !== targetTime || (lastCumVol != null && cumVol < lastCumVol)) {
+          barVolTime = targetTime;
+          // #3: Snapshot base to previous tick's volume, so this tick's delta is assigned to the new bar
+          barVolBase = isOpenNewBar ? (lastCumVol ?? cumVol) : Math.max(0, cumVol - lastCandle.volume);
+        }
+        lastCumVol = cumVol;
+      }
+
+      const barVol = interval === "day"
+        ? (isOpenNewBar ? (cumVol || 1) : Math.max(lastCandle.volume, cumVol || 0))
+        : cumVol != null && barVolBase != null
+          ? Math.max(cumVol - barVolBase, 1)
+          : (isOpenNewBar ? 1 : lastCandle.volume);
 
       if (!liveBarRef.current || liveBarRef.current.time !== time) {
         // Flush previous live bar and fill any skipped empty buckets so no gap appears
@@ -737,18 +833,25 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
             }
           }
         }
-        const barOpen = isOpenNewBar ? tickLtp : lastCandle.open;
+        // When opening a new bar, use the previous bar's close as the open
+        // (not tickLtp which may have gapped), matching standard candlestick behaviour.
+        const prevClose = prev ? prev.close : lastCandle.close;
+        const barOpen = isOpenNewBar ? prevClose : lastCandle.open;
         liveBarRef.current = {
           time,
           open: barOpen,
-          high: isOpenNewBar ? tickLtp : Math.max(Number.isFinite(lastCandle.high) ? lastCandle.high : tickLtp, tickLtp),
-          low: isOpenNewBar ? tickLtp : Math.min(Number.isFinite(lastCandle.low) ? lastCandle.low : tickLtp, tickLtp),
+          high: isOpenNewBar ? Math.max(barOpen, tickLtp) : Math.max(Number.isFinite(lastCandle.high) ? lastCandle.high : tickLtp, tickLtp),
+          low: isOpenNewBar ? Math.min(barOpen, tickLtp) : Math.min(Number.isFinite(lastCandle.low) ? lastCandle.low : tickLtp, tickLtp),
           close: tickLtp,
+          volume: barVol,
+          vwapTurnover: tickLtp * tickVolDelta // #4: precision VWAP tick accumulator
         };
       } else {
         liveBarRef.current.high = Math.max(liveBarRef.current.high, tickLtp);
         liveBarRef.current.low = Math.min(liveBarRef.current.low, tickLtp);
         liveBarRef.current.close = tickLtp;
+        liveBarRef.current.volume = barVol;
+        liveBarRef.current.vwapTurnover += tickLtp * tickVolDelta;
       }
       
       candleRef.current.update({
@@ -759,34 +862,18 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
         close: liveBarRef.current.close,
       });
 
-      const cumVol = Number.isFinite(data.volume) ? (data.volume as number) : null;
-      if (cumVol != null) {
-        // Reset the base at each new bar (or when the daily counter resets on a new session)
-        if (barVolTime !== targetTime || (lastCumVol != null && cumVol < lastCumVol)) {
-          barVolTime = targetTime;
-          barVolBase = isOpenNewBar ? cumVol : cumVol - lastCandle.volume;
-        }
-        lastCumVol = cumVol;
-      }
-      // A fresh day bucket starts from today's cumulative volume only — flooring it at the
-      // previous day's total (lastCandle.volume) is correct solely when updating that same bar.
-      const barVol = activeTf.interval === "day"
-        ? (isOpenNewBar ? (cumVol || 1) : Math.max(lastCandle.volume, cumVol || 0))
-        : cumVol != null && barVolBase != null
-          ? Math.max(cumVol - barVolBase, 1)
-          : (isOpenNewBar ? 1 : lastCandle.volume);
-
       volumeRef.current.update({
         time: liveBarRef.current.time,
         value: barVol,
         color: tickLtp >= liveBarRef.current.open ? "rgba(34,197,94,0.3)" : "rgba(239,68,68,0.3)",
       });
+
     });
 
     return () => {
       unsub();
     };
-  }, [symbol, candles, activeTf.interval]);
+  }, [symbol, candles, atr, activeTf.interval]);
 
   const projMeta = chartMode === "forecast" && forecast;
 
@@ -1004,7 +1091,7 @@ export function PriceChart({ symbol, chartMode, onChartModeChange, suggestion, p
       </CardContent>
     </Card>
   );
-}
+});
 
 function calcEma(data: { time: Time; value: number }[], period: number) {
   if (!data.length) return [];
@@ -1016,14 +1103,15 @@ function calcEma(data: { time: Time; value: number }[], period: number) {
   });
 }
 
-function calcVwap(candles: Candle[]) {
+function calcVwap(candles: (Candle & { parsedTime?: Time; vwapTurnover?: number })[]) {
   let cumVol = 0;
   let cumVolPrice = 0;
   let prevDay = -1;
   return candles.map((c) => {
     // Session VWAP resets on the IST trading day, not the viewer's local day.
     // 19800000 ms = +05:30; IST has no DST so a fixed offset is safe.
-    const d = new Date(Date.parse(c.ts) + 19800000);
+    const epochMs = c.parsedTime != null ? (c.parsedTime as number) * 1000 : Date.parse(c.ts);
+    const d = new Date(epochMs + 19800000);
     const day = d.getUTCFullYear() * 10000 + (d.getUTCMonth() + 1) * 100 + d.getUTCDate();
     if (day !== prevDay) {
       cumVol = 0;
@@ -1034,11 +1122,18 @@ function calcVwap(candles: Candle[]) {
     const safeLow = Number.isFinite(c.low) ? c.low : c.close || 0;
     const safeClose = Number.isFinite(c.close) ? c.close : 0;
     const safeVol = Number.isFinite(c.volume) ? c.volume : 0;
-    const typical = (safeHigh + safeLow + safeClose) / 3;
+    
     cumVol += safeVol;
-    cumVolPrice += typical * safeVol;
-    const vwap = cumVol === 0 ? typical : cumVolPrice / cumVol;
-    return { time: Math.floor(Date.parse(c.ts) / 1000) as Time, value: vwap };
+    if (c.vwapTurnover != null && c.vwapTurnover > 0) {
+      cumVolPrice += c.vwapTurnover;
+    } else {
+      const typical = (safeHigh + safeLow + safeClose) / 3;
+      cumVolPrice += typical * safeVol;
+    }
+    
+    const vwap = cumVol === 0 ? safeClose : cumVolPrice / cumVol;
+    const timeSec = c.parsedTime ?? Math.floor(epochMs / 1000) as Time;
+    return { time: timeSec, value: vwap };
   });
 }
 

@@ -140,7 +140,7 @@ class TickDistributionServer {
       return;
     }
 
-    let shouldStreamToUI = true;
+    const shouldStreamToUI = true;
 
     // Throttled mode during live market scans: filter micro-ticks only from
     // UI streaming. Analysis still receives every valid tick below.

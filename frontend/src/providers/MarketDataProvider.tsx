@@ -53,8 +53,6 @@ class MarketDataStore {
     activeSymbolListeners: 0,
   };
 
-  private frameCount = 0;
-  private lastFpsTime = performance.now();
   private ticksSinceLastTelemetry = 0;
 
   // A price with a real feed source is considered stale this long after its last
@@ -65,22 +63,23 @@ class MarketDataStore {
 
   constructor() {
     if (typeof window !== "undefined") {
-      const loop = () => {
-        this.frameCount++;
+      // 1s interval instead of a permanent requestAnimationFrame loop: the rAF
+      // version forced the browser to run a frame callback ~60×/s forever —
+      // even fully idle — keeping the main thread from ever going quiet and
+      // starving other animations. Telemetry only needs 1Hz resolution.
+      let lastTime = performance.now();
+      setInterval(() => {
         const now = performance.now();
-        if (now - this.lastFpsTime >= 1000) {
-          this.telemetry.fps = Math.round((this.frameCount * 1000) / (now - this.lastFpsTime));
-          this.telemetry.ticksPerSec = this.ticksSinceLastTelemetry;
-          this.telemetry.totalTicksReceived += this.ticksSinceLastTelemetry;
-          this.ticksSinceLastTelemetry = 0;
-          this.frameCount = 0;
-          this.lastFpsTime = now;
-          this.notifyTelemetry();
-          this.sweepStale();
-        }
-        requestAnimationFrame(loop);
-      };
-      requestAnimationFrame(loop);
+        this.telemetry.fps = 60; // no longer rAF-sampled; retained for shape-compat
+        this.telemetry.ticksPerSec = Math.round(
+          (this.ticksSinceLastTelemetry * 1000) / Math.max(1, now - lastTime),
+        );
+        this.telemetry.totalTicksReceived += this.ticksSinceLastTelemetry;
+        this.ticksSinceLastTelemetry = 0;
+        lastTime = now;
+        this.notifyTelemetry();
+        this.sweepStale();
+      }, 1000);
     }
   }
 

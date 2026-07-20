@@ -46,7 +46,7 @@ export async function addManualMonitoredSymbols(symbols: string[]): Promise<Moni
   }
   if (added) {
     await syncMonitoredSubscriptions();
-    const token = getAccessToken("trading");
+    const token = getAccessToken("data");
     if (token && results.length > 0) {
       void (async () => {
         try {

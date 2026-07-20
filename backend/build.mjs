@@ -26,7 +26,7 @@ const options = {
   external: [
     'axios', 'cookie-parser', 'cors', 'dotenv', 'express', 'ioredis', 
     'msgpackr', 'node-cron', 'pg', 'pino', 'pino-http', 'protobufjs', 
-    'upstox-js-sdk', 'ws', 'yahoo-finance2', 'zod'
+    'upstox-js-sdk', 'ws', 'yahoo-finance2', 'zod', 'playwright', 'playwright-core'
   ],
   plugins: [esbuildPluginPino({ transports: ['pino-pretty'] })],
 };

@@ -12,6 +12,17 @@ export interface TradingConfig {
   maxSectorExposure: number;
   minRiskReward: number;
   minDailyVolume: number;
+  // Minimum average daily traded VALUE (₹). Share count alone admits penny
+  // stocks (₹5 × 500k shares = ₹25L — unfillable without moving the price).
+  // 5 crore matches MIN_TURNOVER in scripts/research_meanrev.ts.
+  minDailyTurnoverInr: number;
+  // Hard regime gate: block BUY in TRENDING_DOWN and SELL in TRENDING_UP at
+  // ANY VIX level (legacy behavior only gated when VIX > 18). Counter-trend
+  // entries are the classic bleed in a directional market.
+  strictRegimeGate: boolean;
+  // Max NEW suggestions inserted per trading day. Discovery lists 20+ deep are
+  // for scanning; a trade list is 2-3 high-conviction names.
+  maxSuggestionsPerDay: number;
   vixPauseThreshold: number;
   // Minimum score required (0-10) for a candidate to be considered
   minSuggestionScore: number;
@@ -47,12 +58,18 @@ export interface TradingConfig {
 
 export const defaultConfig: TradingConfig = {
   tradingCapital: 10000,
-  maxRiskPerTradePct: 1.5,
+  // 1% of capital risked per trade (was 1.5%). Survival math: at 1% a 10-loss
+  // streak draws down ~10%; at 1.5% the same streak is ~14% and needs a 16%
+  // gain to recover. DB row overrides this default.
+  maxRiskPerTradePct: 1.0,
   maxDailyLossPct: 3.0,
   maxOpenPositions: 5,
   maxSectorExposure: 2,
   minRiskReward: 1.8,
   minDailyVolume: 500000,
+  minDailyTurnoverInr: 50_000_000, // ₹5 crore
+  strictRegimeGate: true,
+  maxSuggestionsPerDay: 5,
   vixPauseThreshold: 22,
   minSuggestionScore: 7.5,  // Raised to enforce high quality setups only
   minMtfConfluencePct: 75,   // Raised for strong multi-timeframe alignment
@@ -121,6 +138,10 @@ function rowToConfig(row: typeof tradingConfigTable.$inferSelect): TradingConfig
     maxSectorExposure: row.maxSectorExposure ?? defaultConfig.maxSectorExposure,
     minRiskReward: numberOrDefault(row.minRiskReward, defaultConfig.minRiskReward),
     minDailyVolume: row.minDailyVolume ?? defaultConfig.minDailyVolume,
+    // Not DB-persisted (no column yet) — override via MIN_DAILY_TURNOVER_INR env
+    minDailyTurnoverInr: numberOrDefault(process.env["MIN_DAILY_TURNOVER_INR"], defaultConfig.minDailyTurnoverInr),
+    strictRegimeGate: process.env["STRICT_REGIME_GATE"] !== "false",
+    maxSuggestionsPerDay: numberOrDefault(process.env["MAX_SUGGESTIONS_PER_DAY"], defaultConfig.maxSuggestionsPerDay),
     vixPauseThreshold: numberOrDefault(row.vixPauseThreshold, defaultConfig.vixPauseThreshold),
     minSuggestionScore: numberOrDefault(row.minSuggestionScore, defaultConfig.minSuggestionScore),
     minMtfConfluencePct: numberOrDefault(row.minMtfConfluencePct, defaultConfig.minMtfConfluencePct),

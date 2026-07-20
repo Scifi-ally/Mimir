@@ -6,7 +6,7 @@ const router: IRouter = Router();
 router.get("/alerts/history", async (_req, res) => {
   try {
     const alerts = await getAlertHistory();
-    const mappedAlerts = alerts.map((a: any) => ({
+    const mappedAlerts = alerts.map((a) => ({
       ...a,
       createdAt: a.createdAt || a.timestamp
     }));

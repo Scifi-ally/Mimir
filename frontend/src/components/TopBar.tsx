@@ -15,8 +15,6 @@ interface TopBarProps {
   wsConnected: boolean;
   onAuthorize: (type?: "trading" | "data") => void;
   authorizing: boolean;
-  activeSignals: number;
-  activeSignalCount?: number;
   scanning?: boolean;
   scanProgress?: number;
   onOpenSuggestions: () => void;
@@ -36,8 +34,6 @@ export const TopBar = memo(function TopBar({
   wsConnected,
   onAuthorize,
   authorizing,
-  activeSignals,
-  activeSignalCount = 0,
   scanning,
   scanProgress,
   onOpenSuggestions,
@@ -50,7 +46,6 @@ export const TopBar = memo(function TopBar({
 
   const [isLight, setIsLight] = useState(false);
   const [startingScan, setStartingScan] = useState(false);
-  const totalActiveSignals = activeSignalCount || activeSignals || 0;
   const [stoppingScan, setStoppingScan] = useState(false);
   const queryClient = useQueryClient();
   const { data: tradingMode } = useQuery({
@@ -236,13 +231,8 @@ export const TopBar = memo(function TopBar({
               className="apple-hover h-7 flex items-center gap-1.5 text-[10px] px-3 font-medium bg-foreground/[0.03] text-foreground/70 hover:bg-foreground/[0.08] hover:text-foreground transition-all duration-200 rounded-lg"
               title="View Signals Generated"
             >
-              <BarChart2 strokeWidth={3} className="h-3.5 w-3.5 sm:mr-0.5" />
-              <span className="hidden sm:inline">Signals</span>
-              {totalActiveSignals > 0 && (
-                <span className="ml-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-bull px-1 text-[10px] font-normal text-black">
-                  {totalActiveSignals}
-                </span>
-              )}
+              <BarChart2 strokeWidth={3} className="h-3.5 w-3.5 mr-0.5" />
+              <span>Signals</span>
             </Button>
             </motion.div>
 

@@ -41,6 +41,8 @@ export type IslandConfig = {
   showSuccessOnly?: boolean;
   hideCancel?: boolean;
   isNotification?: boolean;
+  isLocked?: boolean;
+  forceOverride?: boolean;
   duration?: number;
   onConfirm?: () => Promise<boolean | void> | boolean | void;
   onCancel?: () => void;
@@ -144,7 +146,12 @@ export const useStore = create<AppStore>()(
   mergeIndices: (data) =>
     set((state) => ({ indices: { ...state.indices, ...data } })),
   islandConfig: null,
-  showIsland: (config) => set({ islandConfig: config }),
+  showIsland: (config) => set((state) => {
+    if (state.islandConfig?.isLocked && !config.forceOverride && config.title !== "") {
+      return state;
+    }
+    return { islandConfig: config };
+  }),
   hideIsland: () => set({ islandConfig: null }),
   commandPaletteOpen: false,
   commandPaletteSearch: "",

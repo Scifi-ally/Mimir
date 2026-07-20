@@ -28,7 +28,6 @@ export const AnimatedNumber = memo(function AnimatedNumber({
   prefix = "",
   suffix = "",
   showSign = false,
-  duration: _ = 0.4,
   formatFn,
   flashColor = true,
 }: AnimatedNumberProps) {

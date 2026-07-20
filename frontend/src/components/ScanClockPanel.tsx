@@ -29,20 +29,24 @@ interface ScanClockPanelProps {
 
 const GLYPHS = "₹0123456789ABCDEFXKMNPRSTVZ+−%▲▼·";
 const CELL = 20;          // px per cell (logical)
-const TICK_MS = 50;       // scramble cadence (20fps)
+const TICK_MS = 50;       // scramble cadence while scanning (20fps)
+const AMBIENT_TICK_MS = 120; // idle/standby cadence (~8fps) — ambient, not a progress read
 const FONT = "11px ui-monospace, SFMono-Regular, Menlo, monospace";
 
-function randGlyph(): string {
-  return GLYPHS[(Math.random() * GLYPHS.length) | 0];
+function randGlyphIdx(): number {
+  return (Math.random() * GLYPHS.length) | 0;
 }
 
 const GlyphField = memo(function GlyphField({ progress, active, reduced }: { progress: number; active: boolean; reduced: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   // Progress lives in a ref so the rAF loop reads it without re-arming effects
   const progressRef = useRef(progress);
-  progressRef.current = progress;
   const activeRef = useRef(active);
-  activeRef.current = active;
+
+  useEffect(() => {
+    progressRef.current = progress;
+    activeRef.current = active;
+  }, [progress, active]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -54,7 +58,7 @@ const GlyphField = memo(function GlyphField({ progress, active, reduced }: { pro
 
     let cols = 0;
     let rows = 0;
-    let glyphs: string[] = [];
+    let glyphs: number[] = [];   // index into GLYPHS
     let jitter: number[] = [];   // per-cell threshold noise for an organic wave edge
     let heat: number[] = [];     // recently-changed cells glow briefly
     let raf = 0;
@@ -62,6 +66,64 @@ const GlyphField = memo(function GlyphField({ progress, active, reduced }: { pro
     let disposed = false;
 
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+    // Theme-aware palette — the canvas can't use CSS vars directly, so read the
+    // html.light class per draw (cheap) and flip glyph inks accordingly.
+    const palette = () => {
+      const light = document.documentElement.classList.contains("light");
+      return light
+        ? {
+            locked: "rgba(22,140,66,0.55)",
+            heatBase: 0.3,
+            heatInk: "40,40,40",
+            idle: "rgba(70,70,70,0.22)",
+            wave: "34,160,80",
+          }
+        : {
+            locked: "rgba(34,197,94,0.42)",
+            heatBase: 0.25,
+            heatInk: "220,220,220",
+            idle: "rgba(160,160,160,0.20)",
+            wave: "34,197,94",
+          };
+    };
+
+    /* Sprite atlas: every glyph pre-rendered in every ink variant, blitted with
+       drawImage per cell. The old path issued ~1k fillText + fillStyle changes
+       per frame (text rasterization each time) — the main source of animation
+       jank while a scan runs. Blits are pure compositor-friendly copies.
+       Heat glow is quantized to HEAT_LEVELS discrete alphas (visually
+       indistinguishable from continuous at 20fps decay). */
+    const HEAT_LEVELS = 6;
+    const VARIANTS = 2 + HEAT_LEVELS; // 0=idle, 1=locked, 2..=heat (bright→dim)
+    let atlas: HTMLCanvasElement | null = null;
+    let atlasIsLight: boolean | null = null;
+
+    const buildAtlas = (light: boolean) => {
+      const ink = palette();
+      const cellPx = CELL * dpr;
+      const a = document.createElement("canvas");
+      a.width = cellPx * GLYPHS.length;
+      a.height = cellPx * VARIANTS;
+      const actx = a.getContext("2d")!;
+      actx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      actx.font = FONT;
+      actx.textAlign = "center";
+      actx.textBaseline = "middle";
+      for (let v = 0; v < VARIANTS; v++) {
+        if (v === 0) actx.fillStyle = ink.idle;
+        else if (v === 1) actx.fillStyle = ink.locked;
+        else {
+          const heatVal = 1 - (v - 2) / (HEAT_LEVELS - 1); // 1 → 0
+          actx.fillStyle = `rgba(${ink.heatInk},${ink.heatBase + heatVal * 0.45})`;
+        }
+        for (let g = 0; g < GLYPHS.length; g++) {
+          actx.fillText(GLYPHS[g], g * CELL + CELL / 2, v * CELL + CELL / 2);
+        }
+      }
+      atlas = a;
+      atlasIsLight = light;
+    };
 
     const seed = () => {
       const { clientWidth: w, clientHeight: h } = parent;
@@ -73,7 +135,7 @@ const GlyphField = memo(function GlyphField({ progress, active, reduced }: { pro
       cols = Math.max(1, Math.ceil(w / CELL));
       rows = Math.max(1, Math.ceil(h / CELL));
       const n = cols * rows;
-      glyphs = Array.from({ length: n }, randGlyph);
+      glyphs = Array.from({ length: n }, randGlyphIdx);
       jitter = Array.from({ length: n }, () => (Math.random() - 0.5) * 0.14);
       heat = new Array(n).fill(0);
     };
@@ -81,10 +143,11 @@ const GlyphField = memo(function GlyphField({ progress, active, reduced }: { pro
     const draw = () => {
       const w = canvas.width / dpr;
       const h = canvas.height / dpr;
+      const light = document.documentElement.classList.contains("light");
+      if (!atlas || atlasIsLight !== light) buildAtlas(light);
+      const cellPx = CELL * dpr;
+
       ctx.clearRect(0, 0, w, h);
-      ctx.font = FONT;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
 
       const p = Math.min(1, Math.max(0, progressRef.current / 100));
       const isActive = activeRef.current;
@@ -92,43 +155,43 @@ const GlyphField = memo(function GlyphField({ progress, active, reduced }: { pro
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
           const i = r * cols + c;
-          const x = c * CELL + CELL / 2;
-          const y = r * CELL + CELL / 2;
           // Wave position for this cell (column fraction + per-cell noise)
           const cellPos = c / cols + jitter[i];
           const locked = isActive && cellPos < p;
 
+          let v: number;
           if (locked) {
-            // Settled: unmistakable green, the "processed" region of the market
-            ctx.fillStyle = "rgba(34,197,94,0.42)";
+            v = 1;
           } else if (heat[i] > 0) {
-            // Freshly scrambled: brief bright flicker, then decays
-            ctx.fillStyle = `rgba(220,220,220,${0.25 + heat[i] * 0.45})`;
+            v = 2 + Math.min(HEAT_LEVELS - 1, ((1 - heat[i]) * HEAT_LEVELS) | 0);
             heat[i] -= 0.14;
           } else {
-            ctx.fillStyle = "rgba(160,160,160,0.20)";
+            v = 0;
           }
-          ctx.fillText(glyphs[i], x, y);
+          ctx.drawImage(atlas!, glyphs[i] * cellPx, v * cellPx, cellPx, cellPx, c * CELL, r * CELL, CELL, CELL);
         }
       }
 
       // Wave front: a clear vertical scan-line shimmer at the progress edge
       if (isActive && p > 0 && p < 1) {
+        const ink = palette();
         const fx = p * w;
         const grad = ctx.createLinearGradient(fx - 44, 0, fx + 2, 0);
-        grad.addColorStop(0, "rgba(34,197,94,0)");
-        grad.addColorStop(1, "rgba(34,197,94,0.28)");
+        grad.addColorStop(0, `rgba(${ink.wave},0)`);
+        grad.addColorStop(1, `rgba(${ink.wave},0.28)`);
         ctx.fillStyle = grad;
         ctx.fillRect(fx - 44, 0, 46, h);
         // Hairline at the exact front — the "read head"
-        ctx.fillStyle = "rgba(34,197,94,0.55)";
+        ctx.fillStyle = `rgba(${ink.wave},0.55)`;
         ctx.fillRect(fx, 0, 1.5, h);
       }
     };
 
     const loop = (t: number) => {
       if (disposed) return;
-      if (t - lastTick >= TICK_MS) {
+      // Ambient (no scan) runs at a calmer cadence — same look, ~2.5× less work
+      const tickMs = activeRef.current ? TICK_MS : AMBIENT_TICK_MS;
+      if (t - lastTick >= tickMs) {
         lastTick = t;
         if (!reduced) {
           // Mutate a small fraction of cells each tick; ambient mode mutates fewer
@@ -137,7 +200,7 @@ const GlyphField = memo(function GlyphField({ progress, active, reduced }: { pro
           const count = Math.max(1, (n * churn) | 0);
           for (let k = 0; k < count; k++) {
             const i = (Math.random() * n) | 0;
-            glyphs[i] = randGlyph();
+            glyphs[i] = randGlyphIdx();
             heat[i] = 1;
           }
         }
@@ -194,8 +257,10 @@ export function ScanClockPanel({ scanProgress }: ScanClockPanelProps) {
       <GlyphField progress={progress} active={isActive} reduced={reduced} />
 
       {/* Soft vignette only at the very center so the symbol stays legible —
-          light enough that the matrix reads clearly across the whole field */}
-      <div className="absolute inset-0 pointer-events-none [background:radial-gradient(ellipse_35%_28%_at_center,rgba(0,0,0,0.5)_0%,transparent_100%)]" />
+          light enough that the matrix reads clearly across the whole field.
+          Uses --background so it fades to white in light mode instead of a
+          dark smudge. */}
+      <div className="absolute inset-0 pointer-events-none [background:radial-gradient(ellipse_35%_28%_at_center,color-mix(in_srgb,var(--background)_65%,transparent)_0%,transparent_100%)]" />
 
       {/* Center overlay — the symbol under the scanner is the hero.
           Progress % is NOT repeated here (TopBar owns the number; the matrix

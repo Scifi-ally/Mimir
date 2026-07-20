@@ -247,9 +247,16 @@ export async function assessRisk(
   const { entryPrice, stopLoss, target1, target2, riskReward, direction } = setup;
 
   // ── Check 1: Risk-Reward ratio ────────────────────────────────────────
-  const liquidityOk = snap.avgDailyVolume >= cfg.minDailyVolume;
+  const turnoverInr = snap.avgDailyVolume * snap.close;
+  const liquidityOk =
+    snap.avgDailyVolume >= cfg.minDailyVolume &&
+    turnoverInr >= cfg.minDailyTurnoverInr;
   if (!liquidityOk) {
-    rejections.push(`Liquidity ${snap.avgDailyVolume.toLocaleString()} below minimum ${cfg.minDailyVolume.toLocaleString()}`);
+    if (snap.avgDailyVolume < cfg.minDailyVolume) {
+      rejections.push(`Liquidity ${snap.avgDailyVolume.toLocaleString()} below minimum ${cfg.minDailyVolume.toLocaleString()}`);
+    } else {
+      rejections.push(`Turnover ₹${(turnoverInr / 1e7).toFixed(1)}cr below minimum ₹${(cfg.minDailyTurnoverInr / 1e7).toFixed(1)}cr`);
+    }
   }
 
   // ── Check 2: RR ratio ─────────────────────────────────────────────────

@@ -1346,6 +1346,17 @@ function scoreSetupQuality(
     };
   }
 
+  // Turnover (traded VALUE) gate: share count alone lets penny/micro-cap names
+  // through where the backtested edge can't survive spread + impact. Mirrors
+  // MIN_TURNOVER in the research scripts.
+  if (snap.avgDailyVolume * snap.close < getConfig().minDailyTurnoverInr) {
+    return {
+      accepted: false,
+      adjustment: 0,
+      reason: "below minimum turnover (₹ value)",
+    };
+  }
+
   if (!isIntradayFallback && isLateExtendedEntry(snap, candidate.direction)) {
     return { accepted: false, adjustment: 0, reason: "late extended entry" };
   }

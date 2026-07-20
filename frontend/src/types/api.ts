@@ -161,6 +161,7 @@ export interface SymbolForecast {
   compositeScore?: number;
   components?: Record<string, number>;
   lastClose?: number | null;
+  isFallback?: boolean;
   error?: string;
 }
 

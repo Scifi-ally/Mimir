@@ -207,10 +207,16 @@ export async function withRetry<T>(
 
         if (isAuthErr) {
           try {
-            const { invalidateAccessToken } = await import("../upstox/auth");
-            await invalidateAccessToken(
-              `Upstox API Authentication Failure: ${status} - ${errData?.errors?.[0]?.message || "Unauthorized"}`
-            );
+            const { invalidateTokenByValue, invalidateAccessToken } = await import("../upstox/auth");
+            const authHeader = axiosErr.config?.headers?.["Authorization"];
+            const failedToken = typeof authHeader === "string" && authHeader.startsWith("Bearer ")
+              ? authHeader.slice(7)
+              : null;
+            const reason = `Upstox API Authentication Failure: ${status} - ${errData?.errors?.[0]?.message || "Unauthorized"}`;
+            // Invalidate the exact token that failed — a blind default of "trading"
+            // here used to wipe the trading token when a data-key request 401'd.
+            if (failedToken) await invalidateTokenByValue(failedToken, reason);
+            else await invalidateAccessToken(reason);
           } catch (importErr) {
             logger.warn({ importErr }, "Failed to dynamically import invalidateAccessToken");
           }

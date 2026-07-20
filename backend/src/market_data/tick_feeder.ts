@@ -238,7 +238,7 @@ function startVolumePoller(): void {
     if (subscriptions.size === 0) return;
 
     try {
-      const token = getAccessToken("trading");
+      const token = getAccessToken("data");
       if (!token) return;
 
       const keysToFetch = Array.from(subscriptions.values())

@@ -21,14 +21,9 @@ interface WatchlistStackProps {
   sparklines?: Record<string, number[]>;
   onSelect: (symbol: string) => void;
   headerLeft?: React.ReactNode;
-  watchlistMetadata?: {
-    forDate: string;
-    isFallback?: boolean;
-    hasScan?: boolean;
-  };
 }
 
-export const WatchlistStack = memo(function WatchlistStack({ items, monitored, suggestions, selectedSymbol, sparklines, onSelect, headerLeft, watchlistMetadata }: WatchlistStackProps) {
+export const WatchlistStack = memo(function WatchlistStack({ items, monitored, suggestions, selectedSymbol, sparklines, onSelect, headerLeft }: WatchlistStackProps) {
   const safeOnSelect = onSelect || (() => {});
   const watchlistCounts = useStore((s) => s.watchlistCounts);
   const rows = useMemo(
@@ -226,18 +221,17 @@ export const WatchlistStack = memo(function WatchlistStack({ items, monitored, s
     <Card ref={cardRef} onWheel={handleWheel} className="@container flex h-full min-h-0 flex-col border-0 bg-transparent">
       <CardHeader className="shrink-0 h-[48px] px-3 py-0 space-y-0 flex flex-row items-center justify-between gap-4 overflow-hidden">
         {headerLeft}
-        {watchlistMetadata?.isFallback && (
-          <span className="shrink-0 whitespace-nowrap rounded-full bg-secondary/40 px-2 py-0.5 text-[10px] font-normal uppercase tracking-[0.08em] text-muted-foreground">
-            Showing {watchlistMetadata.forDate} (previous session)
-          </span>
-        )}
         {rows.length > 0 ? (
-          <div className="flex overflow-x-auto whitespace-nowrap flex-nowrap gap-4 text-[10px] font-medium uppercase tracking-[0.08em] font-sans [&::-webkit-scrollbar]:hidden pb-1 justify-end w-full items-center">
+          /* justify-end on an overflow-x container clips overflow off the
+             unreachable left edge (labels rendered as "CANNED 48"). ml-auto on
+             the first item right-aligns when there's room and degrades to a
+             normal left-anchored scroll when there isn't. */
+          <div className="flex overflow-x-auto whitespace-nowrap flex-nowrap gap-4 text-[10px] font-medium uppercase tracking-[0.08em] font-sans [&::-webkit-scrollbar]:hidden pb-1 w-full items-center">
             <button
               type="button"
               onClick={() => handleCategorySelect(null)}
               className={cn(
-                "transition-all duration-300 relative group font-semibold",
+                "ml-auto shrink-0 transition-all duration-300 relative group font-semibold",
                 "@max-md:px-3 @max-md:py-1.5 @max-md:rounded-full",
                 selectedCategory === null 
                   ? "@max-md:bg-foreground @max-md:text-background @min-md:text-foreground @min-md:border-foreground"
@@ -256,7 +250,7 @@ export const WatchlistStack = memo(function WatchlistStack({ items, monitored, s
                 type="button"
                 onClick={() => handleCategorySelect(cat)}
                 className={cn(
-                  "transition-all duration-300 relative group font-semibold",
+                  "shrink-0 transition-all duration-300 relative group font-semibold",
                   "@max-md:px-3 @max-md:py-1.5 @max-md:rounded-full",
                   selectedCategory === cat
                     ? "@max-md:bg-foreground @max-md:text-background @min-md:text-foreground @min-md:border-foreground"

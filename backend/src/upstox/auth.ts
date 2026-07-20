@@ -152,6 +152,15 @@ export async function invalidateAccessToken(reason?: string, type: "trading" | "
   logger.warn({ reason: reason ?? "unspecified" }, `Upstox ${type} access token invalidated`);
 }
 
+// Invalidate whichever token (trading and/or data) matches the exact token value
+// that just failed. Callers deep in retry wrappers don't know which type they
+// were handed (getAccessToken silently falls back to the other key), so guessing
+// a type wipes the wrong token — this resolves it by value instead.
+export async function invalidateTokenByValue(tokenValue: string, reason?: string): Promise<void> {
+  if (_tradingToken?.access_token === tokenValue) await invalidateAccessToken(reason, "trading");
+  if (_dataToken?.access_token === tokenValue) await invalidateAccessToken(reason, "data");
+}
+
 export function getAuthorizationUrl(state: string, type: "trading" | "data" = "trading"): string {
   const cfg = getConfig();
   

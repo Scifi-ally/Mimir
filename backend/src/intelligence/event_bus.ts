@@ -50,13 +50,12 @@ class InternalEventBus {
       // Guard against double-unsubscribe detaching a later re-subscription.
       if (detached) return;
       detached = true;
-      this.emitter.off(event, wrapped as any);
+      this.emitter.off(event, wrapped as (...args: unknown[]) => void);
       this.handlerMaps.get(event)?.delete(handler);
     };
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  onError(handler: (err: any) => void): () => void {
+  onError(handler: (err: unknown) => void): () => void {
     this.errorHandlers.add(handler);
     this.emitter.on("error", handler);
     return () => {

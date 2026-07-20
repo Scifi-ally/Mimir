@@ -104,6 +104,10 @@ class CircuitBreaker {
 
 const aiCircuitBreaker = new CircuitBreaker();
 const AI_HEALTH_CACHE_TTL_MS = 30_000;
+// A degraded/unreachable result is usually a cold-start snapshot (Chronos takes
+// a few seconds to load). Re-probe quickly so the dashboard self-heals fast
+// instead of pinning "DEGRADED" for a full cache window.
+const AI_HEALTH_DEGRADED_TTL_MS = 5_000;
 const AI_HEALTH_STALE_OK_MS = 2 * 60_000;
 // The /health endpoint returns a cached snapshot and is cheap, but on GPU hosts
 // the first uncached refresh shells out to nvidia-smi (up to ~2s). Give it a
@@ -121,8 +125,11 @@ let aiHealthInFlight: Promise<HealthResponse> | null = null;
 
 export async function checkAIHealth(): Promise<HealthResponse> {
   const now = Date.now();
-  if (cachedAIHealth && now - cachedAIHealth.checkedAt < AI_HEALTH_CACHE_TTL_MS) {
-    return cachedAIHealth.value;
+  if (cachedAIHealth) {
+    const ttl = cachedAIHealth.value.status === "healthy" ? AI_HEALTH_CACHE_TTL_MS : AI_HEALTH_DEGRADED_TTL_MS;
+    if (now - cachedAIHealth.checkedAt < ttl) {
+      return cachedAIHealth.value;
+    }
   }
   if (aiHealthInFlight) {
     return aiHealthInFlight;

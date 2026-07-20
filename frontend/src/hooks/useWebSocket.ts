@@ -253,6 +253,9 @@ export function useWebSocket() {
           case "scan_started":
             cancelScanFlush();
             clearScanLogs();
+            // Drop the previous scan's category counts so the header doesn't
+            // show stale "MOMENTUM 9 / BREAKOUT 3" chips while a new scan runs.
+            useStore.setState({ watchlistCounts: {} });
             setScanState({ scanning: true, phase: "running", current: 0, total: event.data.stocksToAnalyze, message: "Scanner started", updatedAt: Date.now() });
             break;
             case "scan_progress":
@@ -317,7 +320,7 @@ export function useWebSocket() {
                   updatedAt: Date.now(),
                 });
                 // Also clear the optimistic scanRunning flag in session cache
-                queryClient.setQueryData(["session"], (old: any) => old ? { ...old, scanRunning: false } : old);
+                queryClient.setQueryData(["session"], (old: Record<string, unknown> | undefined) => old ? { ...old, scanRunning: false } : old);
                 // Clear scan logs when scan completes or is stopped
                 if (phase === "stopped") {
                   clearScanLogs();
@@ -422,7 +425,7 @@ export function useWebSocket() {
                 // Safety net: if the alert is about a scan failure, force-reset scan state
                 if (lower.includes("scanner failed") || lower.includes("scan failed")) {
                   setScanState({ scanning: false, phase: "failed", current: 0, total: 0, message: msgText, updatedAt: Date.now() });
-                  queryClient.setQueryData(["session"], (old: any) => old ? { ...old, scanRunning: false } : old);
+                  queryClient.setQueryData(["session"], (old: Record<string, unknown> | undefined) => old ? { ...old, scanRunning: false } : old);
                 }
               }
               break;

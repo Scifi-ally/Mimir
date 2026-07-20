@@ -7,7 +7,7 @@
  */
 import { db } from "../../db/src";
 import { suggestionsTable, overnightWatchlistTable, rejectedCandidatesTable } from "../../db/src";
-import { eq, and, desc, gte, or, inArray } from "drizzle-orm";
+import { eq, and, desc, gte, or, inArray, sql } from "drizzle-orm";
 import { getAccessToken } from "../upstox/auth";
 import { getConfig } from "../config";
 import { getMarketState } from "../market_data/market_state";
@@ -472,13 +472,16 @@ export async function generateSuggestionsFromWatchlist(options?: {
     );
 
     const regime = state.regime;
-    const longBlock = regime === "TRENDING_DOWN" && !!state.indiaVix && state.indiaVix > 18;
+    // Strict mode blocks counter-trend generation at any VIX; legacy only >18.
+    const vixHigh = !!state.indiaVix && state.indiaVix > 18;
+    const gateOn = cfg.strictRegimeGate || vixHigh;
+    const longBlock = regime === "TRENDING_DOWN" && gateOn;
     if (longBlock) {
-      logger.info("Skipping long generation — downtrend with elevated VIX");
+      logger.info({ strict: cfg.strictRegimeGate, vix: state.indiaVix }, "Skipping long generation — downtrend regime gate");
     }
-    const shortBlock = regime === "TRENDING_UP" && !!state.indiaVix && state.indiaVix > 18;
+    const shortBlock = regime === "TRENDING_UP" && gateOn;
     if (shortBlock) {
-      logger.info("Skipping short generation — uptrend with elevated VIX");
+      logger.info({ strict: cfg.strictRegimeGate, vix: state.indiaVix }, "Skipping short generation — uptrend regime gate");
     }
 
     const normalizedCandidates = candidates.map((c) => ({
@@ -890,23 +893,28 @@ export async function ingestSignal(
   const minRequiredRR = options?.minRequiredRR ?? dynamicMinRR;
 
   // ── Regime execution guards ─────────────────────────────────────────
-  // No new longs into a downtrend (nor shorts into an uptrend) with elevated
-  // VIX. Mirrors the batch loop's gates so the realtime path, which calls
-  // ingestSignal directly, cannot bypass them.
-  if (marketState.indiaVix && marketState.indiaVix > 18) {
-    if (signal.signal === "BUY" && marketState.regime === "TRENDING_DOWN") {
-      logger.warn(
-        { symbol: signal.symbol, regime: marketState.regime, indiaVix: marketState.indiaVix },
-        "Discarding BUY suggestion: downtrend with elevated VIX",
-      );
-      return "downtrend_vix_long_block";
-    }
-    if (signal.signal === "SELL" && marketState.regime === "TRENDING_UP") {
-      logger.warn(
-        { symbol: signal.symbol, regime: marketState.regime, indiaVix: marketState.indiaVix },
-        "Discarding SELL suggestion: uptrend with elevated VIX",
-      );
-      return "uptrend_short_block";
+  // Strict mode (default): counter-trend entries are blocked at ANY VIX level —
+  // no longs in TRENDING_DOWN, no shorts in TRENDING_UP. Legacy mode only
+  // blocks when VIX > 18.
+  {
+    const cfg = getConfig();
+    const vixElevated = !!marketState.indiaVix && marketState.indiaVix > 18;
+    const gateActive = cfg.strictRegimeGate || vixElevated;
+    if (gateActive) {
+      if (signal.signal === "BUY" && marketState.regime === "TRENDING_DOWN") {
+        logger.warn(
+          { symbol: signal.symbol, regime: marketState.regime, indiaVix: marketState.indiaVix, strict: cfg.strictRegimeGate },
+          "Discarding BUY suggestion: counter-trend entry in downtrend",
+        );
+        return "downtrend_vix_long_block";
+      }
+      if (signal.signal === "SELL" && marketState.regime === "TRENDING_UP") {
+        logger.warn(
+          { symbol: signal.symbol, regime: marketState.regime, indiaVix: marketState.indiaVix, strict: cfg.strictRegimeGate },
+          "Discarding SELL suggestion: counter-trend entry in uptrend",
+        );
+        return "uptrend_short_block";
+      }
     }
   }
 
@@ -1091,6 +1099,20 @@ export async function ingestSignal(
       .limit(1);
 
     if (latestOpen) return "already_open";
+
+    // Daily suggestion cap: a handful of high-conviction trades beats spraying
+    // entries. Counts every row generated today regardless of current status.
+    const [{ todayCount }] = await db
+      .select({ todayCount: sql<number>`count(*)::int` })
+      .from(suggestionsTable)
+      .where(gte(suggestionsTable.generatedAt, todayStart));
+    if (todayCount >= cfg.maxSuggestionsPerDay) {
+      logger.warn(
+        { symbol: signal.symbol, todayCount, max: cfg.maxSuggestionsPerDay },
+        "Discarding suggestion: daily suggestion cap reached",
+      );
+      return "daily_cap";
+    }
 
     // DB-backed capacity gates so the realtime path (which bypasses the batch
     // generator's slot accounting) can't exceed the configured limits.

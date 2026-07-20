@@ -16,7 +16,9 @@ const PaperTradingPanel = lazy(() => import("@/components/PaperTradingPanel").th
 const ReportsLibrary = lazy(() => import("@/components/ReportsLibrary").then(m => ({ default: m.ReportsLibrary })));
 const SettingsDialog = lazy(() => import("@/components/SettingsDialog").then(m => ({ default: m.SettingsDialog })));
 
+import { UpstoxHeadlessLogin } from "@/components/UpstoxHeadlessLogin";
 import { useWebSocket, subscribeWsSymbols } from "@/hooks/useWebSocket";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useStore } from "@/store/useStore";
 import { api } from "@/lib/api";
 import { fmtNum } from "@/lib/format";
@@ -29,6 +31,10 @@ export default function Dashboard() {
 
   useWebSocket();
   const queryClient = useQueryClient();
+  // Mount only the active layout. Previously both desktop AND mobile trees
+  // rendered (CSS hidden), doubling PriceChart instances, ScanClock canvases,
+  // and every LivePrice subscription — the single biggest render-cost source.
+  const isDesktop = useMediaQuery("(min-width: 1024px)");
 
   const selectedSymbol = useStore((s) => s.selectedSymbol);
   const setSelectedSymbol = useStore((s) => s.setSelectedSymbol);
@@ -44,7 +50,7 @@ export default function Dashboard() {
     if (sessionQuery.data && !sessionQuery.data.scanRunning && scanState.scanning) {
       setScanState({ scanning: false, phase: "completed", current: 0, total: 0 });
     }
-  }, [sessionQuery.data?.scanRunning, scanState.scanning, setScanState]);
+  }, [sessionQuery.data, sessionQuery.data?.scanRunning, scanState.scanning, setScanState]);
 
   const [authorizing, setAuthorizing] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -80,7 +86,13 @@ export default function Dashboard() {
   }, [suggestionsQuery.data, monitoringQuery.data]);
 
   const watchlistItems = useMemo(() => {
-    const items = [...flattenWatchlist(watchlistQuery.data)];
+    // While a scan runs, the backend still serves the PREVIOUS session's rows
+    // (isFallback) — clearing the cache doesn't help because the refetch brings
+    // them right back. Suppress fallback rows mid-scan so the list only shows
+    // live scan candidates; the fresh watchlist lands when the scan completes.
+    const wl = watchlistQuery.data as (typeof watchlistQuery.data & { isFallback?: boolean }) | undefined;
+    const hideStale = scanning && Boolean(wl?.isFallback);
+    const items = hideStale ? [] : [...flattenWatchlist(wl)];
     const existingSymbols = new Set(items.map(i => i.symbol));
 
     if (scanLogs && scanLogs.length > 0) {
@@ -129,7 +141,7 @@ export default function Dashboard() {
       const bActive = activeSymbols.has(b.symbol) ? 1 : 0;
       return bActive - aActive || (b.priority ?? 0) - (a.priority ?? 0) || a.symbol.localeCompare(b.symbol);
     });
-  }, [watchlistQuery.data, scanning, scanLogs, activeSymbols, suggestionsQuery.data, monitoringQuery.data]);
+  }, [watchlistQuery, watchlistQuery.data, scanning, scanLogs, activeSymbols, suggestionsQuery.data, monitoringQuery.data]);
 
   const watchlistSymbolsKey = useMemo(() => watchlistItems.map(r => r.symbol).join(","), [watchlistItems]);
   const watchlistSymbols = useMemo(() => (watchlistSymbolsKey ? watchlistSymbolsKey.split(",") : []), [watchlistSymbolsKey]);
@@ -202,16 +214,6 @@ export default function Dashboard() {
     ? selectedSymbol
     : (watchlistItems[0]?.symbol || "NIFTY 50");
 
-  const watchlistMetadata = useMemo(() => {
-    if (!watchlistQuery.data) return undefined;
-    const data = watchlistQuery.data as { forDate: string; isFallback?: boolean; hasScan?: boolean };
-    return {
-      forDate: data.forDate,
-      isFallback: Boolean(data.isFallback),
-      hasScan: Boolean(data.hasScan ?? (watchlistItems.length > 0)),
-    };
-  }, [watchlistQuery.data, watchlistItems.length]);
-
   useEffect(() => {
     if ((!selectedSymbol || !isSelectedValid) && watchlistItems.length > 0) {
       setSelectedSymbol(watchlistItems[0]!.symbol);
@@ -229,22 +231,24 @@ export default function Dashboard() {
 
   // Removed the stale selection clear block so users can keep custom command-palette selections even when the watchlist is empty.
 
-  // Auto-select the first candidate found during or at the end of a live scan
   const prevScanActiveRef = useRef(false);
   useEffect(() => {
+    if (scanning && !prevScanActiveRef.current) {
+      // Scan just started - clear old watchlist so it doesn't linger
+      queryClient.setQueryData(["watchlist"], undefined);
+    }
     if (scanning && watchlistItems.length === 1 && watchlistItems[0]?.category === "SCANNED") {
       setSelectedSymbol(watchlistItems[0].symbol);
     }
     if (prevScanActiveRef.current && !isScanActive) {
       // Instantly fetch fresh watchlist data (and prices) when scan completes or stops
-      void queryClient.invalidateQueries({ queryKey: ["watchlist"] });
-      
-      // Clear scan logs when scan ends
-      useStore.getState().setScanLogs([]);
-      
-      if (watchlistItems.length > 0 && !watchlistItems.find(r => r.symbol === selectedSymbol)) {
-        setSelectedSymbol(watchlistItems[0].symbol);
-      }
+      queryClient.invalidateQueries({ queryKey: ["watchlist"] }).then(() => {
+        // Clear scan logs only after fresh data is fetched
+        useStore.getState().setScanLogs([]);
+        if (watchlistItems.length > 0 && !watchlistItems.find(r => r.symbol === selectedSymbol)) {
+          setSelectedSymbol(watchlistItems[0]?.symbol || "NIFTY 50");
+        }
+      });
     }
     prevScanActiveRef.current = isScanActive;
   }, [scanning, isScanActive, watchlistItems, selectedSymbol, setSelectedSymbol, queryClient]);
@@ -336,6 +340,7 @@ export default function Dashboard() {
       if (data.alreadyAuthenticated) {
         setAuthorizing(false);
         showIsland({
+          forceOverride: true,
           title: "",
           subtitle: "",
           showSuccessOnly: true,
@@ -344,13 +349,35 @@ export default function Dashboard() {
       }
       if (!data.url) throw new Error(data.error || "Authorization URL unavailable");
       
-      localStorage.setItem("upstox_auth_pending", "true");
-      window.location.assign(data.url);
+      setAuthorizing(false);
+      showIsland({
+        isLocked: true,
+        title: "Upstox Login",
+        subtitle: "Sign in securely via Headless Auth",
+        hideCancel: true,
+        content: (
+          <UpstoxHeadlessLogin 
+            type={type} 
+            onSuccess={() => {
+              queryClient.invalidateQueries({ queryKey: ["status"] });
+              showIsland({ forceOverride: true, title: "", subtitle: "", showSuccessOnly: true });
+            }} 
+          />
+        )
+      });
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : "Authorization failed");
       setAuthorizing(false);
+      showIsland({
+        forceOverride: true,
+        title: "Auth Failed",
+        subtitle: error instanceof Error ? error.message : "Authorization failed",
+        isDestructive: true,
+        showSuccessOnly: false,
+        duration: 4000
+      });
     }
-  }, [showIsland]);
+  }, [queryClient, showIsland]);
 
   const apiError = authError || sessionQuery.error?.message || watchlistQuery.error?.message || null;
 
@@ -425,8 +452,6 @@ export default function Dashboard() {
             wsConnected={wsConnected}
             onAuthorize={authorizeUpstox}
             authorizing={authorizing}
-            activeSignals={activeSymbols.size}
-            activeSignalCount={(suggestionsQuery.data ?? []).filter(s => s.status === "ACTIVE" || s.status === "PENDING").length}
             scanning={scanning}
             scanProgress={
               scanState.total > 0 
@@ -459,7 +484,8 @@ export default function Dashboard() {
         </AnimatePresence>
 
         <div className="min-h-0 flex-1 overflow-hidden p-4 pt-2">
-          <div className="hidden lg:flex w-full h-full gap-0">
+          {isDesktop ? (
+          <div className="flex w-full h-full gap-0">
             {/* Left Column: Chart (Top) & Watchlist (Bottom) */}
             <div className="flex flex-col w-[65%] xl:w-[72%] min-w-0 h-full pr-2">
                   <motion.div 
@@ -493,7 +519,7 @@ export default function Dashboard() {
                         <PriceChart 
                           symbol={activeSymbol} 
                           chartMode={chartMode} 
-                          onChartModeChange={(m) => setChartMode(m)} 
+                          onChartModeChange={setChartMode} 
                           isMarketOpen={session?.isMarketOpen} 
                           suggestion={suggestions.find(s => s.symbol === activeSymbol)} 
                           position={positions.find((p: import("@/types/api").PaperPosition) => p.symbol === activeSymbol && p.status === "OPEN")}
@@ -519,7 +545,6 @@ export default function Dashboard() {
                           suggestions={suggestions}
                           selectedSymbol={activeSymbol}
                           sparklines={sparklinesQuery.data}
-                          watchlistMetadata={watchlistMetadata}
                           onSelect={setSelectedSymbol}
                         />
                       ) : (
@@ -552,9 +577,8 @@ export default function Dashboard() {
               </motion.div>
             </div>
           </div>
-
-          {/* Mobile Fallback */}
-          <div className="flex lg:hidden flex-col gap-4 h-full overflow-y-auto">
+          ) : (
+          <div className="flex flex-col gap-4 h-full overflow-y-auto">
             {/* Chart scales with the viewport instead of a fixed 500px so short
                 phones aren't dominated by it and tablets get more chart. */}
             <div className="h-[55svh] min-h-[320px] max-h-[560px] shrink-0">
@@ -587,7 +611,7 @@ export default function Dashboard() {
                     <PriceChart 
                       symbol={activeSymbol} 
                       chartMode={chartMode} 
-                      onChartModeChange={(m) => setChartMode(m)} 
+                      onChartModeChange={setChartMode} 
                       isMarketOpen={session?.isMarketOpen} 
                       suggestion={suggestions.find(s => s.symbol === activeSymbol)} 
                       position={positions.find((p: import("@/types/api").PaperPosition) => p.symbol === activeSymbol && p.status === "OPEN")}
@@ -602,7 +626,7 @@ export default function Dashboard() {
                 {sidebarTab === "watchlist" ? (
                   <WatchlistStack
                     headerLeft={mobileTabHeader}
-                    items={watchlistItems} monitored={monitoring?.monitoredStocks} suggestions={suggestions} selectedSymbol={activeSymbol} sparklines={sparklinesQuery.data} watchlistMetadata={watchlistMetadata} onSelect={setSelectedSymbol}
+                    items={watchlistItems} monitored={monitoring?.monitoredStocks} suggestions={suggestions} selectedSymbol={activeSymbol} sparklines={sparklinesQuery.data} onSelect={setSelectedSymbol}
                   />
                 ) : (
                   <ScreenerTargetsStack
@@ -618,6 +642,7 @@ export default function Dashboard() {
               <DetailPanel key={activeSymbol} suggestions={suggestions} selectedSymbol={activeSymbol} session={session} isScanActive={isScanActive} />
             </div>
           </div>
+          )}
         </div>
         
         <StatusBar

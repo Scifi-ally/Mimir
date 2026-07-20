@@ -392,7 +392,7 @@ async function saveWatchlistCandidates(
     // Insert new candidates
     const rows = candidates.map((c) => {
       let condition = c.reasoning.replace(/₹/g, 'Rs.').replace(/…/g, '...');
-      condition = condition.replace(/[^\x00-\x7F]/g, '');
+      condition = condition.replace(/[^\x20-\x7E]/g, '');
       const maxLength = 250;
       if (condition.length > maxLength && !(condition.startsWith('{') && condition.endsWith('}'))) {
         condition = `${condition.slice(0, maxLength - 3).trimEnd()}...`;

@@ -101,10 +101,13 @@ export class UpstoxConnectionManager {
     this.isConnecting = true;
     this.publishStatus("connecting", "upstox_ws");
 
+    // Hoisted so the catch block can invalidate the exact token that failed
+    let token: string | null = null;
+
     try {
-      const token = getAccessToken("trading");
+      token = getAccessToken("data");
       if (!token) {
-        logger.warn("No Upstox access token available for Connection Manager");
+        logger.warn("No Upstox data access token available for Connection Manager");
         this.isConnecting = false;
         this.publishStatus("failed", "upstox_ws", "No access token");
         this.scheduleReconnect();
@@ -228,8 +231,10 @@ export class UpstoxConnectionManager {
       if (isAuthErr) {
         logger.warn({ status: err?.response?.status, error: err?.response?.data }, "Invalid Upstox token detected in connection manager; invalidating token");
         try {
-          const { invalidateAccessToken } = await import("../upstox/auth");
-          await invalidateAccessToken(`WS Auth failed: ${err.message}`);
+          const { invalidateTokenByValue } = await import("../upstox/auth");
+          // getAccessToken("data") may have silently fallen back to the trading
+          // token — invalidate by value so we never wipe the wrong key's token
+          if (token) await invalidateTokenByValue(token, `WS Auth failed: ${err.message}`);
         } catch (importErr) {
           logger.warn({ importErr }, "Failed to dynamically import invalidateAccessToken in connection manager");
         }
@@ -322,7 +327,7 @@ export class UpstoxConnectionManager {
             const marketFF = ff.marketFF;
             lastPrice = Number(marketFF.ltpc?.ltp ?? 0);
             if (marketFF.marketOHLC && marketFF.marketOHLC.ohlc) {
-              const daily = marketFF.marketOHLC.ohlc.find((c: any) => c.interval === "1d");
+              const daily = marketFF.marketOHLC.ohlc.find((c: Record<string, unknown>) => c.interval === "1d");
               if (daily) volume = Number(daily.volume ?? 0);
             }
             const bidAsk = marketFF.marketLevel?.bidAskQuote;
@@ -478,7 +483,7 @@ export class UpstoxConnectionManager {
     if (!force && wsIsActive && receivedRecentTicks) return;
     if (this.subscribedKeys.size === 0) return;
 
-    const token = getAccessToken("trading");
+    const token = getAccessToken("data");
     if (!token) return;
 
     try {

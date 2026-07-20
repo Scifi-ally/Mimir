@@ -131,6 +131,18 @@ export const api = {
       `/api/market/candles?symbol=${encodeURIComponent(symbol)}&interval=${interval}&lookbackDays=${lookbackDays}${endDate ? `&endDate=${encodeURIComponent(endDate)}` : ""}`,
     ),
   authUrl: (type?: "trading" | "data") => apiFetch<{ url: string; alreadyAuthenticated?: boolean; error?: string }>(`/api/system/auth-url${type ? `?type=${type}` : ""}`),
+  headlessAuth: {
+    begin: (type: "trading" | "data") =>
+      apiFetch<{ status: string }>("/api/system/headless/begin", { method: "POST", body: JSON.stringify({ type }) }),
+    startPhone: (type: "trading" | "data", phone: string) =>
+      apiFetch<{ status: string }>("/api/system/headless/phone", { method: "POST", body: JSON.stringify({ type, phone }) }),
+    submitOtp: (otp: string) =>
+      apiFetch<{ status: string }>("/api/system/headless/otp", { method: "POST", body: JSON.stringify({ otp }) }),
+    submitPin: (pin: string) =>
+      apiFetch<{ status: string }>("/api/system/headless/pin", { method: "POST", body: JSON.stringify({ pin }) }),
+    cancel: () =>
+      apiFetch<{ status: string }>("/api/system/headless/cancel", { method: "POST", body: JSON.stringify({}) }),
+  },
   triggerScan: () =>
     apiFetch<{ started: boolean; mode?: string; error?: string; alreadyRunning?: boolean }>(
       "/api/system/offhours-scan",
