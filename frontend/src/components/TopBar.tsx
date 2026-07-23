@@ -129,7 +129,23 @@ export const TopBar = memo(function TopBar({
     const x = rect.left + rect.width / 2;
     const y = rect.top + rect.height / 2;
 
-    console.log("[ThemeToggle] Triggered. Origin x:", x, "y:", y);
+    // --- DEBUG VISUALIZER ---
+    const dot = document.createElement("div");
+    dot.style.position = "fixed";
+    dot.style.left = `${x}px`;
+    dot.style.top = `${y}px`;
+    dot.style.width = "12px";
+    dot.style.height = "12px";
+    dot.style.backgroundColor = "#FF0000"; // bright red
+    dot.style.borderRadius = "50%";
+    dot.style.transform = "translate(-50%, -50%)";
+    dot.style.zIndex = "2147483647"; // max z-index
+    dot.style.pointerEvents = "none";
+    dot.style.boxShadow = "0 0 10px #FF0000";
+    document.body.appendChild(dot);
+    setTimeout(() => dot.remove(), 4000);
+    console.log(`[Theme Toggle] Calculated origin -> X: ${x}, Y: ${y}`);
+    // ------------------------
 
     const willBeLight = !isLight;
     
