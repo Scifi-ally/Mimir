@@ -71,6 +71,13 @@
       "when": 1784850000000,
       "tag": "0009_rejected_candidates",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1784590091724,
+      "tag": "0010_premium_machine_man",
+      "breakpoints": true
     }
   ]
 }

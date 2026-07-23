@@ -134,7 +134,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%scripts\run-det
 :: launch stays fast.
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$src=(Get-ChildItem '%PROJECT_DIR%\frontend\src' -Recurse -File | Measure-Object LastWriteTime -Maximum).Maximum; $dist=(Get-Item '%PROJECT_DIR%\frontend\dist\index.html' -ErrorAction SilentlyContinue).LastWriteTime; if(-not $dist -or $src -gt $dist){ exit 1 }" >nul 2>&1
 if !errorlevel! NEQ 0 (
-    echo !C_YELLOW!  [!] Frontend dist is older than src — run a frontend build to pick up latest changes.!C_RESET!
+    echo !C_YELLOW!  [*] Frontend dist is older than src — run a frontend build to pick up latest changes.!C_RESET!
 )
 echo !C_GRAY!    +-- !C_DIM!Starting frontend...!C_RESET!
 powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%scripts\run-detached.ps1" -FilePath "!NODE_CMD!" -ArgumentList "%PROJECT_DIR%\node_modules\vite\bin\vite.js preview" -WorkingDirectory "%PROJECT_DIR%\frontend" -PidFile "!FRONTEND_PID_FILE!" -LogOut "!FRONTEND_PID_FILE!.out.log" -LogErr "!FRONTEND_PID_FILE!.err.log"

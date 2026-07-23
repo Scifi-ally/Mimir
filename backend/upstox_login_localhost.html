@@ -1,0 +1,277 @@
+<!DOCTYPE html><html lang="en" data-input-type="keyboard"><head><title>Login to Upstox</title><meta charset="utf-8"><link rel="icon" type="image/png" href="favicon.ico"><link rel="apple-touch-icon" sizes="60x60" href="/apple-touch-icon-60x60.png"><link rel="apple-touch-icon" sizes="76x76" href="/apple-touch-icon-76x76.png"><link rel="apple-touch-icon" sizes="120x120" href="/apple-touch-icon-120x120.png"><link rel="apple-touch-icon" sizes="152x152" href="/apple-touch-icon-152x152.png"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon-180x180.png"><link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png"><link rel="icon" type="image/png" sizes="192x192" href="/android-chrome-192x192.png"><link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="mask-icon" href="/safari-pinned-tab.svg" color="#5a298b"><meta name="apple-mobile-web-app-title" content="Upstox"><meta name="application-name" content="Upstox"><meta name="msapplication-TileColor" content="#5a298b"><meta name="theme-color" content="#5a298b"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"><meta name="theme-color" content="#000000"><link rel="icon" href="/favicon.ico"><script defer="defer" src="/258~0f5c9f8a861472d92e28.js"></script><script defer="defer" src="/main~0f5c9f8a861472d92e28.js"></script><style>.item-enter {
+  opacity: 0;
+  transform: translateY(40px);
+}
+.item-enter-active {
+  opacity: 1;
+  transform: translateY(0);
+  transition: all 300ms;
+}
+.item-exit {
+  opacity: 1;
+}
+.item-exit-active {
+  opacity: 0;
+  transition: all 300ms;
+}</style><style>@font-face {
+  font-family: 'Messina Sans';
+  font-weight: 400;
+  src: url(/assets/MessinaSansWeb-Regular.woff2) format('woff2'),
+    url(/assets/MessinaSansWeb-Regular.woff) format('woff');
+}
+
+@font-face {
+  font-family: 'Messina Sans';
+  font-weight: 600;
+  src: url(/assets/MessinaSansWeb-SemiBold.woff2) format('woff2'),
+    url(/assets/MessinaSansWeb-SemiBold.woff) format('woff');
+}
+
+@font-face {
+  font-family: 'Messina Sans';
+  font-weight: 700;
+  src: url(/assets/MessinaSansWeb-Bold.woff2) format('woff2'),
+    url(/assets/MessinaSansWeb-Bold.woff) format('woff');
+}
+
+@font-face {
+  font-family: 'Figue';
+  font-weight: 400;
+  src: url(/assets/Figue-Regular.woff2) format('woff2'),
+    url(/assets/Figue-Regular.woff) format('woff');
+}
+
+/**
+ * Derived from CSS Reset by Izaak Schroeder
+ * https://medium.com/bootstart/izaaks-standard-css-reset-bd6c1b4d20c3
+ */
+
+/**
+ * See also:
+ * https://medium.com/code-better/css-units-for-font-size-px-em-rem-79f7e592bb97
+ */
+
+a,
+abbr,
+acronym,
+address,
+applet,
+article,
+aside,
+audio,
+b,
+big,
+blockquote,
+body,
+canvas,
+caption,
+center,
+cite,
+code,
+dd,
+del,
+details,
+dfn,
+div,
+dl,
+dt,
+em,
+embed,
+fieldset,
+figcaption,
+figure,
+footer,
+form,
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+header,
+hgroup,
+html,
+i,
+iframe,
+img,
+ins,
+kbd,
+label,
+legend,
+li,
+mark,
+menu,
+nav,
+object,
+ol,
+output,
+p,
+pre,
+q,
+ruby,
+s,
+samp,
+section,
+small,
+span,
+strike,
+strong,
+sub,
+summary,
+sup,
+table,
+tbody,
+td,
+tfoot,
+th,
+thead,
+time,
+tr,
+tt,
+u,
+ul,
+var,
+video {
+  border: 0;
+  font: inherit;
+  margin: 0;
+  padding: 0;
+  vertical-align: baseline;
+}
+
+article,
+aside,
+canvas,
+figcaption,
+figure,
+footer,
+header,
+hgroup,
+main,
+output,
+section {
+  display: block;
+}
+
+ol,
+ul {
+  list-style: none;
+}
+
+blockquote,
+q {
+  quotes: none;
+}
+
+blockquote::before,
+blockquote::after,
+q::before,
+q::after {
+  content: '';
+  display: none;
+}
+
+table {
+  border-collapse: collapse;
+  border-spacing: 0;
+}
+
+input,
+textarea,
+button,
+select {
+  appearance: none;
+  background: none;
+  border-color: currentColor;
+  border-radius: 0;
+  border-style: none;
+  border-width: medium;
+  color: inherit;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: inherit;
+  font-stretch: inherit;
+  font-style: inherit;
+  font-variant: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  margin: 0;
+  padding: 0;
+  vertical-align: baseline;
+}
+
+input:disabled,
+textarea:disabled,
+button:disabled,
+select:disabled {
+  cursor: not-allowed;
+}
+
+::placeholder {
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+  font-stretch: inherit;
+  font-style: inherit;
+  font-variant: inherit;
+  font-weight: inherit;
+  opacity: 1;
+}
+
+a:link {
+  text-decoration: none;
+}
+
+::-webkit-inner-spin-button {
+  appearance: none;
+}
+
+::-webkit-outer-spin-button {
+  appearance: none;
+}
+
+::-webkit-search-cancel-button {
+  appearance: none;
+}
+
+::-webkit-search-results-button {
+  appearance: none;
+}
+
+::-ms-clear,
+::-ms-reveal {
+  display: none;
+}
+
+::-webkit-contacts-auto-fill-button {
+  display: none;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: inherit;
+}
+
+html {
+  box-sizing: border-box;
+  font-size: 62.5%;
+}
+
+body {
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-font-smoothing: antialiased;
+  line-height: 1;
+  min-height: 100%;
+}
+</style><style>html,
+body,
+main {
+  height: 100%;
+}
+
+iframe[src*='access.upstox.com'] {
+  position: absolute;
+}
+</style><style data-fela-type="KEYFRAME" type="text/css">@-webkit-keyframes k1{0%, 12%{timing-function:cubic-bezier(0.17, 0.17, 0.00, 1.00);transform:none}44%{timing-function:cubic-bezier(0.17, 0.17, 0.00, 1.00);transform:translateY(-300%)}64%{timing-function:cubic-bezier(1.00, 0.20, 0.83, 0.83);transform:none}75%{timing-function:cubic-bezier(0.17, 0.17, 0.35, 1.00);transform:translateY(-75%)}87%{timing-function:cubic-bezier(0.65, 0.00, 0.83, 0.83);transform:none}92%{timing-function:cubic-bezier(0.17, 0.17, 0.67, 1.00);transform:translateY(-30%)}95%, 100%{timing-function:cubic-bezier(0.33, 0.00, 0.67, 1.00);transform:none}}@-moz-keyframes k1{0%, 12%{timing-function:cubic-bezier(0.17, 0.17, 0.00, 1.00);transform:none}44%{timing-function:cubic-bezier(0.17, 0.17, 0.00, 1.00);transform:translateY(-300%)}64%{timing-function:cubic-bezier(1.00, 0.20, 0.83, 0.83);transform:none}75%{timing-function:cubic-bezier(0.17, 0.17, 0.35, 1.00);transform:translateY(-75%)}87%{timing-function:cubic-bezier(0.65, 0.00, 0.83, 0.83);transform:none}92%{timing-function:cubic-bezier(0.17, 0.17, 0.67, 1.00);transform:translateY(-30%)}95%, 100%{timing-function:cubic-bezier(0.33, 0.00, 0.67, 1.00);transform:none}}@keyframes k1{0%, 12%{timing-function:cubic-bezier(0.17, 0.17, 0.00, 1.00);transform:none}44%{timing-function:cubic-bezier(0.17, 0.17, 0.00, 1.00);transform:translateY(-300%)}64%{timing-function:cubic-bezier(1.00, 0.20, 0.83, 0.83);transform:none}75%{timing-function:cubic-bezier(0.17, 0.17, 0.35, 1.00);transform:translateY(-75%)}87%{timing-function:cubic-bezier(0.65, 0.00, 0.83, 0.83);transform:none}92%{timing-function:cubic-bezier(0.17, 0.17, 0.67, 1.00);transform:translateY(-30%)}95%, 100%{timing-function:cubic-bezier(0.33, 0.00, 0.67, 1.00);transform:none}}</style><style data-fela-type="STATIC" type="text/css">[data-input-type='mouse'] * {outline: none;}
+</style><style data-fela-type="RULE" type="text/css"></style></head><body><noscript>You need to enable JavaScript to run this app.</noscript><main id="root"><div class="a b c d e f"><div class="g a h"><img src="/assets/upstox-logo.svg" alt="upstox-logo"></div><div class="i a b"><div class="a b j k l m n o"><div class="a b p q r s"></div></div></div><div class="au t a u"><div class="a b"><div class="a b av aw ax"><div class="a ay k az ba"><div class="a bb k"><div class="a"></div><div class="a b"><h2 class="bc ap bd be as">Let’s get started</h2></div><div class="bf bg"><a variant="invisible" href="https://upstox.com/contact-us/" target="_blank" class="bh ap bi bj bk g bl bm bn bo a bp u bq br bs bt bu bv bw bx by bz ca cb cc cd ce"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true" focusable="false" class="ao cf cg"><defs></defs><path fill="currentColor" fill-rule="evenodd" d="M12 23c6.075 0 11-4.925 11-11S18.075 1 12 1 1 5.925 1 12s4.925 11 11 11zm-.25-15A1.75 1.75 0 0010 9.75H8a3.75 3.75 0 116.306 2.744l-.17.159c-.378.35-.712.658-.977.994-.297.375-.409.665-.409.916h-2c0-.889.408-1.61.84-2.157.37-.467.83-.892 1.197-1.231l.156-.144A1.75 1.75 0 0011.75 8zm-1.125 8.125h2v2h-2z" clip-rule="evenodd"></path></svg></a></div></div></div><div class="a"><div class="a ch ci"><div class="g a b k v"><div class="a b cj aw k v"><div class="a b ck"><div class="a b cl cm cn co"><h3 class="bc ap bi cp cq">Login with mobile number</h3><span class="ao ap aq ar cr">We’ll send you a one-time password (OTP) to verify your mobile number.</span></div></div><div class="t a cs"><form id="mobile-number-form" class="t a b bb"><div class="t a b ct"><div class="a cu cv"><div class="k a b"><div class="a b cl cm cn co"><label class="bc ap bi cp cr">Enter mobile number</label><div class="ao cw br cx cy cz g bf bb"><div class="g a bb w x y z"><div class="a"><div class="g a cx da"><button type="button" class="g bf br db bo dc dd de"><img src="https://flagcdn.com/w40/in.webp" alt="India" style="width: 24px; height: 16px; object-fit: cover; border-radius: 2px; flex-shrink: 0;"><span class="ao ap bi ar cr">+91</span><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true" focusable="false" class="ao df dg" style="transform: rotate(90deg);"><defs></defs><path stroke="currentColor" stroke-width="2" d="M9 5l7 7-7 7"></path></svg></button></div></div><input type="text" id="mobileNum" maxlength="10" autocomplete="off" class="bc ap bi ar cq cw k dh di dj dk ca dl dm dn do dp dq t a" value=""><div class="aw dr ds dt du dv dw dx dy dz ea"></div><div class="a"></div></div></div><span data-qa="info-message" class="ao ap aq ar as"></span></div></div></div><button disabled="" id="getOtp" class="eb ap bi bj bk g ec bm bn bo a ed u bq ee bs k ef bv eg bx eh bz ei cb ej cd ek" style="max-width: 324px; margin: 0px auto;">Get OTP</button><div class="a el em"><span class="ao ap aq ar cr" style="font-weight: 500; line-height: 16px; letter-spacing: 0.01px;">By continuing, I accept Upstox's <a href="https://upstox.com/terms-of-use-and-privacy-policy/" class="en ap aq ar cr" style="font-weight: 500; line-height: 16px; letter-spacing: 0.01px; text-decoration: underline;">T&amp;C</a> and <a href="https://upstox.com/terms-of-use-and-privacy-policy/" class="en ap aq ar cr" style="font-weight: 500; line-height: 16px; letter-spacing: 0.01px; text-decoration: underline;">Privacy policy</a></span></div></div></form></div></div></div></div><div class="a ch ci eo"><div class="g a b k v"><div class="a b cj ep k v"><div class="a b"><div class="a b cl cm cn co"><span class="bc ap bi cp cr">Login with QR code</span><span class="ao ap aq ar cr">Scan this code with your Upstox mobile app and log in instantly</span></div></div><ol class="a b eq"><li><span class="ao ap aq ar cr" style="display: flex;">1. Go to Accounts <img src="/assets/people.svg" alt="grow img" style="margin: 0px auto;"> &gt; Select <img src="/assets/qr.svg" alt="grow img" style="margin: 0px auto;"> scan icon from top bar</span></li><li><span class="ao ap aq ar cr">2. Point your phone at this screen to confirm login</span></li></ol><div class="a u er"><div class="a cx"><canvas height="128" width="128" style="height: 128px; width: 128px; size: 136px; opacity: 1;"></canvas><img src="/assets/upstox-logo-small.svg" style="display: none;"></div></div></div></div></div></div></div></div></div><div class="g a u am k"><div class="a an"><span class="ao ap aq ar as at">UPSTOX SECURITIES PRIVATE LIMITED: SEBI Regn No. INZ000315837 | NSE TM Code: 13942 | BSE TM Code: 6155 | CDSL: IN-DP-761-2024 | MCX TM Code: 46510</span></div></div></div></main><div id="modalRoot"></div></body></html>

@@ -63,8 +63,11 @@ Key service capabilities include:
 ### Recent Enhancements
 * **AI Reinforcement Learning & Ranker**: Nightly retrained PPO RL agent and a new Ranker Service to intelligently filter and score opportunities.
 * **Dynamic Island UI**: Seamless status updates, toast notifications, and event streams decoupled from the primary charting interface.
+* **Adaptive Layout Modes**: Flexible and customizable UI layouts to focus purely on signals, charting, or complete terminal views.
 * **Pure Digital Scanner**: A visually stunning digital display during overnight scan jobs, removing clutter and showing an elegant count.
-* **Real-Time Watchlist Rendering**: Live ticks push immediately to the client side without relying on polling, ensuring sub-10ms UI reflection.
+* **Custom Watchlists**: Seamless command-palette integration for dynamic on-the-fly manual symbol monitoring.
+* **Rate-Limit Resilient Architecture**: Smarter WebSocket debouncing and targeted live-price fetching prevents upstream API exhaustion during intense real-time scans.
+* **Brutal Codebase Optimizations**: Major backend architectural cleanup resulting in streamlined workflows, zero circular dependencies, and a leaner system.
 
 ---
 
