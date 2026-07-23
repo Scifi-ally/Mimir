@@ -45,7 +45,7 @@
     "upstox-js-sdk": "^2.29.0",
     "ws": "^8.20.1",
     "yahoo-finance2": "^3.15.3",
-    "zod": "^3.25.76"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
