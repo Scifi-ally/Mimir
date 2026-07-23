@@ -178,10 +178,10 @@ export const TopBar = memo(function TopBar({
 
   return (
     <>
-      <div className="h-[48px] w-full shrink-0" />
+      <div className="h-[calc(48px+env(safe-area-inset-top))] w-full shrink-0" />
       <header
         className={cn(
-          "fixed top-0 left-0 right-0 z-50 flex w-full shrink-0 flex-col justify-center bg-background/90 backdrop-blur-xl backdrop-saturate-150 px-4 sm:px-6 py-1.5 h-[48px]"
+          "fixed top-0 left-0 right-0 z-50 flex w-full shrink-0 flex-col justify-end bg-background/90 backdrop-blur-xl backdrop-saturate-150 px-4 sm:px-6 py-1.5 h-[calc(48px+env(safe-area-inset-top))] pt-[env(safe-area-inset-top)]"
         )}
       >
         <div className="flex flex-col w-full">
@@ -203,7 +203,7 @@ export const TopBar = memo(function TopBar({
           </div>
         </div>
 
-        <div className="flex min-w-0 shrink-0 items-center gap-1.5 sm:gap-2">
+        <div className="flex min-w-0 shrink items-center justify-end gap-1.5 sm:gap-2 overflow-x-auto [&::-webkit-scrollbar]:hidden pl-2 pb-1 -mb-1">
           <div className="flex shrink-0 items-center gap-1">
             <motion.div whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} transition={SPRING_SNAPPY}>
             <Button
@@ -245,8 +245,8 @@ export const TopBar = memo(function TopBar({
               className="apple-hover h-7 flex items-center gap-1.5 text-[10px] px-3 font-medium bg-foreground/[0.03] text-foreground/70 hover:bg-foreground/[0.08] hover:text-foreground transition-all duration-200 rounded-lg"
               title="View Signals Generated"
             >
-              <BarChart2 strokeWidth={3} className="h-3.5 w-3.5 mr-0.5" />
-              <span>Signals</span>
+              <BarChart2 strokeWidth={3} className="h-3.5 w-3.5 sm:mr-0.5" />
+              <span className="hidden sm:inline">Signals</span>
             </Button>
             </motion.div>
 
@@ -463,13 +463,13 @@ export const TopBar = memo(function TopBar({
             variant="ghost"
             size="icon"
             onClick={toggleTheme}
-            className="apple-hover h-6 w-6 flex items-center justify-center rounded-full bg-transparent text-foreground/60 hover:bg-foreground/10 hover:text-foreground transition-all duration-200"
+            className="apple-hover shrink-0 h-6 w-6 flex items-center justify-center rounded-full bg-transparent text-foreground/60 hover:bg-foreground/10 hover:text-foreground transition-all duration-200"
           >
             {isLight ? <Moon strokeWidth={3} className="h-3.5 w-3.5" /> : <Sun strokeWidth={3} className="h-3.5 w-3.5" />}
           </Button>
           </motion.div>
           
-          <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.12em] text-foreground/60 px-1 font-sans">
+          <span className="flex shrink-0 items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.12em] text-foreground/60 px-1 font-sans">
             <span className={cn(
               "h-1.5 w-1.5 rounded-full", 
               wsConnected ? "bg-[#34C759] shadow-[0_0_8px_rgba(52,199,89,0.6)] animate-[pulse-bloom_4s_ease-in-out_infinite]" : "bg-red-500/80"
