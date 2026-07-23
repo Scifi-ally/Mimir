@@ -133,6 +133,11 @@ export const TopBar = memo(function TopBar({
     const x = clickX || (rect.left + rect.width / 2);
     const y = clickY || (rect.top + rect.height / 2);
 
+    // Convert to percentages to guarantee alignment with the View Transition snapshot coordinate space,
+    // which can differ from the layout viewport on mobile devices (e.g. due to zoom or URL bars).
+    const xPct = (x / window.innerWidth) * 100;
+    const yPct = (y / window.innerHeight) * 100;
+
     const oldStyle = document.getElementById("theme-transition-style");
     if (oldStyle) oldStyle.remove();
 
@@ -140,8 +145,8 @@ export const TopBar = memo(function TopBar({
     style.id = "theme-transition-style";
     style.innerHTML = `
       @keyframes reveal-theme-dynamic {
-        from { clip-path: circle(0px at ${x}px ${y}px); }
-        to { clip-path: circle(150vmax at ${x}px ${y}px); }
+        from { clip-path: circle(0px at ${xPct}% ${yPct}%); }
+        to { clip-path: circle(150vmax at ${xPct}% ${yPct}%); }
       }
       html.theme-transitioning::view-transition-new(root) {
         animation: reveal-theme-dynamic 450ms cubic-bezier(0.87, 0, 0.13, 1) forwards !important;
