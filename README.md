@@ -12,6 +12,7 @@
 ![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-38B2AC?style=for-the-badge&logo=tailwind-css&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)
 ![License MIT](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
+[![CI Status](https://img.shields.io/github/actions/workflow/status/Scifi-ally/Mimir/ci.yml?branch=master&style=for-the-badge)](https://github.com/Scifi-ally/Mimir/actions)
 
 **A Production-Ready Algorithmic Trading Engine for the Indian Stock Market.**
 
