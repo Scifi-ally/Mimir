@@ -43,7 +43,7 @@
     "protobufjs": "^7.4.0",
     "rss-parser": "^3.13.0",
     "upstox-js-sdk": "^2.29.0",
-    "ws": "^8.20.1",
+    "ws": "^8.21.1",
     "yahoo-finance2": "^3.15.3",
     "zod": "^3.25.76"
   },
