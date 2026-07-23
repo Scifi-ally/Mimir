@@ -179,7 +179,7 @@ export const TopBar = memo(function TopBar({
       >
         <div className="flex flex-col w-full">
           <div className="flex w-full min-w-0 items-center justify-between gap-3 sm:gap-4 whitespace-nowrap">
-            <div className="flex min-w-0 flex-1 items-center gap-x-3 pr-2 relative">
+            <div className="hidden sm:flex min-w-0 flex-1 items-center gap-x-3 pr-2 relative">
 
           <div className="flex min-w-0 shrink items-center gap-3 text-[11px] font-normal text-foreground/50 overflow-x-auto [&::-webkit-scrollbar]:hidden">
             <IndexMetric label="NIFTY 50" ltp={indices?.nifty50?.ltp} changePct={indices?.nifty50?.changePct} storeKey="nifty" onSelect={() => onSelectSymbol?.("NIFTY 50")} />
@@ -196,7 +196,7 @@ export const TopBar = memo(function TopBar({
           </div>
         </div>
 
-        <div className="flex min-w-0 max-w-[65vw] shrink items-center justify-end gap-1.5 sm:gap-2 overflow-x-auto [&::-webkit-scrollbar]:hidden pl-2 pb-1 -mb-1">
+        <div className="flex min-w-0 w-full sm:w-auto sm:max-w-[65vw] shrink items-center justify-end gap-1.5 sm:gap-2 overflow-x-auto [&::-webkit-scrollbar]:hidden pl-2 pb-1 -mb-1">
           <div className="flex shrink-0 items-center gap-1">
             <motion.div whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} transition={SPRING_SNAPPY}>
             <Button
