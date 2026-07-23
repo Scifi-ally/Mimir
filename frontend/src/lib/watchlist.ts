@@ -20,6 +20,7 @@ export interface StockRow {
 
 export function buildStockRows(
   items: WatchlistItem[],
+  customItems: { symbol: string, createdAt: string }[],
   monitored: MonitoredStock[],
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   _suggestions: any[],
@@ -41,17 +42,19 @@ export function buildStockRows(
     const liveData = marketDataStore.get(item.symbol);
     
     const sparkline = sparklines?.[item.symbol];
-    const fallbackPrice = sparkline && sparkline.length > 0 ? sparkline[sparkline.length - 1] : null;
-    const fallbackFirstPrice = sparkline && sparkline.length > 0 ? sparkline[0] : null;
+    const len = sparkline?.length ?? 0;
+    const fallbackPrice = len > 0 ? sparkline?.[len - 1] : null;
+    const fallbackPrevClose = len > 1 ? sparkline?.[len - 2] : null;
 
     const price = tick?.price ?? liveData?.ltp ?? mon?.currentPrice ?? item.ltp ?? fallbackPrice ?? null;
-    const refPrice = item.prevClose ?? mon?.entryPrice ?? null;
     
-    let changePct = liveData?.change_pct ?? null;
-    if (changePct == null && price != null && refPrice != null && refPrice > 0) {
-      changePct = ((price - refPrice) / refPrice) * 100;
-    } else if (changePct == null && price != null && fallbackFirstPrice != null && fallbackFirstPrice > 0) {
-      changePct = ((price - fallbackFirstPrice) / fallbackFirstPrice) * 100;
+    let changePct = liveData?.changePct ?? item.changePct ?? item.changePct ?? null;
+    if (changePct == null && price != null) {
+      if (item.prevClose != null && item.prevClose > 0) {
+        changePct = ((price - item.prevClose) / item.prevClose) * 100;
+      } else if (fallbackPrevClose != null && fallbackPrevClose > 0) {
+        changePct = ((price - fallbackPrevClose) / fallbackPrevClose) * 100;
+      }
     }
 
     let activeSignalDirection: "BUY" | "SELL" | null = null;
@@ -97,6 +100,39 @@ export function buildStockRows(
     return scoreB - scoreA;
   });
 
-  return rows;
+  const existingSymbols = new Set(rows.map(r => r.symbol));
+
+  const customRows = customItems.filter(c => !existingSymbols.has(c.symbol)).map(item => {
+    const mon = monitoredMap.get(item.symbol);
+    const tick = ticks[item.symbol];
+    const liveData = marketDataStore.get(item.symbol);
+    
+    const sparkline = sparklines?.[item.symbol];
+    const fallbackPrice = sparkline && sparkline.length > 0 ? sparkline[sparkline.length - 1] : null;
+
+    const fallbackPrevClose = sparkline && sparkline.length > 1 ? sparkline[sparkline.length - 2] : null;
+
+    const price = tick?.price ?? liveData?.ltp ?? mon?.currentPrice ?? fallbackPrice ?? null;
+    let changePct = liveData?.changePct ?? null;
+    
+    if (changePct === null && price !== null) {
+      const prev = fallbackPrevClose;
+      if (prev != null && prev !== 0) changePct = ((price - prev) / prev) * 100;
+    }
+
+    return {
+      symbol: item.symbol,
+      name: item.symbol, // We could fetch proper name, but symbol works for now
+      category: "CUSTOM",
+      condition: "Manual Watchlist",
+      price,
+      changePct,
+      indicatorStatus: "Monitored",
+      suggestion: "WATCH",
+      sparkline,
+    };
+  });
+
+  return [...rows, ...customRows];
 }
 

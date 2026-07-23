@@ -1,6 +1,6 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { api } from "@/lib/api";
-import { Wallet, Activity, History, RotateCcw, TrendingUp, TrendingDown } from "lucide-react";
+import { Wallet, Activity, History, RotateCcw, TrendingUp, TrendingDown, X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { Variants } from "framer-motion";
 import { cn, fmtNum, toFixed, toFixedPct } from "@/lib/format";
@@ -37,15 +37,27 @@ export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClo
   const showIsland = useStore((s) => s.showIsland);
   const queryClient = useQueryClient();
 
+  useEffect(() => {
+    if (!isOpen || !onClose) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isOpen, onClose]);
+
   // Mode drives the whole panel: PAPER shows the simulated ledger,
   // LIVE swaps in real broker positions/funds/orders.
-  const { data: modeData } = useQuery({
+  const { data: modeData, isPending: modePending } = useQuery({
     queryKey: ["trading-mode"],
     queryFn: api.tradingMode,
     enabled: isOpen,
     refetchInterval: 15000,
   });
   const isLive = modeData?.mode === "LIVE";
+  // Until the mode resolves, don't assert either label — a LIVE-armed account
+  // must never briefly render as "Paper Trading".
+  const modeResolved = !modePending && !!modeData;
 
   // WS position_update invalidates ["paperTrading"] instantly; polling is only
   // a slow safety net now.
@@ -56,14 +68,14 @@ export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClo
     refetchInterval: 30000,
   });
 
-  const { data: positionsData } = useQuery({
+  const { data: positionsData, isPending: positionsPending } = useQuery({
     queryKey: ["paperTrading", "positions"],
     queryFn: api.paperTrading.positions,
     enabled: isOpen,
     refetchInterval: 30000,
   });
 
-  const { data: historyData } = useQuery({
+  const { data: historyData, isPending: historyPending } = useQuery({
     queryKey: ["paperTrading", "history"],
     queryFn: api.paperTrading.history,
     enabled: isOpen,
@@ -71,7 +83,7 @@ export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClo
   });
 
   // LIVE-mode data (only fetched when armed)
-  const { data: brokerFunds } = useQuery({
+  const { data: brokerFunds, isPending: brokerFundsPending } = useQuery({
     queryKey: ["live", "funds"],
     queryFn: api.liveBrokerFunds,
     enabled: !!isOpen && isLive,
@@ -166,6 +178,9 @@ export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClo
             animate={{ y: 0, x: "-50%", scale: 1 }}
             exit={{ y: "100%", x: "-50%", scale: 0.96 }}
             transition={FADE_SLOW}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Trading panel"
             className="fixed left-1/2 bottom-0 z-[70] flex flex-col bg-background text-foreground overflow-hidden h-[85vh] w-full max-w-4xl rounded-t-3xl shadow-[0_-8px_40px_rgba(0,0,0,0.4)] ring-0 outline-none"
           >
             {/* Header */}
@@ -173,7 +188,7 @@ export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClo
               <div className="flex flex-col">
                 <h2 className="text-lg font-normal tracking-tight flex items-center gap-2 text-foreground">
                   <Wallet className="w-4 h-4 text-foreground/80" strokeWidth={2.5} />
-                  {isLive ? "Live Trading" : "Paper Trading"}
+                  {!modeResolved ? "Trading" : isLive ? "Live Trading" : "Paper Trading"}
                   {isLive && (
                     <span className="flex items-center gap-1.5 ml-1 text-[10px] font-normal tracking-[0.08em] text-destructive uppercase">
                       <span className="w-1.5 h-1.5 rounded-full bg-destructive animate-pulse" />
@@ -183,7 +198,7 @@ export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClo
                 </h2>
                 <p className="text-foreground/40 text-[10px] mt-0.5 tracking-[0.08em] uppercase font-normal">
                   {isLive
-                    ? `Broker Account · Available ₹${fmtNum(brokerFunds?.availableMargin ?? 0, 0)}`
+                    ? `Broker Account · Available ${brokerFundsPending && !brokerFunds ? "—" : `₹${fmtNum(brokerFunds?.availableMargin ?? 0, 0)}`}`
                     : `Simulated Portfolio · Starting ₹${fmtNum(startingBalance, 0)}`}
                 </p>
               </div>
@@ -191,17 +206,26 @@ export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClo
                 {!isLive && (
                   <button
                     onClick={handleReset}
-                    className="apple-hover text-[10px] font-normal tracking-[0.08em] uppercase flex items-center gap-1.5 hover:bg-destructive/10 text-foreground/40 hover:text-destructive px-3 py-1.5 rounded-lg transition-all duration-300"
+                    className="apple-hover text-[10px] font-normal tracking-[0.08em] uppercase flex items-center gap-1.5 hover:bg-destructive/10 text-foreground/40 hover:text-destructive px-3 py-1.5 rounded-lg transition-all duration-300 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60"
                   >
                     <RotateCcw className="w-3 h-3" />
                     Reset
+                  </button>
+                )}
+                {onClose && (
+                  <button
+                    onClick={onClose}
+                    aria-label="Close trading panel"
+                    className="p-2 rounded-full hover:bg-foreground/[0.06] text-muted-foreground/60 hover:text-foreground transition-colors duration-150 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60"
+                  >
+                    <X className="w-4 h-4" />
                   </button>
                 )}
               </div>
             </div>
 
             {!account ? (
-              <div className="flex-1 flex flex-col gap-8 pt-2">
+              <div className="flex-1 flex flex-col gap-8 pt-2 px-8 pb-8">
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 sm:gap-6">
                   {[0, 1, 2, 3, 4].map((i) => (
                     <div key={i} className="flex flex-col gap-2">
@@ -236,7 +260,7 @@ export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClo
                 <motion.div variants={staggerItem} className="flex flex-col gap-1 min-w-0 overflow-hidden">
                   <span className="text-[10px] font-normal text-foreground/50 tracking-[0.08em] uppercase truncate">Available Margin</span>
                   <span className="text-xl sm:text-2xl font-mono tabular-nums font-normal tracking-tight text-foreground truncate">
-                    ₹{fmtNum(brokerFunds?.availableMargin ?? 0, 2)}
+                    {brokerFundsPending && !brokerFunds ? "—" : `₹${fmtNum(brokerFunds?.availableMargin ?? 0, 2)}`}
                   </span>
                 </motion.div>
                 <motion.div variants={staggerItem} className="flex flex-col gap-1 min-w-0 overflow-hidden">
@@ -342,11 +366,13 @@ export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClo
             )}
 
             {/* Tabs */}
-            <div className="flex px-8 pt-3 gap-8 relative shrink-0">
+            <div role="tablist" aria-label="Trading views" className="flex px-8 pt-3 gap-8 relative shrink-0">
               <button
+                role="tab"
+                aria-selected={activeTab === "positions"}
                 onClick={() => setActiveTab("positions")}
                 className={cn(
-                  "pb-3 text-xs font-normal tracking-[0.08em] uppercase flex items-center gap-2 transition-all duration-300 relative",
+                  "pb-3 text-xs font-normal tracking-[0.08em] uppercase flex items-center gap-2 transition-all duration-300 relative focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60 rounded-sm",
                   activeTab === "positions" ? "text-foreground" : "text-foreground/40 hover:text-foreground/70"
                 )}
               >
@@ -356,9 +382,11 @@ export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClo
                 )}
               </button>
               <button
+                role="tab"
+                aria-selected={activeTab === "history"}
                 onClick={() => setActiveTab("history")}
                 className={cn(
-                  "pb-3 text-xs font-normal tracking-[0.08em] uppercase flex items-center gap-2 transition-all duration-300 relative",
+                  "pb-3 text-xs font-normal tracking-[0.08em] uppercase flex items-center gap-2 transition-all duration-300 relative focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60 rounded-sm",
                   activeTab === "history" ? "text-foreground" : "text-foreground/40 hover:text-foreground/70"
                 )}
               >
@@ -392,9 +420,23 @@ export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClo
                         ))
                       )
                     ) : positions.length === 0 ? (
-                      <motion.div variants={staggerItem} className="flex flex-col items-center justify-center py-16 text-foreground/30">
-                        <p className="text-xs font-normal tracking-wide">No open positions</p>
-                      </motion.div>
+                      positionsPending ? (
+                        <div className="flex flex-col gap-2.5 pt-2">
+                          {[0, 1, 2].map((i) => (
+                            <div key={i} className="flex items-center justify-between rounded-xl border border-border/10 p-4">
+                              <div className="flex items-center gap-3">
+                                <Skeleton className="h-4 w-20" />
+                                <Skeleton className="h-4 w-12 rounded" />
+                              </div>
+                              <Skeleton className="h-4 w-24" />
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <motion.div variants={staggerItem} className="flex flex-col items-center justify-center py-16 text-foreground/30">
+                          <p className="text-xs font-normal tracking-wide">No open positions</p>
+                        </motion.div>
+                      )
                     ) : (
                       positions.map(pos => (
                         <PositionRow key={pos.id} pos={pos} />
@@ -442,7 +484,19 @@ export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClo
                         )}
                       </motion.div>
                     )}
-                    {history.length === 0 ? (
+                    {history.length === 0 && historyPending ? (
+                      <div className="flex flex-col gap-2.5 pt-2">
+                        {[0, 1, 2].map((i) => (
+                          <div key={i} className="flex items-center justify-between rounded-xl border border-border/10 p-4">
+                            <div className="flex items-center gap-3">
+                              <Skeleton className="h-4 w-20" />
+                              <Skeleton className="h-4 w-12 rounded" />
+                            </div>
+                            <Skeleton className="h-4 w-24" />
+                          </div>
+                        ))}
+                      </div>
+                    ) : history.length === 0 ? (
                       <motion.div variants={staggerItem} className="flex flex-col items-center justify-center py-16 text-foreground/30">
                         <p className="text-xs font-normal tracking-wide">No completed trades yet</p>
                       </motion.div>
@@ -584,9 +638,11 @@ function PositionRow({ pos }: { pos: PaperPosition }) {
   const isLoss = pnl < 0;
 
   return (
-    <motion.div 
-      variants={staggerItem} 
-      className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-foreground/[0.03] hover:bg-foreground/[0.06] active:scale-[0.99] transition-all duration-300 rounded-xl group"
+    <motion.div
+      variants={staggerItem}
+      // No active:scale press feedback: the row isn't clickable, and implying a
+      // tap target that does nothing reads as a broken button.
+      className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-foreground/[0.03] hover:bg-foreground/[0.06] transition-all duration-300 rounded-xl group"
     >
       <div className="flex flex-col gap-2 min-w-0">
         <div className="flex items-center gap-3">

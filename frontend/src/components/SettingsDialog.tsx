@@ -51,7 +51,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
   // Load config from backend
   const { data: config, isLoading } = useQuery({
     queryKey: ["system-config"],
-    queryFn: () => api.getConfig(true),
+    queryFn: api.getConfig,
     enabled: isOpen,
     staleTime: 0,
   });
@@ -70,6 +70,11 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
     onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ["trading-mode"] });
       queryClient.invalidateQueries({ queryKey: ["system-config"] });
+      queryClient.invalidateQueries({ queryKey: ["paperTrading"] });
+      queryClient.invalidateQueries({ queryKey: ["live"] });
+      queryClient.invalidateQueries({ queryKey: ["positions"] });
+      queryClient.invalidateQueries({ queryKey: ["status"] });
+      queryClient.invalidateQueries({ queryKey: ["session"] });
       setArmingLive(false);
       setArmPhraseInput("");
       setActionFeedback({
@@ -78,7 +83,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
           ? `Live trading ARMED. Available margin ₹${Math.round(res.availableMargin ?? 0).toLocaleString("en-IN")}.`
           : "Disarmed — engine is back in paper mode.",
       });
-      setTimeout(() => setActionFeedback(null), 6000);
+      setTimeout(() => setActionFeedback(null), 5000);
     },
     onError: (err: Error) => {
       setActionFeedback({ type: "error", text: err.message || "Failed to switch trading mode" });
@@ -124,6 +129,11 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
       queryClient.setQueryData(["system-config"], newConfig);
       queryClient.invalidateQueries({ queryKey: ["status"] });
       queryClient.invalidateQueries({ queryKey: ["session"] });
+      queryClient.invalidateQueries({ queryKey: ["trading-mode"] });
+      queryClient.invalidateQueries({ queryKey: ["suggestions"] });
+      queryClient.invalidateQueries({ queryKey: ["regime"] });
+      queryClient.invalidateQueries({ queryKey: ["monitoring"] });
+      queryClient.invalidateQueries({ queryKey: ["indian-context"] });
       setSaveSuccessMessage("Settings successfully saved and applied to live engine!");
       setTimeout(() => setSaveSuccessMessage(null), 4000);
     },
@@ -137,6 +147,10 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
   const triggerScanMutation = useMutation({
     mutationFn: () => api.triggerScan(),
     onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ["session"] });
+      queryClient.invalidateQueries({ queryKey: ["status"] });
+      queryClient.invalidateQueries({ queryKey: ["watchlist"] });
+      queryClient.invalidateQueries({ queryKey: ["suggestions"] });
       setActionFeedback({
         type: res.error ? "error" : "success",
         text: res.error || (res.alreadyRunning ? "Scan is already running right now." : "Off-hours scan successfully triggered!"),
@@ -152,6 +166,9 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
   const stopScanMutation = useMutation({
     mutationFn: () => api.stopScan(),
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["session"] });
+      queryClient.invalidateQueries({ queryKey: ["status"] });
+      queryClient.invalidateQueries({ queryKey: ["watchlist"] });
       setActionFeedback({ type: "success", text: "Scan termination requested. Check activity logs." });
       setTimeout(() => setActionFeedback(null), 5000);
     },

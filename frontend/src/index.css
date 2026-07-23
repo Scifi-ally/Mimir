@@ -123,6 +123,7 @@
   #root {
     height: 100%;
     overflow: hidden;
+    contain: paint;
   }
 
   body {
@@ -364,15 +365,23 @@
   background: rgba(255, 255, 255, 0.3);
 }
 
-::view-transition-old(root) {
+::view-transition-group(root) {
   animation: none;
-  mix-blend-mode: normal;
-  z-index: -1;
 }
+
+::view-transition-old(root),
 ::view-transition-new(root) {
   animation: none;
   mix-blend-mode: normal;
+  display: block;
+}
+
+::view-transition-old(root) {
   z-index: 1;
+}
+
+::view-transition-new(root) {
+  z-index: 9999;
 }
 
 @layer base {

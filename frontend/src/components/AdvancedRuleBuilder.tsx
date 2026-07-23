@@ -323,7 +323,13 @@ export function AdvancedRuleBuilder({ onComplete, initialRule }: { onComplete: (
       return body;
     },
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["screener_rules"] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["screener_rules"] }),
+        queryClient.invalidateQueries({ queryKey: ["screener_targets"] }),
+        queryClient.invalidateQueries({ queryKey: ["screener_matches"] }),
+        queryClient.invalidateQueries({ queryKey: ["watchlist"] }),
+        queryClient.invalidateQueries({ queryKey: ["customWatchlist"] }),
+      ]);
       onComplete();
     },
   });

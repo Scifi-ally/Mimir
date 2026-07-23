@@ -1,10 +1,11 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
-import { X } from "lucide-react";
+import { X, RefreshCw } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { api } from "@/lib/api";
 import { FADE_FAST, FADE_SLOW } from "@/lib/motion";
 import { Skeleton } from "@/components/atoms/Skeleton";
+import { Button } from "@/components/mimir/button";
 
 interface ReportsLibraryProps {
   isOpen: boolean;
@@ -20,10 +21,19 @@ interface DailyReport {
 }
 
 export function ReportsLibrary({ isOpen, onClose }: ReportsLibraryProps) {
+  const queryClient = useQueryClient();
+
   const reportsQuery = useQuery({
     queryKey: ["reports"],
     queryFn: () => api.reports(),
     enabled: isOpen,
+  });
+
+  const generateMutation = useMutation({
+    mutationFn: () => api.generateReport(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["reports"] });
+    },
   });
 
   const reports = reportsQuery.data ?? [];
@@ -57,12 +67,24 @@ export function ReportsLibrary({ isOpen, onClose }: ReportsLibraryProps) {
                 <span className="text-foreground/40 hidden sm:inline ml-2">— End of day market summaries</span>
               </h2>
 
-              <button
-                onClick={onClose}
-                className="absolute right-6 top-6 z-10 p-2 rounded-full hover:bg-secondary/60 text-muted-foreground hover:text-foreground transition-all duration-200"
-              >
-                <X className="w-5 h-5" />
-              </button>
+              <div className="absolute right-6 top-5 z-10 flex items-center gap-3">
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="hidden sm:flex text-xs h-8"
+                  disabled={generateMutation.isPending}
+                  onClick={() => generateMutation.mutate()}
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 mr-2 ${generateMutation.isPending ? 'animate-spin' : ''}`} />
+                  {generateMutation.isPending ? 'Generating...' : 'Generate Today'}
+                </Button>
+                <button
+                  onClick={onClose}
+                  className="p-2 rounded-full hover:bg-secondary/60 text-muted-foreground hover:text-foreground transition-all duration-200"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
 
             {/* Content */}

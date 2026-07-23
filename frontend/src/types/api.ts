@@ -35,7 +35,9 @@ export interface WatchlistItem {
   condition: string;
   priority: number;
   ltp?: number | null;
+  price?: number | null;
   prevClose?: number | null;
+  changePct?: number | null;
   indicatorStatus?: string;
   suggestionLabel?: string;
   signalGenerated?: boolean;
@@ -235,6 +237,7 @@ export interface PaperPosition {
   trailingStopLoss?: string | null;
   createdAt: string;
   closedAt?: string | null;
+  closeReason?: string | null;
 }
 
 export interface AlertRecord {

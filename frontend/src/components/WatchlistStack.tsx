@@ -12,6 +12,8 @@ import { LivePrice } from "@/components/atoms/LivePrice";
 import { LiveChangePct } from "@/components/atoms/LiveChangePct";
 import type { WatchlistItem, MonitoredStock, Suggestion } from "@/types/api";
 import { SPRING_STANDARD } from "@/lib/motion";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { api } from "@/lib/api";
 
 interface WatchlistStackProps {
   items: WatchlistItem[];
@@ -21,18 +23,39 @@ interface WatchlistStackProps {
   sparklines?: Record<string, number[]>;
   onSelect: (symbol: string) => void;
   headerLeft?: React.ReactNode;
+  customItems?: { symbol: string; createdAt: string }[];
 }
 
-export const WatchlistStack = memo(function WatchlistStack({ items, monitored, suggestions, selectedSymbol, sparklines, onSelect, headerLeft }: WatchlistStackProps) {
+export const WatchlistStack = memo(function WatchlistStack({ items, customItems, monitored, suggestions, selectedSymbol, sparklines, onSelect, headerLeft }: WatchlistStackProps) {
   const safeOnSelect = onSelect || (() => {});
   const watchlistCounts = useStore((s) => s.watchlistCounts);
+  const setCommandPaletteOpen = useStore((s) => s.setCommandPaletteOpen);
+  const showIsland = useStore((s) => s.showIsland);
+  const queryClient = useQueryClient();
+
+  const removeSymbolMutation = useMutation({
+    mutationFn: (symbol: string) => api.removeCustomWatchlist(symbol),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["customWatchlist"] });
+      queryClient.invalidateQueries({ queryKey: ["watchlist"] });
+    },
+    onError: (err, symbol) => {
+      // A failed remove previously did nothing visible — the row just stayed,
+      // looking like the click was ignored.
+      showIsland({ isNotification: true, title: `Couldn't remove ${symbol}`, subtitle: err instanceof Error ? err.message : "Remove failed", showSuccessOnly: false });
+    }
+  });
+
+  const handleRemoveSymbol = (symbol: string) => {
+    removeSymbolMutation.mutate(symbol);
+  };
+
   const rows = useMemo(
-    () => buildStockRows(items, monitored ?? [], suggestions, {}, sparklines),
-    [items, monitored, suggestions, sparklines]
+    () => buildStockRows(items, customItems ?? [], monitored ?? [], suggestions, {}, sparklines),
+    [items, customItems, monitored, suggestions, sparklines]
   );
 
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
-  const [searchText] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const mobileScrollRef = useRef<HTMLDivElement>(null);
   const [colWidth, setColWidth] = useState(290);
@@ -112,17 +135,6 @@ export const WatchlistStack = memo(function WatchlistStack({ items, monitored, s
       });
     }
     
-    // Apply search filter
-    if (searchText.trim()) {
-      const query = searchText.toLowerCase();
-      newFiltered = newFiltered.filter(
-        (r) =>
-          r.symbol.toLowerCase().includes(query) ||
-          r.condition?.toLowerCase().includes(query) ||
-          r.category.toLowerCase().includes(query)
-      );
-    }
-
     if (newFiltered.length > 0) {
       safeOnSelect(newFiltered[0].symbol);
     }
@@ -146,26 +158,15 @@ export const WatchlistStack = memo(function WatchlistStack({ items, monitored, s
   }, [selectedSymbol]);
 
   const filteredRows = useMemo(() => {
-    let filtered = selectedCategory
+    const filtered = selectedCategory
       ? rows.filter((r) => {
           const catName = r.category.replaceAll("_", " ").replace("WATCH", "").trim();
           return (catName || "Other").toLowerCase() === selectedCategory.toLowerCase();
         })
       : rows;
 
-    // Apply search filter
-    if (searchText.trim()) {
-      const query = searchText.toLowerCase();
-      filtered = filtered.filter(
-        (r) =>
-          r.symbol.toLowerCase().includes(query) ||
-          r.condition?.toLowerCase().includes(query) ||
-          r.category.toLowerCase().includes(query)
-      );
-    }
-
     return filtered;
-  }, [rows, selectedCategory, searchText]);
+  }, [rows, selectedCategory]);
 
   const columns = useMemo(() => {
     const cols = [];
@@ -236,12 +237,12 @@ export const WatchlistStack = memo(function WatchlistStack({ items, monitored, s
                 selectedCategory === null 
                   ? "@max-md:bg-foreground @max-md:text-background @min-md:text-foreground @min-md:border-foreground"
                   : "@max-md:bg-secondary/40 @max-md:text-foreground/70 @min-md:text-foreground @min-md:border-transparent hover:@min-md:text-foreground/80 hover:@min-md:border-foreground/40",
-                "@min-md:px-0 @min-md:py-0 @min-md:border-b-2 @min-md:pb-0.5"
+                "@min-md:px-1 @min-md:py-1 @min-md:border-b-2"
               )}
             >
               All {watchlistCounts["ALL"] ?? rows.length}
               {selectedCategory !== null && (
-                <span className="hidden @min-md:block absolute inset-x-0 -bottom-0.5 h-0.5 bg-foreground/30 rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
+                <span className="hidden @min-md:block absolute inset-x-0 -bottom-[2px] h-[2px] bg-foreground/30 rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
               )}
             </button>
             {categories.map(([cat, n]) => (
@@ -253,28 +254,51 @@ export const WatchlistStack = memo(function WatchlistStack({ items, monitored, s
                   "shrink-0 transition-all duration-300 relative group font-semibold",
                   "@max-md:px-3 @max-md:py-1.5 @max-md:rounded-full",
                   selectedCategory === cat
-                    ? "@max-md:bg-foreground @max-md:text-background @min-md:text-foreground @min-md:border-foreground"
-                    : "@max-md:bg-secondary/40 @max-md:text-foreground/70 @min-md:text-foreground/60 @min-md:border-transparent hover:@min-md:text-foreground/80 hover:@min-md:border-foreground/40",
-                  "@min-md:px-0 @min-md:py-0 @min-md:border-b-2 @min-md:pb-0.5"
+                    ? "@max-md:bg-foreground @max-md:text-background @min-md:text-foreground @min-md:border-b-foreground"
+                    : "@max-md:bg-secondary/40 @max-md:text-foreground/70 @min-md:text-foreground/60 @min-md:border-b-transparent hover:@min-md:text-foreground/80 hover:@min-md:border-b-foreground/40",
+                  "@min-md:px-1 @min-md:py-1 @min-md:border-t-2 @min-md:border-t-transparent @min-md:border-b-2"
                 )}
               >
                 {cat} {watchlistCounts[cat] ?? n}
                 {selectedCategory !== cat && (
-                  <span className="hidden @min-md:block absolute inset-x-0 -bottom-0.5 h-0.5 bg-foreground/30 rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
+                  <span className="hidden @min-md:block absolute inset-x-0 -bottom-[2px] h-[2px] bg-foreground/30 rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
                 )}
               </button>
             ))}
+
+            <button
+              type="button"
+              onClick={() => setCommandPaletteOpen(true, "", "CUSTOM")}
+              className="shrink-0 ml-2 px-3 py-1 rounded-md border-2 border-foreground bg-transparent text-foreground font-bold uppercase tracking-wider text-[10px] transition-colors duration-200 hover:bg-foreground hover:text-background"
+            >
+              Add Symbol
+            </button>
           </div>
         ) : (
-          <div className="flex items-center justify-end w-full text-[10px] font-normal uppercase tracking-[0.08em] text-muted-foreground/60">
+          /* The empty list is exactly when Add Symbol matters most — keep it. */
+          <div className="flex items-center justify-end gap-4 w-full text-[10px] font-normal uppercase tracking-[0.08em] text-muted-foreground/60">
             <span>0 Symbols</span>
+            <button
+              type="button"
+              onClick={() => setCommandPaletteOpen(true, "", "CUSTOM")}
+              className="shrink-0 px-3 py-1 rounded-md border-2 border-foreground bg-transparent text-foreground font-bold uppercase tracking-wider text-[10px] transition-colors duration-200 hover:bg-foreground hover:text-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60"
+            >
+              Add Symbol
+            </button>
           </div>
         )}
       </CardHeader>
 
       {filteredRows.length === 0 ? (
-        <div className="flex-1 w-full h-full min-h-[180px] flex flex-col items-center justify-center text-center p-6">
+        <div className="flex-1 w-full h-full min-h-[180px] flex flex-col items-center justify-center text-center p-6 gap-3">
           <p className="text-xs font-normal text-muted-foreground">No scan yet — run one or pick from Screener.</p>
+          <button
+            type="button"
+            onClick={() => setCommandPaletteOpen(true, "", "CUSTOM")}
+            className="px-4 py-1.5 rounded-lg border border-foreground/30 text-xs text-foreground/80 hover:bg-foreground hover:text-background transition-colors duration-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60"
+          >
+            Add a symbol manually
+          </button>
         </div>
       ) : (
         <>
@@ -295,7 +319,7 @@ export const WatchlistStack = memo(function WatchlistStack({ items, monitored, s
                 style={{ willChange: "transform, opacity", width: `${virtualizer.getTotalSize()}px`, height: '100%', minHeight: '160px' }}
               >
                 {virtualizer.getVirtualItems().map((virtualItem) => {
-                  const colRows = columns[virtualItem.index]!;
+                  const colRows = columns[virtualItem.index] ?? [];
                   return (
                     <div
                       key={virtualItem.key}
@@ -311,6 +335,7 @@ export const WatchlistStack = memo(function WatchlistStack({ items, monitored, s
                           row={row as unknown as React.ComponentProps<typeof WatchlistCard>["row"]}
                           selected={selectedSymbol === row.symbol}
                           onSelect={safeOnSelect}
+                          onRemove={handleRemoveSymbol}
                         />
                       ))}
                     </div>
@@ -354,6 +379,30 @@ export const WatchlistStack = memo(function WatchlistStack({ items, monitored, s
                           <span className={cn("truncate font-normal text-[15px]", selected ? "text-background" : "text-foreground")}>{row.symbol}</span>
                           {row.activeSignalDirection && (
                             <span className={cn("h-2 w-2 rounded-full", row.activeSignalDirection === "BUY" ? "bg-bull" : "bg-bear")} />
+                          )}
+                          {row.category === "CUSTOM" && (
+                            /* span, not button: a button nested inside the row
+                               button is invalid HTML with undefined behavior for
+                               keyboard/screen readers. */
+                            <span
+                              role="button"
+                              tabIndex={0}
+                              aria-label={`Remove ${row.symbol} from watchlist`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleRemoveSymbol(row.symbol);
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  handleRemoveSymbol(row.symbol);
+                                }
+                              }}
+                              className="text-muted-foreground hover:text-red-500 ml-2 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60 rounded"
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                            </span>
                           )}
                         </div>
                       </div>

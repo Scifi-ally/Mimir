@@ -21,7 +21,8 @@ export const SupportResistancePanel = React.memo(function SupportResistancePanel
     queryKey: ["candles", selectedSymbol, "day", 15],
     queryFn: () => api.candles(selectedSymbol, "day", 15),
     enabled: Boolean(selectedSymbol.trim()),
-    refetchInterval: 5 * 60 * 1000, // refresh every 5 mins for new daily highs/lows
+    refetchInterval: 30000,
+    staleTime: 15000,
   });
 
   const currentPrice = useSymbolDataSelector(selectedSymbol, d => d.ltp) || 
@@ -32,6 +33,30 @@ export const SupportResistancePanel = React.memo(function SupportResistancePanel
     const lastClose = candlesQuery.data.candles[candlesQuery.data.candles.length - 1].close;
     return calculateSRLevels(candlesQuery.data.candles, lastClose);
   }, [candlesQuery.data?.candles]);
+
+  const extraMetrics = useMemo(() => {
+    if (!candlesQuery.data?.candles || candlesQuery.data.candles.length < 10) return null;
+    const candles = candlesQuery.data.candles;
+    
+    // Average Daily Range (ADR - 10 day)
+    const recent = candles.slice(-10);
+    const avgRange = recent.reduce((sum, c) => sum + (c.high - c.low), 0) / recent.length;
+    const avgRangePct = currentPrice > 0 ? (avgRange / currentPrice) * 100 : 0;
+    
+    // Volume comparison
+    const last = candles[candles.length - 1];
+    const prev = recent.slice(0, 9);
+    const avgVol = prev.reduce((sum, c) => sum + c.volume, 0) / (prev.length || 1);
+    const volRatio = avgVol > 0 ? last.volume / avgVol : 0;
+    
+    // Additional session metrics
+    const dayHigh = last.high;
+    const dayLow = last.low;
+    const prevClose = candles.length >= 2 ? candles[candles.length - 2].close : last.open;
+    const gapPct = ((last.open - prevClose) / prevClose) * 100;
+    
+    return { avgRange, avgRangePct, volRatio, avgVol, dayHigh, dayLow, gapPct, prevClose };
+  }, [candlesQuery.data?.candles, currentPrice]);
 
   // Map levels array to labeled pivot levels (real computed values only)
   const levels = useMemo(() => {
@@ -135,17 +160,13 @@ export const SupportResistancePanel = React.memo(function SupportResistancePanel
          </span>
       </div>
 
-      {/* Price ladder — flex-1 + justify-evenly so it stretches to the bottom of
-          the panel and the rows breathe into whatever height is available,
-          instead of hugging the top and leaving a dead void below. */}
-      <div className="flex flex-col justify-evenly flex-1 min-h-0 w-full tabular-nums tracking-tight py-1 mb-1 relative overflow-hidden">
+      {/* Price ladder — auto-adjusting layout */}
+      <div className="flex flex-col flex-1 min-h-0 justify-evenly tabular-nums tracking-tight py-1 relative overflow-hidden">
         {r2 && levelRow({ label: "R2", level: r2, dist: r2Dist, side: "R" })}
         {r1 && levelRow({ label: "R1", level: r1, dist: r1Dist, side: "R" })}
 
-        {/* LTP band — spatial read only: where price sits inside S1–R1.
-            The price number itself is NOT repeated (the hero LTP above owns
-            it); this row shows range position, which the hero can't. */}
-        <div className="relative flex items-center gap-2 py-[6px] my-[2px] font-mono text-xs shrink-0">
+        {/* LTP band */}
+        <div className="relative flex items-center gap-2 py-[5px] my-[1px] font-mono text-xs shrink-0">
           <span className="w-5 shrink-0 font-sans font-medium tracking-[0.06em] text-[11px] text-foreground">LTP</span>
           <div className="flex-1 flex items-center min-w-0">
             {rangePos != null && (
@@ -164,6 +185,49 @@ export const SupportResistancePanel = React.memo(function SupportResistancePanel
         {s1 && levelRow({ label: "S1", level: s1, dist: s1Dist, side: "S" })}
         {s2 && levelRow({ label: "S2", level: s2, dist: s2Dist, side: "S" })}
       </div>
+
+      {/* Extra metrics section at the bottom */}
+      {extraMetrics && (
+        <div className="mt-auto grid grid-cols-2 gap-y-2 gap-x-2 shrink-0 border-t border-border/40 pt-[7px] pb-1">
+          {/* Row 1 */}
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[9px] uppercase tracking-wider text-muted-foreground/70 font-sans font-medium">10D ADR</span>
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-[11px] font-mono">₹{fmtNum(extraMetrics.avgRange, 2)}</span>
+              <span className="text-[9px] font-mono text-muted-foreground/70">{fmtNum(extraMetrics.avgRangePct, 1)}%</span>
+            </div>
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[9px] uppercase tracking-wider text-muted-foreground/70 font-sans font-medium">Vol vs 10D Avg</span>
+            <div className="flex items-baseline gap-1.5">
+              <span className={cn("text-[11px] font-mono", extraMetrics.volRatio > 1.5 ? "text-bull" : extraMetrics.volRatio < 0.5 ? "text-bear" : "text-foreground")}>
+                {fmtNum(extraMetrics.volRatio, 1)}x
+              </span>
+              <span className="text-[9px] font-mono text-muted-foreground/70">
+                {extraMetrics.avgVol > 1000000 
+                  ? `${fmtNum(extraMetrics.avgVol / 1000000, 1)}M` 
+                  : `${fmtNum(extraMetrics.avgVol / 1000, 0)}k`} avg
+              </span>
+            </div>
+          </div>
+
+          {/* Row 2 */}
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[9px] uppercase tracking-wider text-muted-foreground/70 font-sans font-medium">Session High</span>
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-[11px] font-mono">₹{fmtNum(extraMetrics.dayHigh, 2)}</span>
+              {currentPrice > 0 && <span className="text-[9px] font-mono text-muted-foreground/70">{fmtNum(Math.abs((extraMetrics.dayHigh - currentPrice) / currentPrice * 100), 2)}% away</span>}
+            </div>
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[9px] uppercase tracking-wider text-muted-foreground/70 font-sans font-medium">Session Low</span>
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-[11px] font-mono">₹{fmtNum(extraMetrics.dayLow, 2)}</span>
+              {currentPrice > 0 && <span className="text-[9px] font-mono text-muted-foreground/70">{fmtNum(Math.abs((currentPrice - extraMetrics.dayLow) / currentPrice * 100), 2)}% away</span>}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 });

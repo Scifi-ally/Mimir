@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
 import { Flame, ChevronLeft, Copy, Check, Crosshair, Layers } from "lucide-react";
-import { cn, fmtNum, fmtPct, calcPnLPct } from "@/lib/format";
+import { cn, fmtNum, fmtPct } from "@/lib/format";
 import { api } from "@/lib/api";
 import { Tooltip } from "@/components/mimir/tooltip";
 import { Sparkline } from "@/components/Sparkline";
@@ -47,7 +47,7 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
 
   const handleCopySymbol = () => {
     if (!selectedSymbol) return;
-    navigator.clipboard.writeText(selectedSymbol);
+    navigator.clipboard.writeText(selectedSymbol).catch(() => {});
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -63,10 +63,8 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
     queryFn: () => api.symbolInsights(selectedSymbol),
     enabled: Boolean(selectedSymbol && typeof selectedSymbol === "string" && selectedSymbol.trim()),
     retry: false,
-    refetchInterval: 300000,
-    // Switching back to a recently viewed symbol renders from cache instantly
-    // instead of flashing the skeleton while an identical payload refetches.
-    staleTime: 60000,
+    refetchInterval: 30000,
+    staleTime: 15000,
   });
 
   const insights = insightsQuery.data;
@@ -104,9 +102,15 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
   }
 
   if (isScanActive) {
-    // Deliberately blank while a scan runs — the matrix view owns the scan
-    // experience; this panel resumes once results are in.
-    return <div className="h-full bg-transparent" />;
+    // The matrix view owns the scan experience, but fully blank space reads as
+    // a broken panel — say what's happening and that this pane will resume.
+    return (
+      <div className="h-full bg-transparent flex flex-col items-center justify-center gap-2 text-center p-6">
+        <span className="h-1.5 w-1.5 rounded-full bg-foreground/50 animate-pulse" />
+        <p className="text-[11px] tracking-wide uppercase font-normal text-muted-foreground/60">Scan running</p>
+        <p className="text-[10px] text-muted-foreground/40">Symbol insights resume when results are in</p>
+      </div>
+    );
   }
 
   // Only the insights payload gates the panel — the score sparkline is
@@ -115,7 +119,7 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
     // Skeleton mirrors the loaded layout so content lands without reflow:
     // header+ring → price stats → gauges → matrix card → levels ladder.
     return (
-      <div className="h-full bg-transparent overflow-hidden flex flex-col pt-3 pb-2">
+      <div className="h-full bg-transparent overflow-hidden flex flex-col pt-3 pb-2 px-3">
         <div className="flex items-start justify-between gap-3 pb-3 shrink-0">
           <div className="min-w-0 flex-1 flex flex-col gap-2">
             <div className="flex items-center gap-2.5">
@@ -176,7 +180,19 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
     return (
       <div className="h-full bg-transparent border-0 flex flex-col items-center justify-center text-center p-6 text-muted-foreground gap-2">
         <p className="text-sm tracking-tight font-normal text-foreground">{selectedSymbol}</p>
-        <p className="text-[11px] text-muted-foreground/70">No data — run a scan or pick an active stock.</p>
+        <p className="text-[11px] text-muted-foreground/70">
+          {insightsQuery.isError ? "Couldn't load insights." : "No data — run a scan or pick an active stock."}
+        </p>
+        {/* retry:false means one transient failure would otherwise stick for
+            the full refetch interval — give the user a way out. */}
+        <button
+          type="button"
+          onClick={() => insightsQuery.refetch()}
+          disabled={insightsQuery.isFetching}
+          className="mt-1 px-3 py-1 rounded-md border border-foreground/25 text-[11px] text-foreground/80 hover:bg-foreground hover:text-background transition-colors duration-200 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60"
+        >
+          {insightsQuery.isFetching ? "Retrying…" : "Retry"}
+        </button>
       </div>
     );
   }
@@ -191,7 +207,7 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
       initial="hidden"
       animate="visible"
       variants={{ hidden: {}, visible: { transition: { staggerChildren: 0.045, delayChildren: 0.04 } } }}
-      className="@container h-full bg-transparent overflow-hidden flex flex-col text-card-foreground pt-3 pb-2 border-0"
+      className="@container h-full bg-transparent overflow-hidden flex flex-col text-card-foreground pt-3 pb-2 px-3 border-0"
     >
       {/* ── HEADER: identity + composite ring ─────────────────────────────── */}
       <Section className="flex items-start justify-between gap-3 pb-2">
@@ -260,7 +276,7 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
         </div>
       </Section>
 
-      {/* ── PRICE ROW: LTP / reference / deviation ────────────────────────── */}
+      {/* ── PRICE ROW: LTP / reference / change ────────────────────────── */}
       <Section className="grid grid-cols-3 gap-x-3 py-2.5">
         <Stat label="LTP" xl value={<LivePrice symbol={selectedSymbol} decimals={2} fallback={indicators?.close} />} />
         <Stat
@@ -276,7 +292,7 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
             return ref ? <span className="opacity-75">{fmtNum(ref)}</span> : "—";
           })()}
         />
-        <DeviationStat symbol={selectedSymbol} monitoring={monitoring} selectedSignal={selectedSignal} scan={scan} indicators={indicators} />
+        <ChangePctStat symbol={selectedSymbol} />
       </Section>
 
       {/* ── TRADE PLAN: only when an actionable signal exists ─────────────── */}
@@ -588,24 +604,12 @@ function MiniGauge({ label, display, sub, pct, tone, marks, onClick }: {
 
 /* ── Live sub-rows (self-subscribing so ticks re-render only these) ────────── */
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function DeviationStat({ symbol, monitoring, selectedSignal, scan, indicators }: { symbol: string; monitoring: any; selectedSignal: Suggestion | null; scan: any; indicators: any }) {
-  const ltp = useSymbolDataSelector(symbol, (d) => d.ltp);
-  const current = ltp ?? monitoring?.currentPrice ?? indicators?.close;
-  const activeEntry = selectedSignal?.entryPrice || monitoring?.entryPrice;
-  const trigger = activeEntry || scan?.provisional_trigger || indicators?.vwap || indicators?.ema20;
-  const dev = trigger && current ? calcPnLPct(current, trigger) : null;
+function ChangePctStat({ symbol, fallback }: { symbol: string; fallback?: number }) {
   return (
     <Stat
-      label="Deviation"
+      label="% Change"
       xl
-      color={dev != null ? (dev >= 0 ? "text-bull" : "text-bear") : "text-foreground"}
-      value={(() => {
-        if (dev == null) return "—";
-        const isProvisional = !activeEntry && scan?.provisional_trigger != null;
-        const el = <AnimatedNumber value={dev} decimals={2} showSign={true} suffix="%" duration={0.3} flashColor={true} />;
-        return isProvisional ? <span className="opacity-50 border-b border-dotted border-current pb-[1px]">{el}</span> : el;
-      })()}
+      value={<LiveChangePct symbol={symbol} fallback={fallback} decimals={2} />}
     />
   );
 }
@@ -699,6 +703,13 @@ function DecryptText({ text }: { text: string }) {
 
   useEffect(() => {
     if (!text || !ref.current) return;
+    // Honor reduced-motion: the scramble is pure decoration, and on every
+    // refetch it churns a data-dense panel for users who asked for calm.
+    if (typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      ref.current.innerText = text;
+      prevTextRef.current = text;
+      return;
+    }
     if (prevTextRef.current && text.length === prevTextRef.current.length && prevTextRef.current !== text) {
       ref.current.innerText = text;
       prevTextRef.current = text;
@@ -731,9 +742,17 @@ function MatrixRow({ label, value, color, onClick }: { label: string; value: Rea
   return (
     <li
       onClick={onClick}
+      onKeyDown={onClick ? (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onClick();
+        }
+      } : undefined}
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
       className={cn(
         "flex justify-between items-center group gap-2 py-[7px] min-w-0 overflow-hidden transition-colors whitespace-nowrap",
-        onClick ? "cursor-pointer hover:bg-foreground/[0.03] rounded-md -mx-1.5 px-1.5" : "cursor-default",
+        onClick ? "cursor-pointer hover:bg-foreground/[0.03] rounded-md -mx-1.5 px-1.5 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60" : "cursor-default",
       )}
     >
       <span className="text-muted-foreground font-medium font-sans text-[10.5px] tracking-[0.02em] shrink truncate whitespace-nowrap group-hover:text-foreground transition-colors">{label}</span>

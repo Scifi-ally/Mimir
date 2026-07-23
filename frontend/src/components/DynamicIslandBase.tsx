@@ -54,25 +54,11 @@ export function DynamicIsland({
   const isControlled = controlledExpanded !== undefined;
   const expanded = isControlled ? controlledExpanded : uncontrolledExpanded;
 
-  // Layout projection stays OFF during the entry descent. If it's on from the
-  // first frame, Framer takes its initial measurements while the island is
-  // mid-flight (translated and scaled to 0.82), which visibly distorts the
-  // very first descent; every later open measures a settled element and looks
-  // right. Enabling `layout` only after the entry completes makes the first
-  // descent a pure transform animation — identical every time — while size
-  // morphs (palette → prompt → success tick) still animate once landed.
-  const [entryDone, setEntryDone] = useState(false);
-
   const setExpanded = (nextExpanded: boolean) => {
     if (!isControlled) setUncontrolledExpanded(nextExpanded);
     onExpandedChange?.(nextExpanded);
   };
 
-  // The entry/exit slide lives on an outer wrapper that never has `layout`,
-  // while the pill itself owns `layout` for size morphs. When both lived on one
-  // element, the very first mount ran the layout projection and the entry
-  // spring together (with content that could resize mid-flight, e.g. a lazy
-  // chunk arriving), producing a visibly different first animation.
   return (
     <motion.div
       role="region"
@@ -80,11 +66,10 @@ export function DynamicIsland({
       aria-expanded={expanded}
       initial={
         placement === "top"
-          ? { y: -140, opacity: 0, scale: 0.82 }
-          : { y: 0, opacity: 1, scale: 1 }
+          ? { y: -140, opacity: 0 }
+          : { y: 0, opacity: 1 }
       }
-      animate={{ y: 0, opacity: 1, scale: 1 }}
-      onAnimationComplete={() => setEntryDone(true)}
+      animate={{ y: 0, opacity: 1 }}
       exit={
         placement === "top"
           ? { y: -140, opacity: 0, scale: 0.82 }
@@ -96,9 +81,6 @@ export function DynamicIsland({
         display: "flex",
         justifyContent: "center",
         pointerEvents: "none",
-        // Promote to its own compositor layer up front so the browser doesn't
-        // rasterize mid-descent on the first open (one-time jank that reads as
-        // a "different" first animation).
         willChange: "transform, opacity",
         ...(placement === "top" && {
           position: "fixed",
@@ -110,7 +92,7 @@ export function DynamicIsland({
       }}
     >
       <motion.div
-        layout={entryDone}
+        layout
         onClick={() => toggleOnClick && setExpanded(!expanded)}
         transition={{ layout: ISLAND_SPRING }}
         className="bg-background text-foreground font-sans"
@@ -131,11 +113,11 @@ export function DynamicIsland({
       >
         <AnimatePresence initial={false} mode="wait">
           <motion.div
-            layout={entryDone}
+            layout
             key={contentKey ?? (expanded ? "expanded-content" : "collapsed-content")}
-            initial={{ opacity: 0, scale: 0.88, filter: "blur(4px)" }}
-            animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
-            exit={{ opacity: 0, scale: 0.88, filter: "blur(4px)" }}
+            initial={{ opacity: 0, scale: 0.88 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.88 }}
             transition={FADE_FAST}
             style={contentStyle}
           >

@@ -44,7 +44,7 @@ export function fmtPct(value: unknown, decimals: number = 1) {
   const num = toNumber(value, NaN);
   if (Number.isNaN(num)) return "—";
   if (num === 0 || Math.abs(num) < Math.pow(10, -(decimals + 1))) {
-    return `${num >= 0 ? "+" : ""}0.${"0".repeat(decimals)}%`;
+    return `0.${"0".repeat(decimals)}%`;
   }
   const actualDecimals = (decimals === 1 && Math.abs(num) < 0.1) ? 2 : decimals;
   return `${num > 0 ? "+" : ""}${num.toFixed(actualDecimals)}%`;

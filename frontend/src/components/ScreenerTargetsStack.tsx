@@ -4,11 +4,8 @@ import { cn } from "@/lib/format";
 import { Card, CardHeader, CardTitle } from "@/components/mimir/card";
 import { ScrollArea } from "@/components/mimir/scroll-area";
 import { useStore } from "@/store/useStore";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { X, Target, ChevronRight, ArrowLeft, Plus, Trash2, Play, Activity, Clock, Sparkles, ListTree, Settings2, Loader2 } from "lucide-react";
-import { LivePrice } from "@/components/atoms/LivePrice";
-import { LiveChangePct } from "@/components/atoms/LiveChangePct";
-import { prefetchSymbol } from "@/lib/prefetch";
+import { useQueryClient } from "@tanstack/react-query";
+import { Target, ChevronRight, ArrowLeft, Plus, Trash2, Play, Activity, Clock, Sparkles, ListTree, Settings2, Loader2 } from "lucide-react";
 
 interface ScreenerTargetsStackProps {
   selectedSymbol: string;
@@ -17,47 +14,9 @@ interface ScreenerTargetsStackProps {
   headerLeft?: React.ReactNode;
 }
 
-type RuleNode = {
-  type: "CONDITION" | "AND" | "OR";
-  indicatorA?: string;
-  operator?: string;
-  indicatorB?: string;
-  alertMessage?: string;
-  rules?: RuleNode[];
-};
-
-type ScreenerRule = {
-  id: number;
-  targetType: string;
-  outputName?: string | null;
-  timeframe?: string;
-  scheduleMode?: string;
-  scheduleTime?: string | null;
-  status?: string;
-  lastTriggeredAt?: string | null;
-  createdAt?: string | null;
-  conditions?: RuleNode | null;
-  indicatorA?: string | null;
-  operator?: string | null;
-  indicatorB?: string | null;
-};
-
-type ScreenerTarget = {
-  id: number;
-  symbol: string;
-  screenerId: number | null;
-  notes?: string | null;
-};
-
-type ScreenerMatch = {
-  id: number;
-  screenerId: number;
-  symbol: string;
-  timeframe: string;
-  condition: string;
-  matchedAt: string;
-  acknowledged: boolean;
-};
+import { useScreener } from "@/hooks/useScreener";
+import type { ScreenerTarget, ScreenerRule, RuleNode } from "@/hooks/useScreener";
+import { ScreenerTargetRow } from "./ScreenerTargetRow";
 
 const operatorLabels: Record<string, string> = {
   ">": ">",
@@ -93,10 +52,7 @@ function summarizeRule(rule?: ScreenerRule) {
 
 
 
-function splitBadges(notes?: string | null) {
-  if (!notes) return [];
-  return notes.split(",").map((item) => item.trim()).filter(Boolean).slice(0, 3);
-}
+
 
 export function ScreenerTargetsStack({ selectedSymbol, onSelect, headerLeft }: ScreenerTargetsStackProps) {
   const queryClient = useQueryClient();
@@ -105,87 +61,16 @@ export function ScreenerTargetsStack({ selectedSymbol, onSelect, headerLeft }: S
 
   const [activeWatchlist, setActiveWatchlist] = useState<number | null | "GLOBAL">(null);
 
-  const { data: targets = [], error: targetsError } = useQuery<ScreenerTarget[]>({
-    queryKey: ["screener_targets"],
-    queryFn: async () => {
-      const res = await fetch("/api/screener/targets");
-      if (!res.ok) throw new Error("Failed to fetch targets");
-      return res.json();
-    },
-  });
-
-  const { data: screeners = [], error: screenersError } = useQuery<ScreenerRule[]>({
-    queryKey: ["screener_rules"],
-    queryFn: async () => {
-      const res = await fetch("/api/screener");
-      if (!res.ok) throw new Error("Failed to fetch screeners");
-      return res.json();
-    },
-  });
-
-  const { data: matches = [], error: matchesError } = useQuery<ScreenerMatch[]>({
-    queryKey: ["screener_matches"],
-    queryFn: async () => {
-      const res = await fetch("/api/screener/matches");
-      if (!res.ok) throw new Error("Failed to fetch screener matches");
-      return res.json();
-    },
-  });
-
+  const {
+    targetsQuery: { data: targets = [], error: targetsError },
+    screenersQuery: { data: screeners = [], error: screenersError },
+    matchesQuery: { data: matches = [], error: matchesError },
+    deleteTargetMutation,
+    deleteWatchlistMutation,
+    runScreenerMutation,
+  } = useScreener();
+  
   const loadError = targetsError || screenersError || matchesError;
-
-  const deleteTargetMutation = useMutation({
-    mutationFn: async (id: number) => {
-      const res = await fetch(`/api/screener/targets/${id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error("Failed to delete target");
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["screener_targets"] });
-    },
-  });
-
-  const deleteWatchlistMutation = useMutation({
-    mutationFn: async (id: number) => {
-      const res = await fetch(`/api/screener/${id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error("Failed to delete watchlist");
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["screener_rules"] });
-      queryClient.invalidateQueries({ queryKey: ["screener_targets"] });
-      setActiveWatchlist(null);
-    },
-  });
-
-  const runScreenerMutation = useMutation({
-    mutationFn: async (screenerId?: number) => {
-      const res = await fetch("/api/screener/run", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(screenerId ? { screenerId } : {}),
-      });
-      const body = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(body?.error || body?.message || "Failed to run screener");
-      return body as { activeScreeners: number; newMatches: number; newTargets: number; totalMatches: number; totalTargets: number; runAt: string; message?: string; success: boolean };
-    },
-    onSuccess: async (summary) => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["screener_targets"] }),
-        queryClient.invalidateQueries({ queryKey: ["screener_matches"] }),
-        queryClient.invalidateQueries({ queryKey: ["screener_rules"] }),
-      ]);
-      showIsland({
-        title: summary.message ? "Screener started" : "Screener run complete",
-        subtitle: summary.message || `Scanned ${summary.activeScreeners} active rule${summary.activeScreeners === 1 ? "" : "s"}. ${summary.newMatches} new match${summary.newMatches === 1 ? "" : "es"}, ${summary.newTargets} stock${summary.newTargets === 1 ? "" : "s"} added.`,
-        showSuccessOnly: true,
-        hideCancel: true,
-      });
-    },
-    onError: (err) => {
-      showIsland({ isNotification: true, title: "Failed to start screener", subtitle: err.message || "Failed to start screener.", showSuccessOnly: false });
-    },
-  });
 
   const customWatchlists = useMemo(() => screeners.filter((s) => s.targetType === "CUSTOM"), [screeners]);
 
@@ -221,93 +106,15 @@ export function ScreenerTargetsStack({ selectedSymbol, onSelect, headerLeft }: S
   };
 
   const renderTargetRow = (row: ScreenerTarget, title: string) => {
-    const selected = selectedSymbol === row.symbol;
-    const badges = splitBadges(row.notes);
     return (
-      <motion.div
-        layout
+      <ScreenerTargetRow
         key={row.id}
-        initial={{ opacity: 0, y: 6 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.96 }}
-        style={{ willChange: "transform, opacity" }}
-        className={cn(
-          "apple-hover flex h-[58px] items-center justify-between rounded-md px-3 py-1.5 w-full text-left transition-all relative overflow-hidden group border-0 font-mono shadow-none",
-          selected
-            ? "bg-secondary/50 text-foreground"
-            : "bg-transparent hover:bg-secondary/20 text-foreground/85 hover:text-foreground"
-        )}
-      >
-        <button
-          role="option"
-          aria-selected={selected}
-          onClick={() => onSelect(row.symbol)}
-          onPointerEnter={() => prefetchSymbol(queryClient, row.symbol)}
-          className="absolute inset-0 z-0 cursor-pointer"
-        />
-        <div className="flex flex-col justify-center gap-1 min-w-0 flex-1 z-10 pointer-events-none">
-          <div className="flex items-center gap-2 min-w-0">
-            <span className="truncate text-sm font-normal tracking-tight text-foreground">{row.symbol}</span>
-            <span className={cn(
-              "rounded px-1.5 py-0.5 text-[10px] font-normal uppercase tracking-wider leading-none",
-              row.notes ? "bg-primary/15 text-primary" : "bg-foreground/10 text-muted-foreground"
-            )}>
-              {row.notes ? "Rule" : "Manual"}
-            </span>
-          </div>
-          <div className="flex flex-wrap items-center gap-1.5 min-w-0">
-            {badges.map((badge) => (
-              <span key={badge} className="text-[11px] font-normal uppercase tracking-wider text-accent truncate">
-                {badge}
-              </span>
-            ))}
-            {badges.length === 0 && (
-              <span className="text-[11px] font-normal text-foreground/60 truncate">
-                {row.notes ? "Matched condition" : "Added manually"}
-              </span>
-            )}
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2 z-10 shrink-0">
-          <div className="flex flex-col items-end pointer-events-none">
-            <LivePrice
-              symbol={row.symbol}
-              decimals={2}
-              className="text-sm font-normal tabular-nums font-mono leading-tight text-foreground"
-            />
-            <LiveChangePct
-              symbol={row.symbol}
-              decimals={2}
-              className="text-[11px] font-normal tabular-nums font-mono leading-tight"
-            />
-          </div>
-
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              showIsland({
-                title: `Remove ${row.symbol}?`,
-                subtitle: `This removes ${row.symbol} from "${title}". The stock itself is not deleted.`,
-                isDestructive: true,
-                confirmText: "Remove",
-                cancelText: "Keep",
-                onConfirm: async () => {
-                  await deleteTargetMutation.mutateAsync(row.id);
-                  return true;
-                },
-              });
-            }}
-            className={cn(
-              "rounded-full p-1.5 opacity-0 transition-opacity group-hover:opacity-100 relative z-20",
-              "text-muted-foreground hover:bg-destructive/20 hover:text-destructive"
-            )}
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-
-      </motion.div>
+        row={row}
+        title={title}
+        selectedSymbol={selectedSymbol}
+        onSelect={onSelect}
+        onDelete={async (id) => { await deleteTargetMutation.mutateAsync(id); }}
+      />
     );
   };
 

@@ -41,11 +41,11 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
 
   if (!res.ok) {
     if (res.status === 503 && body && typeof body === "object" && "fallback" in body) {
-      return body.fallback as T;
+      return (body as { fallback: T }).fallback;
     }
-    const typedBody = body as { error?: string; message?: string };
+    const typedBody = body as { error?: string; message?: string } | null;
     if (typedBody?.error || typedBody?.message) {
-      throw new Error(typedBody.error || typedBody.message || `API Error: ${res.status}`);
+      throw new Error(typedBody.error || typedBody.message);
     }
     // No structured error from server — keep it human, log the raw text for debugging
     console.error(`API ${res.status} ${path}:`, text.slice(0, 200));
@@ -63,11 +63,17 @@ async function apiFetchSoft<T>(path: string, fallback: T): Promise<T> {
 
     const baseUrl = import.meta.env.VITE_API_URL || "";
     const res = await fetch(`${baseUrl}${path}`, { credentials: "include", headers });
+    
+    if (!res.ok) {
+      console.error(`Soft API fetch failed for ${path}: HTTP ${res.status}`);
+      return { ...fallback, available: false } as T;
+    }
+    
     const body = await res.json().catch(() => null);
-    if (!res.ok) return { ...fallback, ...(body ?? {}), available: false } as T;
+    if (!body) return { ...fallback, available: false } as T;
     return body as T;
   } catch (err) {
-    console.warn(`Soft API fetch failed for ${path}:`, err);
+    console.error(`Soft API fetch failed for ${path}:`, err);
     return fallback;
   }
 }
@@ -93,13 +99,22 @@ export const api = {
   sessionState: () => apiFetch<import("@/types/api").SessionState>("/api/system/session-state").then(res => SessionStateSchema.parse(res)),
   systemStatus: () => apiFetch<import("@/types/api").SystemStatus>("/api/system/status"),
   watchlistToday: () => apiFetch<import("@/types/api").Watchlist>("/api/watchlist/today"),
+  customWatchlist: () => apiFetch<{ data: { symbol: string, createdAt: string }[] }>("/api/watchlist/custom"),
+  addCustomWatchlist: (symbol: string) => apiFetch<{ success: boolean, symbol: string }>("/api/watchlist/custom", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ symbol })
+  }),
+  removeCustomWatchlist: (symbol: string) => apiFetch<{ success: boolean }>(`/api/watchlist/custom/${symbol}`, {
+    method: "DELETE"
+  }),
   activeSuggestions: (symbol?: string) => 
     apiFetch<import("@/types/api").Suggestion[]>(`/api/suggestions/active${symbol ? `?symbol=${encodeURIComponent(symbol)}` : ""}`)
-      .then(res => z.array(SuggestionSchema as z.ZodTypeAny).parse(res) as import("@/types/api").Suggestion[]),
+      .then(res => z.array(SuggestionSchema).parse(res)),
   todaySuggestions: () => apiFetch<import("@/types/api").Suggestion[]>("/api/suggestions/today")
-    .then(res => z.array(SuggestionSchema as z.ZodTypeAny).parse(res) as import("@/types/api").Suggestion[]),
+    .then(res => z.array(SuggestionSchema).parse(res)),
   historySuggestions: () => apiFetch<{ data: import("@/types/api").Suggestion[], total: number }>("/api/suggestions/history?limit=100")
-    .then(res => ({ ...res, data: z.array(SuggestionSchema as z.ZodTypeAny).parse(res.data) as import("@/types/api").Suggestion[] })),
+    .then(res => ({ ...res, data: z.array(SuggestionSchema).parse(res.data) })),
   suggestionsAccuracy: () =>
     apiFetch<{
       closedTrades: number;
@@ -160,7 +175,7 @@ export const api = {
   forecast: (symbol: string) => {
     const trimmed = symbol.trim();
     if (!trimmed) {
-      return Promise.resolve({ symbol: "", available: false, error: "No symbol selected" });
+      return Promise.reject(new Error("No symbol selected"));
     }
     return apiFetchSoft<import("@/types/api").SymbolForecast>(
       `/api/market/forecast?symbol=${encodeURIComponent(trimmed)}`,
@@ -241,7 +256,8 @@ export const api = {
     ),
   alertsHistory: () => apiFetch<import("@/types/api").AlertRecord[]>("/api/alerts/history"),
   reports: () => apiFetch<Array<{ id: string; date: string; summary: string; content: string; createdAt: string }>>("/api/reports"),
-  getConfig: (reveal = true) => apiFetch<import("@/types/api").SystemConfig>(reveal ? "/api/config?reveal=true" : "/api/config"),
+  generateReport: () => apiFetch<{ success: boolean; message: string }>("/api/reports/generate", { method: "POST" }),
+  getConfig: () => apiFetch<import("@/types/api").SystemConfig>("/api/config"),
   updateConfig: (body: import("@/types/api").UpdateSystemConfig) =>
     apiFetch<import("@/types/api").SystemConfig>("/api/config", {
       method: "PATCH",

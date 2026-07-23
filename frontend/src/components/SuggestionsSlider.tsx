@@ -56,6 +56,15 @@ export function SuggestionsSlider({ isOpen, onClose, onSelectSymbol, activeSugge
 
 
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isOpen, onClose]);
+
   const historySuggestions = suggestionsData?.data || [];
   const activeTrades = (activeSuggestions || []).filter(s => s.status === 'ACTIVE' || s.status === 'PENDING');
   const expiredTrades = historySuggestions.filter((s: import("@/types/api").Suggestion) => s.status === 'EXPIRED' || s.status === 'MISSED');
@@ -82,6 +91,9 @@ export function SuggestionsSlider({ isOpen, onClose, onSelectSymbol, activeSugge
             animate={{ y: 0, x: "-50%" }}
             exit={{ y: "100%", x: "-50%" }}
             transition={SPRING_GENTLE}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Active signals"
             className="fixed left-1/2 bottom-0 z-[70] flex flex-col bg-background text-foreground overflow-hidden h-[86vh] w-full max-w-4xl rounded-t-3xl shadow-[0_-8px_40px_rgba(0,0,0,0.4)] ring-0 outline-none"
           >
             {/* Header */}
@@ -92,7 +104,8 @@ export function SuggestionsSlider({ isOpen, onClose, onSelectSymbol, activeSugge
 
               <button
                 onClick={onClose}
-                className="absolute right-6 top-6 z-10 p-2 rounded-full hover:bg-foreground/[0.06] text-muted-foreground/60 hover:text-foreground transition-colors duration-150"
+                aria-label="Close signals"
+                className="absolute right-6 top-6 z-10 p-2 rounded-full hover:bg-foreground/[0.06] text-muted-foreground/60 hover:text-foreground transition-colors duration-150 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60"
               >
                 <X className="w-4.5 h-4.5" />
               </button>
@@ -215,7 +228,7 @@ function SuggestionCard({ s, onSelectSymbol, onClose }: {
   const isPending = s.status === 'PENDING'; // signal generated, entry not yet touched
   const isActive = s.status === 'ACTIVE' || isPending;
   
-  const ltp = useSymbolDataSelector(isActive ? s.symbol : '', d => d.ltp);
+  const ltp = useSymbolDataSelector(s.symbol, d => d.ltp);
   const currentPrice = isActive && ltp ? ltp : (s.currentPrice || s.outcomePrice);
 
   const pnlRaw = calcPnLPct(currentPrice, s.entryPrice);
@@ -268,7 +281,17 @@ function SuggestionCard({ s, onSelectSymbol, onClose }: {
           onClose();
         }
       }}
-      className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 py-4 active:scale-[0.998] transition-all duration-150 ease-out cursor-pointer group hover:bg-foreground/[0.02] rounded-xl px-3 -mx-3"
+      onKeyDown={onSelectSymbol ? (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelectSymbol(s.symbol);
+          onClose();
+        }
+      } : undefined}
+      role={onSelectSymbol ? "button" : undefined}
+      tabIndex={onSelectSymbol ? 0 : undefined}
+      aria-label={onSelectSymbol ? `${s.direction} ${s.symbol} — view details` : undefined}
+      className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 py-4 active:scale-[0.998] transition-all duration-150 ease-out cursor-pointer group hover:bg-foreground/[0.02] rounded-xl px-3 -mx-3 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60"
     >
       <div className="flex items-start sm:items-center gap-4">
         {/* Status indicator pill */}
@@ -311,7 +334,7 @@ function SuggestionCard({ s, onSelectSymbol, onClose }: {
             </span>
             {expectedHold && (
               <>
-                <span className="text-border/40">â€¢</span>
+                <span className="text-border/40">•</span>
                 <span className="flex items-center gap-1">
                   <span className="text-foreground/40 text-[10px] uppercase tracking-wider">HOLD</span>
                   <span className="font-mono font-normal text-foreground/80">{expectedHold}</span>

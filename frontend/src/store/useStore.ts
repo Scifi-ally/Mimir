@@ -1,9 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { ScanProgress } from "@/types/api";
-import CryptoJS from "crypto-js";
-
-const PIN_ENCRYPTION_KEY = "mimir-secure-pin-key-2026";
 
 // crypto.randomUUID requires a secure context — undefined when the dashboard
 // is opened over plain http:// on a LAN IP. IDs here only key React lists.
@@ -71,9 +68,9 @@ interface AppStore {
   hideIsland: () => void;
   commandPaletteOpen: boolean;
   commandPaletteSearch: string;
-  commandPaletteTargetWatchlist: number | null;
+  commandPaletteTargetWatchlist: number | string | null;
   commandPaletteEditRuleId: number | null;
-  setCommandPaletteOpen: (open: boolean, search?: string, targetWatchlist?: number | null, editRuleId?: number | null) => void;
+  setCommandPaletteOpen: (open: boolean, search?: string, targetWatchlist?: number | string | null, editRuleId?: number | null) => void;
   watchlistCounts: Record<string, number>;
   updateWatchlistCounts: (counts: Record<string, number>) => void;
   eventFeedOpen: boolean;
@@ -117,28 +114,13 @@ export const useStore = create<AppStore>()(
       savePin: false,
       setSavePin: (save) => set({ savePin: save }),
       savedPin: "",
-      setSavedPin: (pin) => {
-        if (!pin) {
-          set({ savedPin: "" });
-        } else {
-          try {
-            const encrypted = CryptoJS.AES.encrypt(pin, PIN_ENCRYPTION_KEY).toString();
-            set({ savedPin: encrypted });
-          } catch {
-            set({ savedPin: "" });
-          }
-        }
-      },
-      getDecryptedPin: () => {
-        const { savedPin } = get();
-        if (!savedPin) return "";
-        try {
-          const bytes = CryptoJS.AES.decrypt(savedPin, PIN_ENCRYPTION_KEY);
-          return bytes.toString(CryptoJS.enc.Utf8) || "";
-        } catch {
-          return "";
-        }
-      },
+      // SECURITY FIX (Issue #61): Removed fake client-side PIN encryption. 
+      // The PIN is a UX convenience for auto-filling the headless Upstox login form. 
+      // It was previously "encrypted" with a hardcoded key shipped in the JS bundle, 
+      // which is security theatre. It is now stored in plain text in localStorage. 
+      // If true security is needed here, the backend must use proper sessions.
+      setSavedPin: (pin) => set({ savedPin: pin || "" }),
+      getDecryptedPin: () => get().savedPin,
       scanState: { scanning: false, current: 0, total: 0, phase: "idle" },
   setScanState: (partial) =>
     set((state) => ({
@@ -232,6 +214,9 @@ export const useStore = create<AppStore>()(
         savedMobileNumber: state.savedMobileNumber,
         savePin: state.savePin,
         savedPin: state.savedPin,
+        // Persist the notification feed so alerts survive a page refresh.
+        // Cap at 50 to keep the localStorage payload bounded.
+        events: state.events.slice(0, 50),
       }),
     }
   )

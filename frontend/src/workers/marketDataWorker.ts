@@ -10,7 +10,6 @@ interface Tick {
   price?: number;
   ltp?: number;
   changePct?: number | null;
-  change_pct?: number | null;
   volume?: number;
   bid?: number;
   ask?: number;
@@ -109,7 +108,7 @@ self.onmessage = (event: MessageEvent) => {
 function processTick(inputTick: unknown): void {
   let tick: Tick;
   if (Array.isArray(inputTick)) {
-    // [symbol, ltp, volume, bid, ask, timestamp, change_pct]
+    // [symbol, ltp, volume, bid, ask, timestamp, changePct]
     tick = {
       symbol: inputTick[0],
       ltp: inputTick[1],
@@ -118,7 +117,7 @@ function processTick(inputTick: unknown): void {
       bid: inputTick[3],
       ask: inputTick[4],
       timestamp: inputTick[5],
-      change_pct: inputTick[6]
+      changePct: inputTick[6]
     };
   } else {
     tick = inputTick as Tick;
@@ -129,8 +128,10 @@ function processTick(inputTick: unknown): void {
   totalTicksReceived++;
   ticksThisSecond++;
 
-  // Clean symbol name if prefixed
-  const cleanSymbol = tick.symbol.split(":").pop() || tick.symbol;
+  let rawSym = tick.symbol.trim();
+  if (rawSym.includes("|")) rawSym = rawSym.split("|").pop() || rawSym;
+  if (rawSym.includes(":")) rawSym = rawSym.split(":").pop() || rawSym;
+  const cleanSymbol = rawSym.replace(/-EQ$/, "").toUpperCase();
   const existing = tickBatch.get(cleanSymbol);
 
   // A tick may arrive carrying only a volume/bid/ask/change update and no price.
@@ -147,8 +148,8 @@ function processTick(inputTick: unknown): void {
   const prevLtp = existing?.ltp ?? ltp;
   const direction = ltp > prevLtp ? "up" : ltp < prevLtp ? "down" : existing?.direction ?? "none";
 
-  const incomingChangePct = tick.change_pct ?? tick.changePct;
-  const change_pct = incomingChangePct != null ? incomingChangePct : (existing?.change_pct ?? null);
+  const incomingChangePct = tick.changePct ?? tick.changePct;
+  const changePct = incomingChangePct != null ? incomingChangePct : (existing?.changePct ?? null);
 
   const merged: Tick = {
     ...existing,
@@ -156,7 +157,7 @@ function processTick(inputTick: unknown): void {
     symbol: cleanSymbol,
     ltp,
     price: ltp,
-    change_pct,
+    changePct,
     direction,
     timestamp: tick.timestamp ?? Date.now(),
   };

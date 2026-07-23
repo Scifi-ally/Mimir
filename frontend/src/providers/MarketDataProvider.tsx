@@ -3,7 +3,8 @@ import { useCallback, useSyncExternalStore } from "react";
 export interface SymbolData {
   // Price — always defined (falls back through sources)
   ltp: number | null;
-  change_pct: number | null;
+  changePct: number | null;
+  prevClose?: number | null;
   volume: number | null;
   timestamp: number | null;
   source: 'websocket' | 'rest' | 'cache';
@@ -131,15 +132,20 @@ class MarketDataStore {
       direction = tick.direction;
     }
 
-    const incomingChangePct = tick.change_pct ?? tick.changePct;
-    const newChangePct = incomingChangePct != null ? incomingChangePct : existing.change_pct;
+    const incomingChangePct = tick.changePct ?? tick.changePct;
+    const prevClose = tick.prevClose ?? tick.prev_close ?? existing.prevClose;
+    const derivedChangePct = (newLtp != null && prevClose != null && prevClose > 0)
+      ? ((newLtp - prevClose) / prevClose) * 100
+      : null;
+    const newChangePct = incomingChangePct != null ? incomingChangePct : (derivedChangePct ?? existing.changePct);
     const incomingVolume = tick.volume;
     const newVolume = incomingVolume != null ? incomingVolume : existing.volume;
 
     this.data.set(k, {
       ...existing,
       ltp: newLtp,
-      change_pct: newChangePct,
+      changePct: newChangePct,
+      prevClose,
       volume: newVolume,
       timestamp: tick.timestamp ?? Date.now(),
       source: 'websocket',
@@ -183,7 +189,7 @@ class MarketDataStore {
     this.data.set(k, {
       ...existing,
       ltp: shouldUpdatePrice ? (quote.ltp ?? existing.ltp) : existing.ltp,
-      change_pct: quote.change_pct ?? existing.change_pct,
+      changePct: shouldUpdatePrice ? (quote.changePct ?? existing.changePct) : existing.changePct,
       source: shouldUpdatePrice ? 'rest' : existing.source,
       is_transitioning: shouldUpdatePrice ? false : existing.is_transitioning,
       timestamp: shouldUpdatePrice ? Date.now() : existing.timestamp,
@@ -209,7 +215,7 @@ class MarketDataStore {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   private getDefaultData(_symbol: string): SymbolData {
     return {
-      ltp: null, change_pct: null, volume: null, 
+      ltp: null, changePct: null, volume: null,
       timestamp: null, source: 'cache', direction: 'none',
       composite_score: null, watchlist_score: null,
       provisional_trigger: null, provisional_deviation: null,

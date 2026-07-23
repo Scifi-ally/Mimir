@@ -92,9 +92,9 @@ export const PriceChart = memo(function PriceChart({ symbol, chartMode, onChartM
     queryKey: ['candles', symbol, activeTf.interval, activeTf.days],
     queryFn: () => api.candles(symbol, activeTf.interval, activeTf.days),
     enabled: Boolean(symbol),
-    staleTime: 60000 * 5, // 5 minutes
+    staleTime: 10000,
     gcTime: 60000 * 15, // 15 minutes
-    refetchInterval: 60000, // 1 minute
+    refetchInterval: 15000,
   });
 
   const { data: forecastData } = useQuery<SymbolForecast>({
@@ -102,7 +102,7 @@ export const PriceChart = memo(function PriceChart({ symbol, chartMode, onChartM
     queryFn: () => api.forecast(symbol),
     enabled: Boolean(symbol),
     retry: false,
-    refetchInterval: 300000,
+    refetchInterval: 60000,
   });
 
   const candles = useMemo(() => {
@@ -190,6 +190,12 @@ export const PriceChart = memo(function PriceChart({ symbol, chartMode, onChartM
   const activeTfRef = useRef(activeTf);
   activeTfRef.current = activeTf;
 
+  // Stable refs for values used inside the subscription effect — avoids unsub/resub on every react-query refetch
+  const candlesRef = useRef(candles);
+  candlesRef.current = candles;
+  const atrRef = useRef(atr);
+  atrRef.current = atr;
+
 
   // displayPrice and changePct removed to use LivePrice and LiveChangePct
 
@@ -228,16 +234,57 @@ export const PriceChart = memo(function PriceChart({ symbol, chartMode, onChartM
         shiftVisibleRangeOnNewBar: true,
         allowShiftVisibleRangeOnWhitespaceReplacement: true,
         minimumHeight: 0,
-        tickMarkFormatter: (time: number) => {
-          const date = new Date(time * 1000);
-          return date.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' });
+        tickMarkFormatter: (time: Time, tickMarkType: number) => {
+          let sec = 0;
+          if (typeof time === "number") sec = time;
+          else if (typeof time === "string") sec = Math.floor(Date.parse(time) / 1000);
+          else if (time && typeof time === "object" && "year" in time) {
+            sec = Math.floor(Date.UTC(time.year, time.month - 1, time.day) / 1000);
+          }
+          if (!sec || isNaN(sec)) return "";
+
+          const date = new Date(sec * 1000);
+          // 0: Year, 1: Month, 2: DayOfMonth, 3: Time, 4: TimeWithSeconds
+          if (tickMarkType === 0) {
+            return date.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", year: "numeric" });
+          }
+          if (tickMarkType === 1) {
+            return date.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", month: "short" });
+          }
+          if (tickMarkType === 2) {
+            return date.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short" });
+          }
+          return date.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hour12: true });
         },
       },
       localization: {
-        timeFormatter: (time: number) => {
-          const date = new Date(time * 1000);
-          return date.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' });
-        }
+        timeFormatter: (time: Time) => {
+          let sec = 0;
+          if (typeof time === "number") sec = time;
+          else if (typeof time === "string") sec = Math.floor(Date.parse(time) / 1000);
+          else if (time && typeof time === "object" && "year" in time) {
+            sec = Math.floor(Date.UTC(time.year, time.month - 1, time.day) / 1000);
+          }
+          if (!sec || isNaN(sec)) return "";
+
+          const date = new Date(sec * 1000);
+          if (activeTfRef.current.interval !== "day") {
+            return date.toLocaleString("en-IN", {
+              timeZone: "Asia/Kolkata",
+              day: "2-digit",
+              month: "short",
+              hour: "2-digit",
+              minute: "2-digit",
+              hour12: true,
+            });
+          }
+          return date.toLocaleDateString("en-IN", {
+            timeZone: "Asia/Kolkata",
+            day: "2-digit",
+            month: "short",
+            year: "numeric",
+          });
+        },
       },
       handleScale: {
         axisPressedMouseMove: {
@@ -400,13 +447,24 @@ export const PriceChart = memo(function PriceChart({ symbol, chartMode, onChartM
     const clrLine = getComputedStyle(document.documentElement)
       .getPropertyValue("--primary")
       .trim();
+      
+    const hexToRgba = (hex: string, alpha: number) => {
+      if (hex.startsWith('#')) {
+        const r = parseInt(hex.slice(1, 3), 16);
+        const g = parseInt(hex.slice(3, 5), 16);
+        const b = parseInt(hex.slice(5, 7), 16);
+        return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+      }
+      return hex;
+    };
+
     if (clrLine && emaRef.current) {
       emaRef.current.applyOptions({ color: clrLine });
       vwapRef.current?.applyOptions({ color: "#f59e0b" });
-      lowerRef.current?.applyOptions({ color: `color-mix(in srgb, ${clrLine} 25%, transparent)` });
-      upper90Ref.current?.applyOptions({ color: `color-mix(in srgb, ${clrLine} 10%, transparent)` });
-      lower10Ref.current?.applyOptions({ color: `color-mix(in srgb, ${clrLine} 10%, transparent)` });
-      medianRef.current?.applyOptions({ color: `color-mix(in srgb, ${clrLine} 90%, transparent)` });
+      lowerRef.current?.applyOptions({ color: hexToRgba(clrLine, 0.25) });
+      upper90Ref.current?.applyOptions({ color: hexToRgba(clrLine, 0.1) });
+      lower10Ref.current?.applyOptions({ color: hexToRgba(clrLine, 0.1) });
+      medianRef.current?.applyOptions({ color: hexToRgba(clrLine, 0.9) });
     }
 
     const handleThemeChange = () => {
@@ -417,6 +475,17 @@ export const PriceChart = memo(function PriceChart({ symbol, chartMode, onChartM
       const clrLine = getComputedStyle(document.documentElement)
         .getPropertyValue("--primary")
         .trim();
+        
+      const hexToRgba = (hex: string, alpha: number) => {
+        if (hex.startsWith('#')) {
+          const r = parseInt(hex.slice(1, 3), 16);
+          const g = parseInt(hex.slice(3, 5), 16);
+          const b = parseInt(hex.slice(5, 7), 16);
+          return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+        }
+        return hex;
+      };
+
       chartRef.current.applyOptions({
         layout: { textColor: clr || "#a3a3a3" },
         grid: {
@@ -426,10 +495,10 @@ export const PriceChart = memo(function PriceChart({ symbol, chartMode, onChartM
       });
       emaRef.current.applyOptions({ color: clrLine });
       vwapRef.current?.applyOptions({ color: "#f59e0b" });
-      lowerRef.current?.applyOptions({ color: `color-mix(in srgb, ${clrLine} 25%, transparent)` });
-      upper90Ref.current?.applyOptions({ color: `color-mix(in srgb, ${clrLine} 10%, transparent)` });
-      lower10Ref.current?.applyOptions({ color: `color-mix(in srgb, ${clrLine} 10%, transparent)` });
-      medianRef.current?.applyOptions({ color: `color-mix(in srgb, ${clrLine} 90%, transparent)` });
+      lowerRef.current?.applyOptions({ color: hexToRgba(clrLine, 0.25) });
+      upper90Ref.current?.applyOptions({ color: hexToRgba(clrLine, 0.1) });
+      lower10Ref.current?.applyOptions({ color: hexToRgba(clrLine, 0.1) });
+      medianRef.current?.applyOptions({ color: hexToRgba(clrLine, 0.9) });
     };
 
     window.addEventListener("themechange", handleThemeChange);
@@ -761,7 +830,7 @@ export const PriceChart = memo(function PriceChart({ symbol, chartMode, onChartM
   }, [showEma, showVwap, chartMode, forecast]);
 
   useEffect(() => {
-    if (candles.length === 0 || !symbol) return;
+    if (!symbol) return;
     let prevLtp: number | null = null;
     // Tick feed's `volume` is the cumulative DAILY total — track the per-bar delta
     // (cumulative at bar open vs now), never write the day total into an intraday bar.
@@ -770,18 +839,14 @@ export const PriceChart = memo(function PriceChart({ symbol, chartMode, onChartM
     let lastCumVol: number | null = null;
 
     const unsub = marketDataStore.subscribe(symbol, () => {
+      const curCandles = candlesRef.current;
+      if (curCandles.length === 0) return;
       const data = marketDataStore.get(symbol);
       const tickLtp = data?.ltp;
       if (!candleRef.current || !volumeRef.current || !tickLtp || tickLtp <= 0 || !Number.isFinite(tickLtp) || tickLtp === prevLtp) return;
-        
-      const lastCandle = candles[candles.length - 1];
-      if (!lastCandle || lastCandle.close <= 0) return;
 
-      // Ignore bad exchange ticks/spikes (dynamic threshold based on ATR).
-      const refClose = liveBarRef.current?.close ?? lastCandle.close;
-      const spikeThreshold = Math.max(atr * 5, refClose * 0.02); // #2: 5x ATR or 2%, whichever is larger
-      if (Math.abs(tickLtp - refClose) > spikeThreshold) return;
-      prevLtp = tickLtp;
+      const lastCandle = curCandles[curCandles.length - 1];
+      if (!lastCandle || lastCandle.close <= 0) return;
 
       const lastCandleSec = Math.floor(Date.parse(lastCandle.ts) / 1000);
       const nowSec = Math.floor(Date.now() / 1000);
@@ -793,6 +858,15 @@ export const PriceChart = memo(function PriceChart({ symbol, chartMode, onChartM
       const targetTime = Math.max(nseBucket, lastCandleSec); // Prevent going backwards
       const time = targetTime as Time;
       const isOpenNewBar = targetTime > lastCandleSec;
+      const isSessionGap = (targetTime - (liveBarRef.current ? (liveBarRef.current.time as number) : lastCandleSec)) > 5 * 3600;
+
+      // Ignore bad exchange ticks/spikes (dynamic threshold based on ATR), but permit new session gaps
+      if (!isSessionGap) {
+        const refClose = liveBarRef.current?.close ?? lastCandle.close;
+        const spikeThreshold = Math.max(atrRef.current * 5, refClose * 0.03); // 5x ATR or 3%
+        if (Math.abs(tickLtp - refClose) > spikeThreshold) return;
+      }
+      prevLtp = tickLtp;
 
       // Volume tracking
       const cumVol = Number.isFinite(data.volume) ? (data.volume as number) : null;
@@ -833,15 +907,15 @@ export const PriceChart = memo(function PriceChart({ symbol, chartMode, onChartM
             }
           }
         }
-        // When opening a new bar, use the previous bar's close as the open
-        // (not tickLtp which may have gapped), matching standard candlestick behaviour.
+        // Across an overnight/session gap, open at the tick's price (tickLtp).
+        // Intra-session, connect to previous bar's close for seamless candles.
         const prevClose = prev ? prev.close : lastCandle.close;
-        const barOpen = isOpenNewBar ? prevClose : lastCandle.open;
+        const barOpen = (isOpenNewBar && !isSessionGap) ? prevClose : tickLtp;
         liveBarRef.current = {
           time,
           open: barOpen,
-          high: isOpenNewBar ? Math.max(barOpen, tickLtp) : Math.max(Number.isFinite(lastCandle.high) ? lastCandle.high : tickLtp, tickLtp),
-          low: isOpenNewBar ? Math.min(barOpen, tickLtp) : Math.min(Number.isFinite(lastCandle.low) ? lastCandle.low : tickLtp, tickLtp),
+          high: Math.max(barOpen, tickLtp),
+          low: Math.min(barOpen, tickLtp),
           close: tickLtp,
           volume: barVol,
           vwapTurnover: tickLtp * tickVolDelta // #4: precision VWAP tick accumulator
@@ -873,7 +947,7 @@ export const PriceChart = memo(function PriceChart({ symbol, chartMode, onChartM
     return () => {
       unsub();
     };
-  }, [symbol, candles, atr, activeTf.interval]);
+  }, [symbol, activeTf.interval]);
 
   const projMeta = chartMode === "forecast" && forecast;
 

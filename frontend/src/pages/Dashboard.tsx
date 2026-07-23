@@ -17,6 +17,7 @@ const ReportsLibrary = lazy(() => import("@/components/ReportsLibrary").then(m =
 const SettingsDialog = lazy(() => import("@/components/SettingsDialog").then(m => ({ default: m.SettingsDialog })));
 
 import { UpstoxHeadlessLogin } from "@/components/UpstoxHeadlessLogin";
+import { Loader2 } from "lucide-react";
 import { useWebSocket, subscribeWsSymbols } from "@/hooks/useWebSocket";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useStore } from "@/store/useStore";
@@ -44,7 +45,7 @@ export default function Dashboard() {
   const scanState = useStore(useShallow((s) => ({ scanning: s.scanState.scanning, current: s.scanState.current, total: s.scanState.total })));
   const setScanState = useStore((s) => s.setScanState);
 
-  const sessionQuery = useQuery({ queryKey: ["session"], queryFn: api.sessionState, refetchInterval: scanState.scanning ? 10000 : 60000, staleTime: 30000, placeholderData: (prev) => prev });
+  const sessionQuery = useQuery({ queryKey: ["session"], queryFn: api.sessionState, refetchInterval: scanState.scanning ? 5000 : 15000, staleTime: 10000, placeholderData: (prev) => prev });
 
   useEffect(() => {
     if (sessionQuery.data && !sessionQuery.data.scanRunning && scanState.scanning) {
@@ -60,21 +61,22 @@ export default function Dashboard() {
   const [isReportsOpen, setIsReportsOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<"watchlist" | "screener">("watchlist");
-  const statusQuery = useQuery({ queryKey: ["status"], queryFn: api.systemStatus, refetchInterval: 30000, staleTime: 25000, placeholderData: (prev) => prev });
+  const statusQuery = useQuery({ queryKey: ["status"], queryFn: api.systemStatus, refetchInterval: 15000, staleTime: 10000, placeholderData: (prev) => prev });
   const watchlistQuery = useQuery({
     queryKey: ["watchlist"],
     queryFn: api.watchlistToday,
-    refetchInterval: 120000,
-    staleTime: 110000,
+    refetchInterval: 15000,
+    staleTime: 10000,
     gcTime: 300000,
     placeholderData: (previousData) => previousData,
   });
-  const suggestionsQuery = useQuery<Suggestion[]>({ queryKey: ["suggestions"], queryFn: () => api.activeSuggestions(), refetchInterval: 30000, staleTime: 25000, placeholderData: (prev) => prev });
-  const positionsQuery = useQuery({ queryKey: ["positions"], queryFn: () => api.paper.positions(), refetchInterval: 30000, staleTime: 25000, placeholderData: (prev) => prev });
-  const indicesQuery = useQuery({ queryKey: ["indices"], queryFn: api.dashboardIndices, staleTime: Infinity, placeholderData: (prev) => prev });
-  const regimeQuery = useQuery({ queryKey: ["regime"], queryFn: api.marketRegime, refetchInterval: 120000, staleTime: 110000, placeholderData: (prev) => prev });
-  const monitoringQuery = useQuery({ queryKey: ["monitoring"], queryFn: api.intradayMonitoring, refetchInterval: 60000, staleTime: 55000, placeholderData: (prev) => prev });
-  const indianContextQuery = useQuery({ queryKey: ["indian-context"], queryFn: api.indianContext, refetchInterval: 300000, staleTime: 290000, placeholderData: (prev) => prev });
+  const suggestionsQuery = useQuery<Suggestion[]>({ queryKey: ["suggestions"], queryFn: () => api.activeSuggestions(), refetchInterval: 15000, staleTime: 10000, placeholderData: (prev) => prev });
+  const positionsQuery = useQuery({ queryKey: ["paperTrading", "positions"], queryFn: () => api.paper.positions(), refetchInterval: 10000, staleTime: 5000, placeholderData: (prev) => prev });
+  const indicesQuery = useQuery({ queryKey: ["indices"], queryFn: api.dashboardIndices, refetchInterval: 15000, staleTime: 10000, placeholderData: (prev) => prev });
+  const regimeQuery = useQuery({ queryKey: ["regime"], queryFn: api.marketRegime, refetchInterval: 30000, staleTime: 20000, placeholderData: (prev) => prev });
+  const monitoringQuery = useQuery({ queryKey: ["monitoring"], queryFn: api.intradayMonitoring, refetchInterval: 15000, staleTime: 10000, placeholderData: (prev) => prev });
+  const indianContextQuery = useQuery({ queryKey: ["indian-context"], queryFn: api.indianContext, refetchInterval: 60000, staleTime: 45000, placeholderData: (prev) => prev });
+  const customWatchlistQuery = useQuery({ queryKey: ["customWatchlist"], queryFn: api.customWatchlist, refetchInterval: 15000, staleTime: 10000, placeholderData: (prev) => prev });
   const scanning = scanState.scanning || Boolean(sessionQuery.data?.scanRunning);
   const isScanActive = scanning;
   const scanLogs = useStore((s) => s.scanLogs);
@@ -141,9 +143,10 @@ export default function Dashboard() {
       const bActive = activeSymbols.has(b.symbol) ? 1 : 0;
       return bActive - aActive || (b.priority ?? 0) - (a.priority ?? 0) || a.symbol.localeCompare(b.symbol);
     });
-  }, [watchlistQuery, watchlistQuery.data, scanning, scanLogs, activeSymbols, suggestionsQuery.data, monitoringQuery.data]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watchlistQuery.data, scanning, scanLogs, activeSymbols, suggestionsQuery.data, monitoringQuery.data]);
 
-  const watchlistSymbolsKey = useMemo(() => watchlistItems.map(r => r.symbol).join(","), [watchlistItems]);
+  const watchlistSymbolsKey = useMemo(() => watchlistItems.filter(r => r.category !== "SCANNED").map(r => r.symbol).join(","), [watchlistItems]);
   const watchlistSymbols = useMemo(() => (watchlistSymbolsKey ? watchlistSymbolsKey.split(",") : []), [watchlistSymbolsKey]);
 
   const [debouncedSymbols, setDebouncedSymbols] = useState<string[]>(watchlistSymbols);
@@ -189,13 +192,30 @@ export default function Dashboard() {
         finnifty: { ltp: indicesQuery.data.finnifty?.ltp ?? null, changePct: indicesQuery.data.finnifty?.changePct ?? null },
         vix: { ltp: indicesQuery.data.indiaVix?.ltp ?? null, changePct: indicesQuery.data.indiaVix?.changePct ?? null },
       });
-      if (indicesQuery.data.nifty50?.ltp != null) marketDataStore.updateFromRest("NIFTY 50", { ltp: indicesQuery.data.nifty50.ltp, change_pct: indicesQuery.data.nifty50.changePct });
-      if (indicesQuery.data.sensex?.ltp != null) marketDataStore.updateFromRest("SENSEX", { ltp: indicesQuery.data.sensex.ltp, change_pct: indicesQuery.data.sensex.changePct });
-      if (indicesQuery.data.bankNifty?.ltp != null) marketDataStore.updateFromRest("BANK NIFTY", { ltp: indicesQuery.data.bankNifty.ltp, change_pct: indicesQuery.data.bankNifty.changePct });
-      if (indicesQuery.data.finnifty?.ltp != null) marketDataStore.updateFromRest("FIN NIFTY", { ltp: indicesQuery.data.finnifty.ltp, change_pct: indicesQuery.data.finnifty.changePct });
-      if (indicesQuery.data.indiaVix?.ltp != null) marketDataStore.updateFromRest("INDIA VIX", { ltp: indicesQuery.data.indiaVix.ltp, change_pct: indicesQuery.data.indiaVix.changePct });
+      if (indicesQuery.data.nifty50?.ltp != null) marketDataStore.updateFromRest("NIFTY 50", { ltp: indicesQuery.data.nifty50.ltp, changePct: indicesQuery.data.nifty50.changePct });
+      if (indicesQuery.data.sensex?.ltp != null) marketDataStore.updateFromRest("SENSEX", { ltp: indicesQuery.data.sensex.ltp, changePct: indicesQuery.data.sensex.changePct });
+      if (indicesQuery.data.bankNifty?.ltp != null) marketDataStore.updateFromRest("BANK NIFTY", { ltp: indicesQuery.data.bankNifty.ltp, changePct: indicesQuery.data.bankNifty.changePct });
+      if (indicesQuery.data.finnifty?.ltp != null) marketDataStore.updateFromRest("FIN NIFTY", { ltp: indicesQuery.data.finnifty.ltp, changePct: indicesQuery.data.finnifty.changePct });
+      if (indicesQuery.data.indiaVix?.ltp != null) marketDataStore.updateFromRest("INDIA VIX", { ltp: indicesQuery.data.indiaVix.ltp, changePct: indicesQuery.data.indiaVix.changePct });
     }
   }, [indicesQuery.data, mergeIndices]);
+
+  useEffect(() => {
+    if (watchlistQuery.data) {
+      const items = flattenWatchlist(watchlistQuery.data);
+      items.forEach((item) => {
+        const price = item.price ?? item.ltp;
+        const changePct = item.changePct ?? item.changePct;
+        if (price != null && Number.isFinite(price) && price > 0) {
+          marketDataStore.updateFromRest(item.symbol, {
+            ltp: price,
+            changePct: changePct ?? null,
+            prevClose: item.prevClose ?? null,
+          });
+        }
+      });
+    }
+  }, [watchlistQuery.data]);
 
   const session = sessionQuery.data;
   const status = statusQuery.data;
@@ -223,11 +243,13 @@ export default function Dashboard() {
   }, [watchlistItems, selectedSymbol, isSelectedValid, setSelectedSymbol]);
 
   useEffect(() => {
-    if (watchlistSymbols.length > 0 || activeSymbols.size > 0) {
-      const combined = Array.from(new Set([...watchlistSymbols, ...Array.from(activeSymbols)]));
-      subscribeWsSymbols(combined);
+    const customSymbols = (customWatchlistQuery.data?.data ?? []).map((i: { symbol: string }) => i.symbol);
+    const allSymbols = new Set([...watchlistSymbols, ...customSymbols, ...Array.from(activeSymbols)]);
+    if (selectedSymbol) allSymbols.add(selectedSymbol);
+    if (allSymbols.size > 0) {
+      subscribeWsSymbols(Array.from(allSymbols));
     }
-  }, [watchlistSymbols, activeSymbols, wsConnected]);
+  }, [watchlistSymbols, customWatchlistQuery.data, activeSymbols, selectedSymbol, wsConnected]);
 
   // Removed the stale selection clear block so users can keep custom command-palette selections even when the watchlist is empty.
 
@@ -541,6 +563,7 @@ export default function Dashboard() {
                         <WatchlistStack
                           headerLeft={desktopTabHeader}
                           items={watchlistItems}
+                          customItems={customWatchlistQuery.data?.data}
                           monitored={monitoring?.monitoredStocks}
                           suggestions={suggestions}
                           selectedSymbol={activeSymbol}
@@ -653,7 +676,7 @@ export default function Dashboard() {
         />
       </div>
       
-      <Suspense fallback={null}>
+      <Suspense fallback={<div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm"><Loader2 className="h-6 w-6 animate-spin text-foreground/50" /></div>}>
         <SuggestionsSlider isOpen={isSuggestionsOpen} onClose={() => setIsSuggestionsOpen(false)} onSelectSymbol={(s) => setSelectedSymbol(s)} activeSuggestions={suggestions} />
         <PaperTradingPanel isOpen={isPaperTradingOpen} onClose={() => setIsPaperTradingOpen(false)} />
         <ReportsLibrary isOpen={isReportsOpen} onClose={() => setIsReportsOpen(false)} />

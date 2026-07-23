@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Command } from 'cmdk';
 import { useStore } from '@/store/useStore';
 import { api } from '@/lib/api';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Search, Plus, Filter, Loader2 } from 'lucide-react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { AdvancedRuleBuilder } from './AdvancedRuleBuilder';
 import type { SymbolSearchResult } from '@/types/api';
 import { FADE_FAST, FADE_STANDARD } from "@/lib/motion";
@@ -22,14 +22,37 @@ export function CommandPalette({ onClose, onWidthChange }: { onClose: () => void
   const initialEditRuleId = useStore((s) => s.commandPaletteEditRuleId);
   const [search, setSearch] = useState(initialSearch || '');
   const [debouncedSearch, setDebouncedSearch] = useState(search);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
+  // Cancel any pending close-timer from a previous open/close cycle
+  useEffect(() => {
+    if (closeTimerRef.current) {
+      clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  }, []);
+
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search), 300);
     return () => clearTimeout(timer);
   }, [search]);
 
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, symbol: string } | null>(null);
-  const [targetWatchlist, setTargetWatchlist] = useState<number | null>(initialTargetWatchlist);
+
+  // The context menu previously had no dismissal path besides picking an item —
+  // Escape and any click outside now close it.
+  useEffect(() => {
+    if (!contextMenu) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        setContextMenu(null);
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [contextMenu]);
+  const [targetWatchlist, setTargetWatchlist] = useState<number | string | null>(initialTargetWatchlist);
   
   // Rule builder state
   const [isBuildingRule, setIsBuildingRule] = useState(!!initialEditRuleId || (initialSearch ? initialSearch.toLowerCase().startsWith('scan ') : false));
@@ -76,6 +99,8 @@ export function CommandPalette({ onClose, onWidthChange }: { onClose: () => void
     },
     onSuccess: (_data, vars) => {
       queryClient.invalidateQueries({ queryKey: ["screener_targets"] });
+      queryClient.invalidateQueries({ queryKey: ["screener_matches"] });
+      queryClient.invalidateQueries({ queryKey: ["watchlist"] });
       setContextMenu(null);
       showIsland({ title: `${vars.symbol} added`, showSuccessOnly: true, hideCancel: true });
     },
@@ -101,15 +126,53 @@ export function CommandPalette({ onClose, onWidthChange }: { onClose: () => void
     },
     onSuccess: (_data, vars) => {
       queryClient.invalidateQueries({ queryKey: ["screener_targets"] });
+      queryClient.invalidateQueries({ queryKey: ["screener_matches"] });
+      queryClient.invalidateQueries({ queryKey: ["watchlist"] });
       setContextMenu(null);
       showIsland({ title: `${vars.symbols.length} stock${vars.symbols.length === 1 ? "" : "s"} added`, showSuccessOnly: true, hideCancel: true });
+    },
+    onError: (err) => {
+      setContextMenu(null);
+      showIsland({ isNotification: true, title: "Couldn't add stocks", subtitle: err instanceof Error ? err.message : "Add failed", showSuccessOnly: false });
+    }
+  });
+
+  const addCustomWatchlistMutation = useMutation({
+    mutationFn: async (symbol: string) => api.addCustomWatchlist(symbol),
+    onSuccess: (_data, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["customWatchlist"] });
+      queryClient.invalidateQueries({ queryKey: ["watchlist"] });
+      setContextMenu(null);
+      showIsland({ title: `${vars} added`, showSuccessOnly: true, hideCancel: true });
+    },
+    onError: (err, vars) => {
+      setContextMenu(null);
+      showIsland({ isNotification: true, title: `Couldn't add ${vars}`, subtitle: err.message, showSuccessOnly: false });
+    }
+  });
+
+  const addCustomWatchlistBatchMutation = useMutation({
+    mutationFn: async (symbols: string[]) => {
+      return Promise.all(
+        symbols.map(async (symbol) => api.addCustomWatchlist(symbol))
+      );
+    },
+    onSuccess: (_data, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["customWatchlist"] });
+      queryClient.invalidateQueries({ queryKey: ["watchlist"] });
+      setContextMenu(null);
+      showIsland({ title: `${vars.length} stock${vars.length === 1 ? "" : "s"} added`, showSuccessOnly: true, hideCancel: true });
+    },
+    onError: (err) => {
+      setContextMenu(null);
+      showIsland({ isNotification: true, title: "Couldn't add stocks", subtitle: err instanceof Error ? err.message : "Add failed", showSuccessOnly: false });
     }
   });
 
   const handleClose = () => {
     onClose();
     // Delay resetting internal state until the unmount animation completely finishes
-    setTimeout(() => {
+    closeTimerRef.current = setTimeout(() => {
       setSearch('');
       setIsBuildingRule(false);
       setTargetWatchlist(null);
@@ -119,25 +182,47 @@ export function CommandPalette({ onClose, onWidthChange }: { onClose: () => void
   useEffect(() => {
     if (isBuildingRule) {
       onWidthChange?.(650);
+    } else if (targetWatchlist === "CUSTOM") {
+      setIsBuildingRule(false);
+      onWidthChange?.(650);
     } else if (search.length === 0) {
       setIsBuildingRule(false);
-      onWidthChange?.(480);
+      onWidthChange?.(650);
     }
-  }, [isBuildingRule, search, onWidthChange]);
+  }, [isBuildingRule, search, targetWatchlist, onWidthChange]);
 
   useEffect(() => {
     setTargetWatchlist(initialTargetWatchlist);
   }, [initialTargetWatchlist]);
 
-  const { data: searchResults, isPending, error } = useQuery({
+  // A "scan" prefix routes to the rule builder, not symbol search — so the query
+  // is disabled for it. A disabled query stays `isPending` forever, so the
+  // skeleton must gate on this same flag or it renders indefinitely (e.g. typing
+  // "s", "sc", "sca", "scan").
+  const searchEnabled =
+    debouncedSearch.length > 0 &&
+    batchSymbols.length === 0 &&
+    !debouncedSearch.toLowerCase().startsWith('scan') &&
+    !("scan".startsWith(debouncedSearch.toLowerCase()));
+
+  const { data: searchResults, isFetching, error } = useQuery({
     queryKey: ['searchSymbols', debouncedSearch],
     queryFn: () => api.searchSymbols(debouncedSearch, 40),
-    enabled: debouncedSearch.length > 0 && batchSymbols.length === 0 && !debouncedSearch.toLowerCase().startsWith('scan') && !("scan".startsWith(debouncedSearch.toLowerCase())),
+    enabled: searchEnabled,
+    placeholderData: keepPreviousData,
   });
 
+  // Only a genuinely in-flight, enabled query should show the skeleton. With
+  // keepPreviousData the prior results stay visible while the next set loads,
+  // so the list no longer collapses to skeletons on every keystroke.
+  const showSearchSkeleton = searchEnabled && isFetching && !searchResults;
+
   const handleSelectSymbol = (symbol: string) => {
-    if (targetWatchlist !== null) {
-      createTargetMutation.mutate({ symbol, screenerId: targetWatchlist });
+    if (targetWatchlist === "CUSTOM") {
+      addCustomWatchlistMutation.mutate(symbol);
+      handleClose();
+    } else if (targetWatchlist !== null) {
+      createTargetMutation.mutate({ symbol, screenerId: targetWatchlist as number });
       handleClose();
     } else {
       setSelectedSymbol(symbol);
@@ -147,20 +232,37 @@ export function CommandPalette({ onClose, onWidthChange }: { onClose: () => void
 
   const handleAddBatchSymbols = async () => {
     if (targetWatchlist === null || batchSymbols.length === 0) return;
-    await createTargetsMutation.mutateAsync({ symbols: batchSymbols, screenerId: targetWatchlist });
-    handleClose();
+    try {
+      if (targetWatchlist === "CUSTOM") {
+        await addCustomWatchlistBatchMutation.mutateAsync(batchSymbols);
+      } else {
+        await createTargetsMutation.mutateAsync({ symbols: batchSymbols, screenerId: targetWatchlist as number });
+      }
+      handleClose();
+    } catch {
+      // Feedback is surfaced by each mutation's onError; keep the palette open
+      // so the user can retry rather than closing on a silent failure.
+    }
   };
 
   return (
     <>
       <AnimatePresence>
         {contextMenu && (
+          <>
+          {/* Invisible scrim: clicking anywhere off the menu dismisses it. */}
+          <div className="fixed inset-0 z-[119]" onClick={() => setContextMenu(null)} onContextMenu={(e) => { e.preventDefault(); setContextMenu(null); }} />
           <motion.div
             initial={{ opacity: 0, backdropFilter: 'blur(0px)' }}
             animate={{ opacity: 1, backdropFilter: 'blur(12px)' }}
             exit={{ opacity: 0, backdropFilter: 'blur(0px)' }}
             transition={FADE_STANDARD}
-            style={{ top: contextMenu.y, left: contextMenu.x }}
+            style={{
+              // Clamp so the menu never opens off-screen near the right/bottom edges.
+              top: Math.min(contextMenu.y, (typeof window !== "undefined" ? window.innerHeight : 800) - 220),
+              left: Math.min(contextMenu.x, (typeof window !== "undefined" ? window.innerWidth : 1200) - 220),
+            }}
+            role="menu"
             className="fixed z-[120] min-w-[200px] rounded-xl border border-border/20 bg-background/95 p-1.5 shadow-2xl backdrop-blur-md"
           >
             <div className="px-2 py-1.5 text-xs font-normal text-muted-foreground uppercase tracking-wider mb-1">
@@ -199,6 +301,7 @@ export function CommandPalette({ onClose, onWidthChange }: { onClose: () => void
               + Create New Watchlist
             </button>
           </motion.div>
+          </>
         )}
       </AnimatePresence>
 
@@ -212,27 +315,27 @@ export function CommandPalette({ onClose, onWidthChange }: { onClose: () => void
         }}
       >
           {!isBuildingRule ? (
-            <div className="flex items-center px-4 py-3 relative">
-              <Search className="mr-3 h-5 w-5 shrink-0 text-foreground/50" />
+            <div className="flex items-center px-4 py-2.5 relative">
+              <Search className="mr-3 h-4 w-4 shrink-0 text-foreground/50" />
               <Command.Input
                 id="command-palette-input"
                 name="command-palette-input"
                 aria-label="Search symbols"
                 autoFocus
-                placeholder={targetWatchlist !== null ? "Search or add comma-separated symbols..." : "Search symbols... (Try 'RELIANCE')"}
+                placeholder={targetWatchlist === "CUSTOM" ? "Add symbol..." : targetWatchlist !== null ? "Search or add comma-separated symbols..." : "Search symbols..."}
                 value={search}
                 onValueChange={setSearch}
-                className="flex h-12 w-full bg-transparent text-lg font-normal text-foreground outline-none placeholder:text-foreground/30 placeholder:font-normal disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex h-10 w-full bg-transparent text-[15px] font-normal text-foreground outline-none placeholder:text-foreground/30 placeholder:font-normal disabled:cursor-not-allowed disabled:opacity-50"
               />
               {batchSymbols.length > 0 && (
                 <button
                   type="button"
                   onClick={handleAddBatchSymbols}
-                  disabled={createTargetsMutation.isPending}
+                  disabled={createTargetsMutation.isPending || addCustomWatchlistBatchMutation.isPending}
                   className="ml-3 flex shrink-0 items-center gap-1.5 rounded-full bg-foreground/10 px-4 py-1.5 text-xs font-normal text-foreground transition-colors hover:bg-foreground/20 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {createTargetsMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
-                  {createTargetsMutation.isPending ? "Adding..." : "Add Stocks"}
+                  {(createTargetsMutation.isPending || addCustomWatchlistBatchMutation.isPending) ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                  {(createTargetsMutation.isPending || addCustomWatchlistBatchMutation.isPending) ? "Adding..." : "Add Stocks"}
                 </button>
               )}
             </div>
@@ -248,9 +351,9 @@ export function CommandPalette({ onClose, onWidthChange }: { onClose: () => void
             <motion.div
               layout
               key="rule-builder"
-              initial={{ opacity: 0, scale: 0.98, filter: "blur(4px)" }}
-              animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
-              exit={{ opacity: 0, scale: 0.98, filter: "blur(4px)" }}
+              initial={{ opacity: 0, scale: 0.98 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.98 }}
               transition={FADE_FAST}
             >
               <AdvancedRuleBuilder initialRule={editRule} onComplete={() => {
@@ -259,10 +362,18 @@ export function CommandPalette({ onClose, onWidthChange }: { onClose: () => void
               }} />
             </motion.div>
           ) : (
-            <Command.List className={`overflow-y-auto overflow-x-hidden max-h-[400px] scrollbar-none ${searchResults?.items?.length ? 'p-2' : ''}`}>
+            <Command.List 
+              className={`overflow-y-auto overflow-x-hidden scrollbar-none will-change-[height] ${searchResults?.items?.length ? 'p-2' : ''}`}
+              style={{ 
+                height: 'var(--cmdk-list-height)', 
+                minHeight: 0, 
+                maxHeight: 400,
+                transition: 'height 0.5s cubic-bezier(0.32, 0.72, 0, 1)'
+              }}
+            >
               <Command.Empty className="hidden" />
 
-              {isPending && search.length > 0 && (
+              {showSearchSkeleton && (
                 <div className="flex flex-col gap-1 p-2">
                   {[0, 1, 2, 3].map((i) => (
                     <div key={i} className="flex items-center gap-3 px-3 py-2.5 rounded-lg">
@@ -295,7 +406,7 @@ export function CommandPalette({ onClose, onWidthChange }: { onClose: () => void
                 </div>
               )}
 
-              {!isPending && !error && batchSymbols.length === 0 && search.length > 0 && searchResults?.items?.length === 0 && (
+              {!showSearchSkeleton && !error && searchEnabled && searchResults?.items?.length === 0 && (
                 <div className="py-6 text-center text-sm text-muted-foreground">
                   No symbols found for "{search}"
                 </div>

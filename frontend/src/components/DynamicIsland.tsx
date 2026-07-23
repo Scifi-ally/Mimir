@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { useStore } from "@/store/useStore";
@@ -12,10 +12,13 @@ import { FADE_SLOW } from "@/lib/motion";
 // resolved. Both matter: if the chunk arrives mid-descent, Suspense renders an
 // empty pill that snaps to full size when the code lands — which reads as a
 // completely different first animation.
-const palettePromise = import("./CommandPalette");
+let CommandPaletteComponent: any = null;
 let paletteLoaded = false;
-void palettePromise.then(() => { paletteLoaded = true; });
-const CommandPalette = lazy(() => palettePromise.then((m) => ({ default: m.CommandPalette })));
+const palettePromise = import("./CommandPalette").then((m) => {
+  CommandPaletteComponent = m.CommandPalette;
+  paletteLoaded = true;
+  return m;
+});
 
 // ── Design Tokens ─────────────────────────────────────────────────────────────
 const TOKENS = {
@@ -286,12 +289,16 @@ export function DynamicIsland() {
                 </>
               </div>
             ) : (
-              // Clamp to viewport: a fixed 650px pill would clip (the island
-              // has overflow:hidden) on phones.
-              <div className="w-full flex flex-col" style={{ width: `min(${paletteWidth}px, calc(100vw - 48px))` }}>
-                <Suspense fallback={null}>
-                  <CommandPalette onClose={() => setCommandPaletteOpen(false)} onWidthChange={setPaletteWidth} />
-                </Suspense>
+              <div 
+                style={{ width: `min(${paletteWidth}px, calc(100vw - 48px))` }} 
+                className="transition-all duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] flex flex-col w-full"
+              >
+                {CommandPaletteComponent && (
+                  <CommandPaletteComponent 
+                    onClose={() => setCommandPaletteOpen(false)} 
+                    onWidthChange={setPaletteWidth} 
+                  />
+                )}
               </div>
             )}
           </DynamicIslandBase>

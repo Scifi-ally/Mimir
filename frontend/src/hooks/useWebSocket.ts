@@ -9,14 +9,14 @@ let pendingSymbols: string[] = [];
 const currentSubscribedSymbols = new Set<string>();
 let lastSubscribedSymbolsKey = "";
 
-export function subscribeWsSymbols(symbols: string[]) {
+export function subscribeWsSymbols(symbols: string[], force = false) {
   if (!symbols || !Array.isArray(symbols)) return;
   const cleanSymbols = symbols.map(s => typeof s === "string" ? s.trim() : "").filter(Boolean);
   cleanSymbols.forEach(s => currentSubscribedSymbols.add(s));
 
   const toSubscribe = Array.from(currentSubscribedSymbols);
   const newKey = toSubscribe.sort().join(",");
-  if (newKey === lastSubscribedSymbolsKey && activeWsSocket?.readyState === WebSocket.OPEN) return;
+  if (!force && newKey === lastSubscribedSymbolsKey && activeWsSocket?.readyState === WebSocket.OPEN) return;
   lastSubscribedSymbolsKey = newKey;
 
   if (activeWsSocket?.readyState === WebSocket.OPEN && toSubscribe.length > 0) {
@@ -331,9 +331,17 @@ export function useWebSocket() {
                 }
               }
               debouncedInvalidate(["watchlist"]);
+              debouncedInvalidate(["customWatchlist"]);
               debouncedInvalidate(["suggestions"]);
               debouncedInvalidate(["monitoring"]);
               debouncedInvalidate(["monitored-symbols"]);
+              debouncedInvalidate(["screener_matches"]);
+              debouncedInvalidate(["screener_targets"]);
+              debouncedInvalidate(["indian-context"]);
+              debouncedInvalidate(["indices"]);
+              debouncedInvalidate(["regime"]);
+              debouncedInvalidate(["session"]);
+              debouncedInvalidate(["status"]);
               break;
             case "monitoring_update":
               queryClient.setQueryData(
@@ -357,13 +365,17 @@ export function useWebSocket() {
               break;
             case "suggestion_updated":
               debouncedInvalidate(["suggestions"]);
+              debouncedInvalidate(["positions"]);
+              debouncedInvalidate(["paperTrading"]);
               break;
             case "position_update":
-              // Trailing-stop / manual-close updates from position_tracker
+              // Trailing-stop / manual-close / order-fill updates from paper_engine or position_tracker
               debouncedInvalidate(["suggestions"]);
               debouncedInvalidate(["positions"]);
-              // Paper panel data is WS-driven now, so its polling can stay slow
               debouncedInvalidate(["paperTrading"]);
+              debouncedInvalidate(["live", "positions"]);
+              debouncedInvalidate(["live", "funds"]);
+              debouncedInvalidate(["live", "orders"]);
               break;
             case "daily_loss_limit_reached":
               debouncedInvalidate(["suggestions"]);
@@ -375,6 +387,8 @@ export function useWebSocket() {
               break;
             case "market_regime_changed":
               debouncedInvalidate(["regime"]);
+              debouncedInvalidate(["indian-context"]);
+              debouncedInvalidate(["session"]);
               break;
             case "alert":
               debouncedInvalidate(["alerts"]);
@@ -414,6 +428,12 @@ export function useWebSocket() {
                   break;
                 }
 
+                if (lower.includes("paper trading account reset")) {
+                  debouncedInvalidate(["paperTrading"]);
+                  debouncedInvalidate(["positions"]);
+                  debouncedInvalidate(["suggestions"]);
+                }
+
                 if (!lower.includes("connected to upstox")) {
                   useStore.getState().showIsland({
                     title: "System Notification",
@@ -440,11 +460,12 @@ export function useWebSocket() {
               break;
             case "indices_update":
               mergeIndices(event.data);
-              if (event.data.nifty?.ltp != null) marketDataStore.updateFromTick("NIFTY 50", { ltp: event.data.nifty.ltp, change_pct: event.data.nifty.changePct });
-              if (event.data.sensex?.ltp != null) marketDataStore.updateFromTick("SENSEX", { ltp: event.data.sensex.ltp, change_pct: event.data.sensex.changePct });
-              if (event.data.banknifty?.ltp != null) marketDataStore.updateFromTick("BANK NIFTY", { ltp: event.data.banknifty.ltp, change_pct: event.data.banknifty.changePct });
-              if (event.data.finnifty?.ltp != null) marketDataStore.updateFromTick("FIN NIFTY", { ltp: event.data.finnifty.ltp, change_pct: event.data.finnifty.changePct });
-              if (event.data.vix?.ltp != null) marketDataStore.updateFromTick("INDIA VIX", { ltp: event.data.vix.ltp, change_pct: event.data.vix.changePct });
+              debouncedInvalidate(["indices"]);
+              if (event.data.nifty?.ltp != null) marketDataStore.updateFromTick("NIFTY 50", { ltp: event.data.nifty.ltp, changePct: event.data.nifty.changePct });
+              if (event.data.sensex?.ltp != null) marketDataStore.updateFromTick("SENSEX", { ltp: event.data.sensex.ltp, changePct: event.data.sensex.changePct });
+              if (event.data.banknifty?.ltp != null) marketDataStore.updateFromTick("BANK NIFTY", { ltp: event.data.banknifty.ltp, changePct: event.data.banknifty.changePct });
+              if (event.data.finnifty?.ltp != null) marketDataStore.updateFromTick("FIN NIFTY", { ltp: event.data.finnifty.ltp, changePct: event.data.finnifty.changePct });
+              if (event.data.vix?.ltp != null) marketDataStore.updateFromTick("INDIA VIX", { ltp: event.data.vix.ltp, changePct: event.data.vix.changePct });
               break;
             case "watchlist_counts":
               updateWatchlistCounts(event.data);

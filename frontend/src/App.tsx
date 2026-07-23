@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { MotionConfig } from "framer-motion";
+
 import Dashboard from "@/pages/Dashboard";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { DynamicIsland } from "@/components/DynamicIsland";
@@ -9,9 +9,11 @@ import { useStore } from "@/store/useStore";
 export default function App() {
   const setCommandPaletteOpen = useStore((s) => s.setCommandPaletteOpen);
   const commandPaletteOpen = useStore((s) => s.commandPaletteOpen);
+  const theme = useStore((s) => s.theme);
 
 
   useEffect(() => {
+    document.documentElement.classList.toggle("light", theme === "light");
     const down = (e: KeyboardEvent) => {
       if (e.key === 'k' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
@@ -28,16 +30,12 @@ export default function App() {
     };
     document.addEventListener('keydown', down);
     return () => document.removeEventListener('keydown', down);
-  }, [commandPaletteOpen, setCommandPaletteOpen]);
+  }, [commandPaletteOpen, setCommandPaletteOpen, theme]);
 
   return (
     <ErrorBoundary>
-      {/* System-level reduced-motion: Framer swaps transforms/springs for
-          opacity cross-fades app-wide when the OS asks for less motion. */}
-      <MotionConfig reducedMotion="user">
-        <Dashboard />
-        <DynamicIsland />
-      </MotionConfig>
+      <Dashboard />
+      <DynamicIsland />
     </ErrorBoundary>
   );
 }

@@ -44,7 +44,7 @@ export const TopBar = memo(function TopBar({
   onSelectSymbol,
 }: TopBarProps) {
 
-  const [isLight, setIsLight] = useState(false);
+  const isLight = useStore((s) => s.theme) === "light";
   const [startingScan, setStartingScan] = useState(false);
   const [stoppingScan, setStoppingScan] = useState(false);
   const queryClient = useQueryClient();
@@ -62,9 +62,7 @@ export const TopBar = memo(function TopBar({
   const hideIsland = useStore((s) => s.hideIsland);
   const unreadCount = useStore(s => s.events.length);
 
-  useEffect(() => {
-    setIsLight(document.documentElement.classList.contains("light"));
-  }, []);
+
 
   useEffect(() => {
     if (scanning) {
@@ -118,23 +116,36 @@ export const TopBar = memo(function TopBar({
   };
 
   const toggleTheme = (e: React.MouseEvent) => {
-    const x = e.clientX;
-    const y = e.clientY;
+    let x = e.clientX;
+    let y = e.clientY;
+    
+    // Fallback for keyboard triggering where clientX/Y might be 0
+    if (!x && !y) {
+      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      x = rect.left + rect.width / 2;
+      y = rect.top + rect.height / 2;
+    }
+
+    console.log("[ThemeToggle] e.clientX:", e.clientX, "e.clientY:", e.clientY);
+    console.log("[ThemeToggle] final x:", x, "final y:", y);
+
     const willBeLight = !isLight;
     
     if (!document.startViewTransition) {
       flushSync(() => {
         document.documentElement.classList.toggle("light", willBeLight);
-        setIsLight(willBeLight);
+        useStore.getState().setTheme(willBeLight ? "light" : "dark");
       });
       window.dispatchEvent(new Event("themechange"));
       return;
     }
 
+    document.documentElement.classList.add("is-transitioning");
+
     const transition = document.startViewTransition(() => {
       flushSync(() => {
         document.documentElement.classList.toggle("light", willBeLight);
-        setIsLight(willBeLight);
+        useStore.getState().setTheme(willBeLight ? "light" : "dark");
       });
       window.dispatchEvent(new Event("themechange"));
     });
@@ -156,9 +167,12 @@ export const TopBar = memo(function TopBar({
           duration: 450,
           easing: "cubic-bezier(0.87, 0, 0.13, 1)",
           pseudoElement: "::view-transition-new(root)",
-          fill: "both",
         }
       );
+    });
+
+    transition.finished.finally(() => {
+      document.documentElement.classList.remove("is-transitioning");
     });
   };
 
@@ -175,16 +189,16 @@ export const TopBar = memo(function TopBar({
             <div className="flex min-w-0 flex-1 items-center gap-x-3 pr-2 relative">
 
           <div className="flex min-w-0 shrink items-center gap-3 text-[11px] font-normal text-foreground/50 overflow-x-auto [&::-webkit-scrollbar]:hidden">
-            <IndexMetric label="NIFTY 50" ltp={indices?.nifty50.ltp} changePct={indices?.nifty50.changePct} storeKey="nifty" onSelect={() => onSelectSymbol?.("NIFTY 50")} />
+            <IndexMetric label="NIFTY 50" ltp={indices?.nifty50?.ltp} changePct={indices?.nifty50?.changePct} storeKey="nifty" onSelect={() => onSelectSymbol?.("NIFTY 50")} />
             <div className="hidden sm:contents">
-              <IndexMetric label="SENSEX" ltp={indices?.sensex.ltp} changePct={indices?.sensex.changePct} storeKey="sensex" onSelect={() => onSelectSymbol?.("SENSEX")} />
+              <IndexMetric label="SENSEX" ltp={indices?.sensex?.ltp} changePct={indices?.sensex?.changePct} storeKey="sensex" onSelect={() => onSelectSymbol?.("SENSEX")} />
             </div>
             <div className="hidden lg:contents">
-              <IndexMetric label="BANK NIFTY" ltp={indices?.bankNifty.ltp} changePct={indices?.bankNifty.changePct} storeKey="banknifty" onSelect={() => onSelectSymbol?.("BANKNIFTY")} />
+              <IndexMetric label="BANK NIFTY" ltp={indices?.bankNifty?.ltp} changePct={indices?.bankNifty?.changePct} storeKey="banknifty" onSelect={() => onSelectSymbol?.("BANKNIFTY")} />
             </div>
             <div className="hidden xl:contents">
-              <IndexMetric label="FIN NIFTY" ltp={indices?.finnifty.ltp} changePct={indices?.finnifty.changePct} storeKey="finnifty" onSelect={() => onSelectSymbol?.("FINNIFTY")} />
-              <IndexMetric label="INDIA VIX" ltp={indices?.indiaVix.ltp} isVix storeKey="vix" onSelect={() => onSelectSymbol?.("INDIA VIX")} />
+              <IndexMetric label="FIN NIFTY" ltp={indices?.finnifty?.ltp} changePct={indices?.finnifty?.changePct} storeKey="finnifty" onSelect={() => onSelectSymbol?.("FINNIFTY")} />
+              <IndexMetric label="INDIA VIX" ltp={indices?.indiaVix?.ltp} isVix storeKey="vix" onSelect={() => onSelectSymbol?.("INDIA VIX")} />
             </div>
           </div>
         </div>
@@ -470,40 +484,27 @@ export const TopBar = memo(function TopBar({
   );
 });
 
+import { useSymbolDataSelector } from "@/providers/MarketDataProvider";
+
 function IndexMetric({
   label,
   ltp,
   changePct,
   isVix,
-  storeKey,
   onSelect,
 }: {
   label: string;
   ltp: number | null | undefined;
   changePct?: number | null;
   isVix?: boolean;
-  storeKey?: string;
+  storeKey: string;
   onSelect?: () => void;
 }) {
-  const [liveLtp, setLiveLtp] = useState(ltp);
-  const [livePct, setLivePct] = useState(changePct);
+  const storeLtp = useSymbolDataSelector(label, (d) => d.ltp);
+  const storePct = useSymbolDataSelector(label, (d) => d.changePct);
 
-  useEffect(() => {
-    if (!storeKey) return;
-    let prevTick: unknown = null;
-    const unsub = useStore.subscribe((state) => {
-      const tick = state.indices[storeKey];
-      if (!tick || tick === prevTick) return;
-      prevTick = tick;
-      if (tick.ltp != null) setLiveLtp(tick.ltp);
-      if (!isVix && tick.changePct != null) setLivePct(tick.changePct);
-    });
-    return unsub;
-  }, [storeKey, isVix]);
-
-  // Live tick wins, then latest REST prop — useState alone would freeze the mount-time value
-  const displayLtp = liveLtp ?? ltp;
-  const displayPct = livePct ?? changePct;
+  const displayLtp = storeLtp ?? ltp;
+  const displayPct = storePct ?? changePct;
   const tone = displayPct == null ? "text-foreground/70" : displayPct >= 0 ? "text-bull" : "text-bear";
 
   // No data yet — show a quiet placeholder instead of animating up from 0

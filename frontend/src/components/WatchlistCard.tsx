@@ -10,9 +10,10 @@ interface WatchlistCardProps {
   row: StockRow;
   selected: boolean;
   onSelect: (symbol: string) => void;
+  onRemove?: (symbol: string) => void;
 }
 
-export const WatchlistCard = memo(({ row, selected, onSelect }: WatchlistCardProps) => {
+export const WatchlistCard = memo(({ row, selected, onSelect, onRemove }: WatchlistCardProps) => {
   const queryClient = useQueryClient();
   const score = row.compositeScore || 0;
   let scoreColor = "text-bear";
@@ -37,6 +38,7 @@ export const WatchlistCard = memo(({ row, selected, onSelect }: WatchlistCardPro
       onPointerEnter={() => prefetchSymbol(queryClient, row.symbol)}
       className={cn(
         "flex flex-col justify-center rounded-lg px-3 py-1.5 text-left transition-colors duration-150 relative overflow-hidden group h-[56px] w-full min-w-0",
+        "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60",
         selected
           ? "bg-foreground/[0.06] text-foreground"
           : "bg-transparent hover:bg-foreground/[0.03] text-foreground/85 hover:text-foreground"
@@ -61,6 +63,31 @@ export const WatchlistCard = memo(({ row, selected, onSelect }: WatchlistCardPro
             >
               {row.symbol}
             </span>
+            {onRemove && row.category === "CUSTOM" && (
+              /* span, not button: nesting a button inside the card button is
+                 invalid HTML. Revealed on hover AND keyboard focus so it isn't
+                 an invisible tab stop. */
+              <span
+                role="button"
+                tabIndex={0}
+                aria-label={`Remove ${row.symbol} from custom watchlist`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRemove(row.symbol);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onRemove(row.symbol);
+                  }
+                }}
+                className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-red-500 ml-1 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60 rounded"
+                title="Remove from custom watchlist"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+              </span>
+            )}
             {score > 0 && (
               <span className={cn("text-[10px] font-medium leading-none shrink-0 tabular-nums font-mono", scoreColor)}>
                 {Math.round(score)}
@@ -68,12 +95,24 @@ export const WatchlistCard = memo(({ row, selected, onSelect }: WatchlistCardPro
             )}
           </div>
           <div className="flex items-center gap-1.5 min-w-0">
+            {row.activeSignalDirection && (
+              <span
+                className={cn(
+                  "shrink-0 rounded px-1 py-px text-[9px] font-semibold uppercase leading-none tracking-[0.08em] font-sans",
+                  row.activeSignalDirection === "BUY"
+                    ? "bg-bull/15 text-bull"
+                    : "bg-bear/15 text-bear"
+                )}
+              >
+                {row.activeSignalDirection}
+              </span>
+            )}
             {topTag ? (
-              <span className="truncate text-[10px] font-normal text-foreground/40 uppercase tracking-[0.08em] font-sans">
+              <span className="truncate block text-[10px] font-normal text-foreground/40 uppercase tracking-[0.08em] font-sans">
                 {topTag}
               </span>
             ) : (
-              <span className="truncate text-[10px] font-normal text-foreground/40 capitalize font-sans">
+              <span className="truncate block text-[10px] font-normal text-foreground/40 capitalize font-sans">
                 {statusText}
               </span>
             )}
