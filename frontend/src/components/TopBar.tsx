@@ -116,18 +116,11 @@ export const TopBar = memo(function TopBar({
   };
 
   const toggleTheme = (e: React.MouseEvent) => {
-    let x = e.clientX;
-    let y = e.clientY;
-    
-    // Fallback for keyboard triggering where clientX/Y might be 0
-    if (!x && !y) {
-      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-      x = rect.left + rect.width / 2;
-      y = rect.top + rect.height / 2;
-    }
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
 
-    console.log("[ThemeToggle] e.clientX:", e.clientX, "e.clientY:", e.clientY);
-    console.log("[ThemeToggle] final x:", x, "final y:", y);
+    console.log("[ThemeToggle] Triggered. Origin x:", x, "y:", y);
 
     const willBeLight = !isLight;
     
@@ -240,12 +233,13 @@ export const TopBar = memo(function TopBar({
             <motion.div whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} transition={SPRING_SNAPPY}>
             <Button
               variant="ghost"
-              size="icon"
+              size="sm"
               onClick={onOpenSuggestions}
-              className="apple-hover h-7 w-7 flex items-center justify-center p-0 bg-foreground/[0.03] text-foreground/70 hover:bg-foreground/[0.08] hover:text-foreground transition-all duration-200 rounded-lg"
+              className="apple-hover h-7 flex items-center gap-1.5 text-[10px] px-3 font-medium bg-foreground/[0.03] text-foreground/70 hover:bg-foreground/[0.08] hover:text-foreground transition-all duration-200 rounded-lg"
               title="View Signals Generated"
             >
-              <BarChart2 strokeWidth={3} className="h-3.5 w-3.5" />
+              <BarChart2 strokeWidth={3} className="h-3.5 w-3.5 sm:mr-0.5" />
+              <span className="hidden sm:inline">Signals</span>
             </Button>
             </motion.div>
 
