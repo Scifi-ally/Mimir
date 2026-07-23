@@ -1,5 +1,5 @@
 import { KeyRound, Moon, Sun, Play, BarChart2, Wallet, Plus, Loader2, FileText, Bell, Settings, CheckCircle2, AlertCircle, Zap } from "lucide-react";
-import { useState, useEffect, memo } from "react";
+import { useState, useEffect, memo, useRef } from "react";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { flushSync } from "react-dom";
@@ -45,6 +45,7 @@ export const TopBar = memo(function TopBar({
 }: TopBarProps) {
 
   const isLight = useStore((s) => s.theme) === "light";
+  const themeButtonRef = useRef<HTMLButtonElement>(null);
   const [startingScan, setStartingScan] = useState(false);
   const [stoppingScan, setStoppingScan] = useState(false);
   const queryClient = useQueryClient();
@@ -116,7 +117,15 @@ export const TopBar = memo(function TopBar({
   };
 
   const toggleTheme = (e: React.MouseEvent) => {
-    const rect = e.currentTarget.getBoundingClientRect();
+    // ALWAYS use the exact button's physical DOM rect on the screen to guarantee the exact origin.
+    // We prefer themeButtonRef over e.currentTarget to bypass any synthetic event propagation anomalies.
+    let rect: DOMRect;
+    if (themeButtonRef.current) {
+      rect = themeButtonRef.current.getBoundingClientRect();
+    } else {
+      rect = e.currentTarget.getBoundingClientRect();
+    }
+    
     const x = rect.left + rect.width / 2;
     const y = rect.top + rect.height / 2;
 
@@ -453,6 +462,7 @@ export const TopBar = memo(function TopBar({
 
           <motion.div whileHover={{ scale: 1.05, rotate: 12 }} whileTap={{ scale: 0.92 }} transition={SPRING_SNAPPY}>
           <Button
+            ref={themeButtonRef}
             variant="ghost"
             size="icon"
             onClick={toggleTheme}
