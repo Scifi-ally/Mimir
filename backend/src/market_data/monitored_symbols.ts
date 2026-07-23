@@ -1,7 +1,7 @@
 import { desc, eq, inArray } from "drizzle-orm";
 import { db } from "../../db/src";
-import { overnightWatchlistTable, suggestionsTable } from "../../db/src";
-import { findStockBySymbol, getEffectiveUniverse } from "../analysis/stock_scanner";
+import { overnightWatchlistTable, suggestionsTable, customWatchlistTable } from "../../db/src";
+import { findStockBySymbol, getEffectiveUniverse, type StockSector } from "../analysis/stock_scanner";
 import { MONITORING_MAX_STOCKS } from "../analysis/intraday_monitor";
 import { upstoxConnectionManager } from "../intelligence/connection_manager";
 import { initTickFeeder } from "./tick_feeder";
@@ -35,7 +35,16 @@ export async function addManualMonitoredSymbols(symbols: string[]): Promise<Moni
   const results: MonitoredStock[] = [];
   let added = false;
   for (const symbol of symbols) {
-    const stock = await findStockBySymbol(symbol.toUpperCase());
+    const rawUpper = symbol.trim().toUpperCase();
+    let stock = await findStockBySymbol(rawUpper);
+    if (!stock && (rawUpper.includes("|") || rawUpper.startsWith("NSE_") || rawUpper.startsWith("BSE_"))) {
+      stock = {
+        symbol: rawUpper.split("|").pop() || rawUpper,
+        key: rawUpper,
+        name: rawUpper,
+        sector: "INDEX" as StockSector,
+      };
+    }
     if (stock) {
       manualSymbols.add(stock.symbol);
       results.push({ symbol: stock.symbol, key: stock.key, source: "manual" });
@@ -56,13 +65,18 @@ export async function addManualMonitoredSymbols(symbols: string[]): Promise<Moni
           for (const [key, quote] of Object.entries(quotes)) {
             const match = results.find(r => r.key === key || r.key.toLowerCase() === key.toLowerCase());
             if (match && quote && quote.last_price != null) {
-              const changePct = quote.prev_close ? ((quote.last_price - quote.prev_close) / quote.prev_close) * 100 : (quote.change_pct ?? 0);
+              const prevClose = quote.ohlc?.close ?? (quote.last_price != null && quote.net_change != null ? quote.last_price - quote.net_change : null);
+              const changePct = prevClose && prevClose > 0 
+                ? Math.round(((quote.last_price - prevClose) / prevClose) * 10000) / 100 
+                : (quote.change_pct ?? null);
+
               tickDistribution.ingestTick({
                 symbol: match.symbol,
                 ltp: quote.last_price,
                 volume: quote.volume ?? 0,
                 timestamp: Date.now(),
-                changePercent: changePct,
+                prevClose: prevClose ?? undefined,
+                changePercent: changePct ?? undefined,
               });
               batch.push([
                 match.symbol,
@@ -137,8 +151,13 @@ export async function getMonitoredSubscriptionStocks(): Promise<MonitoredStock[]
     .where(inArray(suggestionsTable.status, ["ACTIVE", "PENDING"]));
   const suggestionSymbols = activeSuggestions.map(s => s.symbol);
 
+  const customWatchlist = await db
+    .select({ symbol: customWatchlistTable.symbol })
+    .from(customWatchlistTable);
+  const customSymbols = customWatchlist.map(c => c.symbol);
+
   // Manual (client-requested) symbols first so the cap can never evict what the UI asked for.
-  let ordered = [...new Set([...manualSymbols, ...watchlistSymbols, ...suggestionSymbols])];
+  let ordered = [...new Set([...manualSymbols, ...customSymbols, ...watchlistSymbols, ...suggestionSymbols])];
 
   if (!ordered.length && isMarketOpen()) {
     const fallback = await getEffectiveUniverse(MONITORING_MAX_STOCKS);
@@ -163,9 +182,14 @@ export async function getMonitoredSubscriptionStocks(): Promise<MonitoredStock[]
     ordered.map(async (symbol) => {
       const stock = await findStockBySymbol(symbol);
       if (!stock) return null;
-      const source: MonitoredStock["source"] = manualSymbols.has(symbol) && !watchlistSymbols.includes(symbol) && !suggestionSymbols.includes(symbol)
-        ? "manual"
-        : suggestionSymbols.includes(symbol) ? "suggestion" : "watchlist";
+      let source: MonitoredStock["source"] = "watchlist";
+      if (manualSymbols.has(stock.symbol)) {
+        source = "manual";
+      } else if (customSymbols.includes(stock.symbol)) {
+        source = "manual"; // Treat custom watchlist as manual for monitoring purposes
+      } else if (suggestionSymbols.includes(stock.symbol)) {
+        source = "suggestion";
+      }
       return { symbol: stock.symbol, key: stock.key, source };
     }),
   );

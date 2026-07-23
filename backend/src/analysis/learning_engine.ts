@@ -84,8 +84,27 @@ export async function runLearningPipeline(): Promise<void> {
     // 4. Perform confidence analysis
     await analyzeConfidence();
 
-    // 5. Calculate and save adaptive AI weights
-    await calculateAdaptiveWeights(closed);
+    // 5. Extract confluence data and trigger Regime-Gated Combination Model retrain
+    try {
+      const { extractConfluenceData } = await import("../../scripts/extract_confluence_data");
+      const extractConfluence = await extractConfluenceData();
+      logger.info(
+        { rows: extractConfluence.rows, out: extractConfluence.outPath },
+        "Refreshed confluence training data"
+      );
+      if (extractConfluence.rows > 0) {
+        const { triggerConfluenceTraining } = await import("./ai_client");
+        const confStarted = await triggerConfluenceTraining();
+        logger.info(
+          { confStarted },
+          confStarted
+            ? "Triggered background confluence model retrain."
+            : "Confluence retrain not started."
+        );
+      }
+    } catch (err) {
+      logger.warn({ err }, "Confluence training-data refresh failed");
+    }
 
     // 6. Generate high-level learning insights
     await generateGeneralInsights(closed);
@@ -355,84 +374,7 @@ async function analyzeConfidence(): Promise<void> {
   }
 }
 
-function clamp(n: number, min: number, max: number) {
-  return Math.min(Math.max(n, min), max);
-}
 
-/**
- * Dynamically computes optimal component weights based on historical win rates of individual features.
- */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function calculateAdaptiveWeights(closed: any[]): Promise<void> {
-  const defaultWeights = { tech: 0.30, technicalRanking: 0.15, chronos: 0.10, rs: 0.20, sector: 0.15, regime: 0.10 };
-  
-  if (closed.length < 10) return;
-
-  let techWins = 0, techTotal = 0;
-  let patternWins = 0, patternTotal = 0;
-  let chronosWins = 0, chronosTotal = 0;
-
-  for (const trade of closed) {
-    const isWin = trade.status.includes("TARGET");
-    const reasoning = trade.reasoning || "";
-    
-    const techMatch = reasoning.match(/T:([0-9]+)/);
-    const technicalRankingMatch = reasoning.match(/K:([0-9]+)/);
-    const chronosMatch = reasoning.match(/C:([0-9]+)/);
-
-    if (techMatch && parseInt(techMatch[1]!) > 70) {
-      techTotal++;
-      if (isWin) techWins++;
-    }
-    if (technicalRankingMatch && parseInt(technicalRankingMatch[1]!) > 70) {
-      patternTotal++;
-      if (isWin) patternWins++;
-    }
-    if (chronosMatch && parseInt(chronosMatch[1]!) > 70) {
-      chronosTotal++;
-      if (isWin) chronosWins++;
-    }
-  }
-
-  const techPower = techTotal > 5 ? techWins / techTotal : 0.5;
-  const patternPower = patternTotal > 5 ? patternWins / patternTotal : 0.5;
-  const chronosPower = chronosTotal > 5 ? chronosWins / chronosTotal : 0.5;
-
-  const techShift = clamp((techPower - 0.5) * 0.15, -0.08, 0.08);
-  const patternShift = clamp((patternPower - 0.5) * 0.15, -0.08, 0.08);
-  const chronosShift = clamp((chronosPower - 0.5) * 0.15, -0.08, 0.08);
-
-  const newWeights = {
-    tech: clamp(defaultWeights.tech + techShift, 0.20, 0.40),
-    technicalRanking: clamp(defaultWeights.technicalRanking + patternShift, 0.05, 0.25),
-    chronos: clamp(defaultWeights.chronos + chronosShift, 0.05, 0.20),
-    rs: defaultWeights.rs,
-    sector: defaultWeights.sector,
-    regime: defaultWeights.regime,
-  };
-
-  const sum = newWeights.tech + newWeights.technicalRanking + newWeights.chronos + newWeights.rs + newWeights.sector + newWeights.regime;
-  
-  const normalizedWeights = {
-    tech: newWeights.tech / sum,
-    technicalRanking: newWeights.technicalRanking / sum,
-    chronos: newWeights.chronos / sum,
-    rs: newWeights.rs / sum,
-    sector: newWeights.sector / sum,
-    regime: newWeights.regime / sum,
-  };
-
-  await db.delete(learningAnalyticsTable).where(eq(learningAnalyticsTable.tag, "ADAPTIVE_WEIGHTS"));
-  
-  await db.insert(learningAnalyticsTable).values({
-    tag: "ADAPTIVE_WEIGHTS",
-    metricName: "Confidence Feature Weights",
-    metricValue: "1.0",
-    insights: JSON.stringify(normalizedWeights),
-  });
-
-  logger.info({ weights: normalizedWeights }, "Calculated and saved new adaptive weights");
-}
 
 /**
  * High-level NLP insights generation

@@ -1207,6 +1207,16 @@ export async function ingestSignal(
       .onConflictDoNothing()
       .returning();
 
+    if (!inserted) {
+      // onConflictDoNothing swallowed the insert — without a row there is no
+      // suggestionGenerated event, so the paper engine never sees this signal.
+      // Must be loud: a silent drop here looks identical to "no signal at all".
+      logger.warn(
+        { symbol: signal.symbol, setup: signal.setupType, direction: signal.signal },
+        "Suggestion insert returned no row (conflict) — signal NOT published to trading engine",
+      );
+    }
+
     if (inserted) {
       logger.info({
         id: inserted.id,

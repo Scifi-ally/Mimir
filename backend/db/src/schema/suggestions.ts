@@ -61,6 +61,10 @@ export const suggestionsTable = pgTable("suggestions", {
     .notNull()
     .defaultNow(),
   closedAt: timestamp("closed_at", { withTimezone: true }),
+  // Set by the historical outcome backfill once a closed row's result has been
+  // verified against 1-minute candles for its allotted window. NULL = the live
+  // tick tracker decided it (or it has not been verified yet).
+  outcomeVerifiedAt: timestamp("outcome_verified_at", { withTimezone: true }),
 }, (table) => ({
   statusIdx: index("suggestions_status_idx").on(table.status),
   generatedAtIdx: index("suggestions_generated_at_idx").on(table.generatedAt),

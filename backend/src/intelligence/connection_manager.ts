@@ -426,10 +426,22 @@ export class UpstoxConnectionManager {
     let exponentialDelay = Math.min(maxDelay, baseDelay * Math.pow(2, attempt));
     
     // Check if it's NSE market hours (09:15 to 15:30 IST Mon-Fri)
-    const now = new Date();
-    const istTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
-    const day = istTime.getDay();
-    const timeValue = istTime.getHours() * 100 + istTime.getMinutes();
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: "Asia/Kolkata",
+      weekday: "short",
+      hour: "numeric",
+      minute: "numeric",
+      hour12: false,
+      hourCycle: "h23"
+    }).formatToParts(new Date());
+    
+    const weekday = parts.find((p) => p.type === "weekday")?.value ?? "Sun";
+    const hour = Number(parts.find((p) => p.type === "hour")?.value ?? "0");
+    const minute = Number(parts.find((p) => p.type === "minute")?.value ?? "0");
+    
+    const dayMap: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+    const day = dayMap[weekday] ?? 0;
+    const timeValue = hour * 100 + minute;
     
     const isMarketHours = day >= 1 && day <= 5 && timeValue >= 915 && timeValue <= 1530;
     

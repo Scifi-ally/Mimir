@@ -1,13 +1,15 @@
 import { Router } from "express";
 import { db } from "../../db/src";
-import { 
-  paperAccountsTable, 
-  paperOrdersTable, 
-  paperPositionsTable 
+import {
+  paperAccountsTable,
+  paperOrdersTable,
+  paperPositionsTable
 } from "../../db/src/schema/paper_trading";
 import { eq, desc, inArray } from "drizzle-orm";
 import { logger } from "../lib/logger";
 import { getConfig } from "../config";
+import { broadcast } from "../ws/websocket_server";
+import { createServerEvent } from "../ws/events";
 
 const router = Router();
 
@@ -114,21 +116,21 @@ router.get("/paper/history", async (_req, res) => {
 
 router.post("/paper/reset", async (_req, res) => {
   try {
-    await db.transaction(async (tx) => {
+    const [account] = await db.transaction(async (tx) => {
       await tx.delete(paperOrdersTable);
       await tx.delete(paperPositionsTable);
       await tx.delete(paperAccountsTable);
+      return tx.insert(paperAccountsTable).values({
+        userId: "system",
+        balance: getStartingBalance(),
+        startingBalance: getStartingBalance(),
+        allocatedMargin: "0.00"
+      }).returning();
     });
-    
-    const [account] = await db.insert(paperAccountsTable).values({
-      userId: "system",
-      balance: getStartingBalance(),
-      startingBalance: getStartingBalance(),
-      allocatedMargin: "0.00"
-    }).returning();
     
     logger.info("Paper Trading Account Reset");
     res.json(account);
+    broadcast(createServerEvent.systemAlert({ message: "Paper trading account reset", severity: "info" }));
   } catch (error) {
     logger.error({ error }, "Failed to reset paper account");
     res.status(500).json({ error: "Internal server error" });

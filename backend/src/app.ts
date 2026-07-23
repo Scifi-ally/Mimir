@@ -11,8 +11,17 @@ import screenerRouter from "./routes/screener";
 import { ZodError } from "zod";
 
 const app: Express = express();
-app.set("trust proxy", 1); // Trust first proxy for correct IP in rate limiting and logs
+const trustedProxies = process.env.TRUSTED_PROXIES ? process.env.TRUSTED_PROXIES.split(",").map(p => p.trim()) : "loopback";
+app.set("trust proxy", trustedProxies);
 app.use(compression());
+
+// Basic Security Headers
+app.use((_req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  next();
+});
 
 app.use(
   pinoHttp({
@@ -91,7 +100,7 @@ app.get("/ready", async (_req, res) => {
     logger.error({ err }, "Readiness check failed");
     res.status(503).json({
       status: 'not ready',
-      error: err instanceof Error ? err.message : 'Unknown error',
+      error: 'Internal service dependency check failed',
       timestamp: new Date().toISOString()
     });
   }

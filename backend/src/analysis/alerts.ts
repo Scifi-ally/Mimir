@@ -64,18 +64,9 @@ export async function detectAlerts(
     }
   }
 
-  // 3. VWAP Support Gained/Lost
+  // 3. VWAP Support Gained/Lost (Disabled per user request)
   if (currentState.close !== undefined && currentState.vwap !== undefined) {
     const currentVwapStatus = currentState.close > currentState.vwap ? "above" : "below";
-    if (prev.vwapStatus !== undefined && prev.vwapStatus !== currentVwapStatus) {
-      alerts.push({
-        id: randomUUID(),
-        timestamp: now,
-        symbol,
-        message: currentVwapStatus === "above" ? "Gained VWAP Support" : "Lost VWAP Support",
-        type: "VWAP"
-      });
-    }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (currentState as any).vwapStatus = currentVwapStatus;
   }

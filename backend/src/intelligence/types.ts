@@ -114,6 +114,11 @@ export interface SuggestionGeneratedEvent {
   suggestion: ActiveSuggestion;
 }
 
+export interface SuggestionTriggeredEvent {
+  suggestionId: string;
+  fillPrice: number;
+}
+
 export interface ActiveSuggestion {
   id: string;
   instrumentKey: InstrumentKey;
@@ -178,6 +183,7 @@ export interface InternalEvents {
   candidateRemoved: CandidateRemovedEvent;
   opportunityQualified: OpportunityQualifiedEvent;
   suggestionGenerated: SuggestionGeneratedEvent;
+  suggestionTriggered: SuggestionTriggeredEvent;
   breadthUpdated: BreadthSnapshot;
   universeUpdated: UniverseStock[];
   dailyLossLimitReached: { lossAmount: number; limitAmount: number };

@@ -4,6 +4,7 @@ import { dailyReportsTable } from "../../db/src/schema/reports";
 import { desc } from "drizzle-orm";
 import { logger } from "../lib/logger";
 import { buildExpectancyReport } from "../suggestions/expectancy";
+import { generateDailyReport } from "../analysis/post_market_report";
 
 const router = Router();
 
@@ -17,6 +18,17 @@ router.get("/", async (_req, res) => {
   } catch (err) {
     logger.error({ err }, "Failed to fetch reports");
     res.status(500).json({ error: "Failed to fetch reports" });
+  }
+});
+
+// POST /api/reports/generate — Manually trigger today's report generation
+router.post("/generate", async (_req, res) => {
+  try {
+    await generateDailyReport();
+    res.json({ success: true, message: "Report generated successfully" });
+  } catch (err) {
+    logger.error({ err }, "Failed to generate report manually");
+    res.status(500).json({ error: "Failed to generate report" });
   }
 });
 

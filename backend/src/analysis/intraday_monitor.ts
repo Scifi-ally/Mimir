@@ -748,6 +748,10 @@ function buildMonitorFeatureVector(
     volOfVol: 0,
     cprWidthPct: 0,
 
+    bidAskImbalance: 0,
+    optionsOiChangeRate: 0,
+    fiiDiiNetFlowLag: 0,
+
     // Tick-derived vector: ~15 of the ranker's candle-history features above are
     // neutral placeholders (trendConsistency/momentum/trend/volatility scores,
     // ROC, candlestick, realized-vol). Feeding this to the learned ranker would

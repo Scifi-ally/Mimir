@@ -30,6 +30,7 @@ export interface NormalizedTick {
   oi?: number;
   change?: number;
   changePercent?: number;
+  prevClose?: number;
   open?: number;
   high?: number;
   low?: number;
@@ -53,9 +54,6 @@ class TickDistributionServer {
   private historyCache = new Map<string, NormalizedTick[]>();
   private readonly MAX_HISTORY_MS = 5 * 60 * 1000; // 5 mins
   private readonly MAX_HISTORY_PER_SYMBOL = 1000;
-  
-  // Pre-allocated array for UI streaming (MAX 5000 pending ticks per flush)
-  private batchPool: unknown[] = new Array(5000);
   
   // Dirty symbols pending UI flush
   private pendingUISymbols = new Set<string>();
@@ -173,14 +171,16 @@ class TickDistributionServer {
     normalized.ask = rawTick.ask ?? normalized.ask;
     normalized.volume = rawTick.volume ?? normalized.volume;
     normalized.oi = rawTick.oi ?? normalized.oi;
+    normalized.prevClose = rawTick.prevClose ?? normalized.prevClose;
     normalized.open = rawTick.open ?? normalized.open;
     normalized.high = rawTick.high ? Math.max(rawTick.high, normalized.ltp) : (normalized.high ? Math.max(normalized.high, normalized.ltp) : normalized.ltp);
     normalized.low = rawTick.low ? Math.min(rawTick.low, normalized.ltp) : (normalized.low ? Math.min(normalized.low, normalized.ltp) : normalized.ltp);
     normalized.timestamp = tickTime;
 
-    if (normalized.open && normalized.open > 0) {
-      normalized.change = Math.round((normalized.ltp - normalized.open) * 100) / 100;
-      normalized.changePercent = Math.round((normalized.change / normalized.open) * 10000) / 100;
+    const basePrice = (normalized.prevClose && normalized.prevClose > 0) ? normalized.prevClose : (normalized.open && normalized.open > 0 ? normalized.open : null);
+    if (basePrice) {
+      normalized.change = Math.round((normalized.ltp - basePrice) * 100) / 100;
+      normalized.changePercent = Math.round((normalized.change / basePrice) * 10000) / 100;
     } else if (rawTick.changePercent !== undefined) {
       normalized.changePercent = rawTick.changePercent;
       normalized.change = rawTick.change;
@@ -202,14 +202,6 @@ class TickDistributionServer {
 
     // NON-BLOCKING ASYNC DISPATCH TO ANALYSIS ENGINE
     // Uses 'processedTick' (not 'marketTick') to avoid circular re-ingestion by tick_feeder.
-    //
-    // `normalized` is the shared, mutated-in-place cache entry. The setImmediate
-    // callback runs on a later macrotask, so reading `normalized.*` inside it
-    // would publish whatever the LATEST mutation left there — if two ticks for
-    // this symbol are ingested in the same macrotask, both queued callbacks would
-    // read the final state and publish the newest values twice, losing the
-    // intermediate tick. Snapshot the primitives NOW so each dispatch carries the
-    // exact values from its own ingest.
     const snapshot = {
       instrumentKey: normalized.instrumentKey || normalized.symbol,
       symbol: normalized.symbol,
@@ -220,13 +212,14 @@ class TickDistributionServer {
       timestamp: normalized.timestamp,
       source: "ws" as const,
     };
-    setImmediate(() => {
-      try {
-        intelligenceBus.publish("processedTick", snapshot);
-      } catch (err) {
-        logger.warn({ err }, "Suppressed error: failed to publish processedTick to intelligenceBus");
-      }
-    });
+    
+    // Publish immediately (synchronously) to avoid bloating the event loop macro-task queue
+    // with thousands of setImmediate callbacks, which can lead to OOM under heavy load.
+    try {
+      intelligenceBus.publish("processedTick", snapshot);
+    } catch (err) {
+      logger.warn({ err }, "Suppressed error: failed to publish processedTick to intelligenceBus");
+    }
   }
 
   /**
@@ -236,13 +229,13 @@ class TickDistributionServer {
     if (this.pendingUISymbols.size === 0) return;
 
     const start = performance.now();
-    let batchLength = 0;
+    const payload: unknown[] = [];
 
     for (const symbol of this.pendingUISymbols) {
       const cached = this.tickCache.get(symbol);
       if (cached) {
-        // [symbol, ltp, volume, bid, ask, timestamp, change_pct]
-        this.batchPool[batchLength++] = [
+        // [symbol, ltp, volume, bid, ask, timestamp, changePct]
+        payload.push([
           cached.symbol,
           cached.ltp,
           cached.volume,
@@ -250,20 +243,14 @@ class TickDistributionServer {
           cached.ask,
           cached.timestamp,
           cached.changePercent ?? null
-        ];
+        ]);
       }
     }
     this.pendingUISymbols.clear();
 
-    if (batchLength > 0) {
+    if (payload.length > 0) {
       try {
-        const payload = this.batchPool.slice(0, batchLength);
         broadcastMarketTicks(payload);
-        
-        // Clear slots to prevent memory leaks of tick objects
-        for (let i = 0; i < batchLength; i++) {
-          this.batchPool[i] = undefined;
-        }
       } catch (err) {
         logger.error({ err }, "Failed to broadcast UI tick stream");
       }

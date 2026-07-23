@@ -176,7 +176,7 @@ router.post("/screener/run", async (req, res, next) => {
       });
     }
 
-    const { screenerId } = req.body || {};
+    const screenerId = typeof req.body?.screenerId === 'number' ? req.body.screenerId : null;
     
 
     let activeQuery = db.select({ id: customScreenerTable.id })

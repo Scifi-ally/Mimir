@@ -11,7 +11,7 @@ describe("calculateSuggestionTiming", () => {
       generatedAt: new Date("2026-07-13T09:35:00.000Z"), // 15:05 IST
     });
 
-    expect(result.expectedHoldMinutes).toBe(240);
+    expect(result.expectedHoldMinutes).toBe(5);
     expect(result.expiresAt.toISOString()).toBe("2026-07-13T09:40:00.000Z");
   });
 

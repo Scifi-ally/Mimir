@@ -17,7 +17,6 @@ import { db, candlesTable, pool } from "../db/src";
 import { eq, asc } from "drizzle-orm";
 
 const COST = 0.0005;
-const IST_OFFSET_MS = 5.5 * 3600 * 1000;
 const TRAIN_END = new Date("2026-04-30T23:59:59+05:30").getTime();
 
 interface Row { ts: number; o: number; h: number; l: number; c: number; v: number }

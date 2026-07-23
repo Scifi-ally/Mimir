@@ -21,7 +21,7 @@ import { assessRisk, syncRiskEngineState } from "./risk_engine";
 import { getConfig } from "../config";
 import type { TechnicalSnapshot, OHLCV } from "./technical";
 import type { ScanResult, StockSector } from "./stock_scanner";
-import { checkAIHealth, batchInference, type BatchResult } from "./ai_client";
+import { checkAIHealth, batchInference, type BatchResult, getConfluenceScore } from "./ai_client";
 import { checkEarningsRisk } from "./earnings_filter";
 import { db, learningAnalyticsTable, symbolScoresTable, learningMetricsTable } from "../../db/src";
 import { eq } from "drizzle-orm";
@@ -406,9 +406,25 @@ export async function runIntelligencePipeline(
     const sectorStrength = features.sectorStrength;
     const regimeScore = features.regimeScore;
 
-    // Compute final confidence
-    let confidence = aiContributing
-      ? computeFinalConfidence(
+    // Compute final confidence using the Regime-Gated Confluence Model
+    let confidence = 50;
+    if (aiContributing) {
+      const rsNormalized = Math.max(0, Math.min(100, ((features.rsVsNifty60d - 0.8) / 0.4) * 100));
+      const sectorNormalized = Math.max(0, Math.min(100, ((sectorStrength + 2) / 4) * 100));
+      
+      const confRes = await getConfluenceScore(regime.regime, {
+        tech_score: technicalScore,
+        pattern_score: patternScore,
+        chronos_score: chronosScore,
+        rs_score: rsNormalized,
+        sector_score: sectorNormalized,
+        sentiment_score: sentimentScore
+      });
+      
+      if (!confRes.fallback) {
+        confidence = confRes.score;
+      } else {
+        confidence = computeFinalConfidence(
           technicalScore,
           patternScore,
           chronosScore,
@@ -417,14 +433,17 @@ export async function runIntelligencePipeline(
           regimeScore,
           sentimentScore,
           adaptiveWeights
-        )
-      : computeFallbackConfidence(
-          technicalScore,
-          features.rsVsNifty60d,
-          sectorStrength,
-          regimeScore,
-          adaptiveWeights
         );
+      }
+    } else {
+      confidence = computeFallbackConfidence(
+        technicalScore,
+        features.rsVsNifty60d,
+        sectorStrength,
+        regimeScore,
+        adaptiveWeights
+      );
+    }
 
     // Apply high volatility penalty instead of hard blocking trades
     if (regime.regime === "HIGH_VOLATILITY") {

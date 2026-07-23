@@ -19,6 +19,7 @@ import {
   runOutcomeCheck,
   generateSuggestionsFromWatchlist,
 } from "../suggestions/generator";
+import { verifyExpiredOutcomes } from "../suggestions/outcome_verifier";
 import {
   updateMarketFeed,
   initMarketFeed,
@@ -806,6 +807,17 @@ export function startScheduler(): void {
   scheduleJob("expire-intraday", "35 15 * * 1-5", async () => {
     logger.info("Post-market: expiring today's intraday signals");
     await expireTodayIntraday();
+    // Immediately assign verified outcomes to the rows just expired, replaying
+    // 1-min candles over each allotted window so EXPIRED rows show real P&L.
+    const n = await verifyExpiredOutcomes();
+    logger.info({ verified: n }, "Post-market: verified expired outcomes");
+  });
+
+  // ── Hourly safety net: verify any closed suggestions the post-market pass
+  // missed (backend was down at 15:35, provider gap, backfilled rows). ──────
+  scheduleJob("outcome-verify-backfill", "20 * * * *", async () => {
+    const n = await verifyExpiredOutcomes();
+    if (n > 0) logger.info({ verified: n }, "Backfill: verified expired outcomes");
   });
 
   // ── POST-MARKET: 15:45 IST Mon-Fri - run main overnight scanner ONCE ──

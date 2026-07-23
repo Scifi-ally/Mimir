@@ -4,12 +4,15 @@ import http from "http";
 import app from "./app";
 import { logger } from "./lib/logger";
 import { initWebSocketServer } from "./ws/websocket_server";
-import { startScheduler } from "./scheduler/jobs";
+import { startScheduler, stopScheduler } from "./scheduler/jobs";
 import { initConfigFromDb } from "./config";
 import { initAccessTokenFromDb } from "./upstox/auth";
 import { logSecurityMode } from "./lib/security";
-import { startMarketIntelligence } from "./intelligence/orchestrator";
+import { startMarketIntelligence, marketIntelligence } from "./intelligence/orchestrator";
 import { initPaperEngine } from "./trading/paper_engine";
+import { startBrokerReconciliationLoop } from "./trading/reconciler";
+import { pool } from "../db/src";
+import { redisClient } from "./lib/redis";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -46,11 +49,8 @@ try {
   logger.warn({ err }, "Startup state restore failed; continuing with defaults");
 }
 
-if (!process.env["UPSTOXBOT_SECRET_KEY"] && !process.env["UPSTOXBOT_ADMIN_TOKEN"]) {
-  logger.warn("Security Warning: UPSTOXBOT_SECRET_KEY is not set. Upstox tokens will be stored in plain text.");
-}
-
 startScheduler();
+startBrokerReconciliationLoop();
 initPaperEngine().catch((err) => {
   logger.error({ err }, "Failed to start Paper Trading engine");
 });
@@ -83,8 +83,6 @@ async function gracefulShutdown(signal: string) {
   try {
     // Stop background services
     logger.info("Stopping scheduler and market intelligence...");
-    const { stopScheduler } = await import("./scheduler/jobs");
-    const { marketIntelligence } = await import("./intelligence/orchestrator");
     
     if (typeof stopScheduler === 'function') {
       stopScheduler();
@@ -96,12 +94,10 @@ async function gracefulShutdown(signal: string) {
     await new Promise(resolve => setTimeout(resolve, 5000));
     
     // Close database connections
-    const { pool } = await import("../db/src");
     await pool.end();
     
     // Close Redis
     logger.info("Closing Redis connections...");
-    const { redisClient } = await import("./lib/redis");
     if (redisClient.status === "ready") {
       await redisClient.quit();
     }

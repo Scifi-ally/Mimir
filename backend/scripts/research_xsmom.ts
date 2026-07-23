@@ -24,7 +24,7 @@
  *      [--minTurnover 50000000] [--minPrice 20] [--gridOnly]
  */
 import { db, candlesTable } from "../db/src";
-import { and, eq, asc } from "drizzle-orm";
+import { eq, asc } from "drizzle-orm";
 
 const COST_RATE_PER_SIDE = 0.0005; // keep in sync with backtest_setups.ts
 const TRAIN_END = "2026-04-30";

@@ -25,7 +25,7 @@ function normalizeIp(value: string | undefined): string {
   return (value ?? "").replace(/^::ffff:/, "");
 }
 
-function isPrivateOrLocalIp(ip: string): boolean {
+export function isPrivateOrLocalIp(ip: string): boolean {
   // Loopback and directly-attached LAN ranges only. Deliberately EXCLUDES
   // 172.16/12: that's the Docker bridge range — a dockerized reverse proxy
   // makes ALL internet traffic arrive from a 172.x gateway address, which
@@ -43,29 +43,35 @@ function isPrivateOrLocalIp(ip: string): boolean {
 
 export function isLocalRequest(req: Request): boolean {
   if (
-    process.env.ALLOW_TUNNELS === "true" ||
     process.env.ALLOW_ALL_ORIGINS === "true" ||
-    process.env.ALLOW_REMOTE_ADMIN === "true"
+    process.env.ALLOW_REMOTE_ADMIN === "true" ||
+    process.env.ALLOW_TUNNELS === "true"
   ) {
     return true;
   }
+  
+  // If request has Cloudflare headers, it's NOT local.
+  if (req.headers["cf-connecting-ip"] || req.headers["cf-ray"]) {
+    return false;
+  }
+
+  // If X-Forwarded-For is present and contains non-local IPs, it's not local.
+  const xForwardedFor = req.headers["x-forwarded-for"];
+  if (typeof xForwardedFor === "string") {
+    const ips = xForwardedFor.split(",").map(ip => normalizeIp(ip.trim()));
+    if (ips.some(ip => !isPrivateOrLocalIp(ip))) {
+      return false;
+    }
+  }
+
   const ip = normalizeIp(req.socket.remoteAddress);
-  if (isPrivateOrLocalIp(ip)) {
-    return true;
-  }
-  // If request arrived over a tunnel or reverse proxy with an allowed Origin/Host, allow it
-  const origin = req.headers?.origin || (req.headers?.host ? `http://${req.headers.host}` : undefined);
-  if (origin && isAllowedOrigin(origin)) {
-    return true;
-  }
-  return false;
+  return isPrivateOrLocalIp(ip);
 }
 
 export function isAllowedOrigin(origin: string | undefined): boolean {
   if (
     process.env.NODE_ENV === "test" ||
-    process.env.ALLOW_ALL_ORIGINS === "true" ||
-    process.env.ALLOW_TUNNELS === "true"
+    process.env.ALLOW_ALL_ORIGINS === "true"
   ) {
     return true;
   }
@@ -76,7 +82,7 @@ export function isAllowedOrigin(origin: string | undefined): boolean {
     const hostname = url.hostname.replace(/^\[|\]$/g, "");
     if (localHostnames.has(hostname) || isPrivateOrLocalIp(hostname)) return true;
 
-    if (tunnelSuffixes.some((suffix) => hostname.endsWith(suffix))) {
+    if (process.env.ALLOW_TUNNELS === "true" && tunnelSuffixes.some((suffix) => hostname.endsWith(suffix))) {
       return true;
     }
 
@@ -86,16 +92,17 @@ export function isAllowedOrigin(origin: string | undefined): boolean {
       for (const allowed of allowedList) {
         try {
           if (new URL(allowed).origin === url.origin) return true;
-          if (hostname.endsWith(allowed)) return true;
         } catch {
-          if (hostname === allowed || hostname.endsWith(allowed)) return true;
+          if (hostname === allowed) return true;
         }
       }
     }
 
     const configured = process.env["FRONTEND_APP_URL"]?.trim();
-    if (!configured) return true; // Default allow in development/tunnel mode when FRONTEND_APP_URL is unset
-    return new URL(configured).origin === url.origin;
+    if (configured) {
+      return new URL(configured).origin === url.origin;
+    }
+    return false;
   } catch (err) {
     logger.debug({ err, origin }, "isAllowedOrigin: failed to parse origin");
     return false;
@@ -103,9 +110,9 @@ export function isAllowedOrigin(origin: string | undefined): boolean {
 }
 
 function timingSafeEquals(a: string, b: string): boolean {
-  const left = Buffer.from(a);
-  const right = Buffer.from(b);
-  return left.length === right.length && crypto.timingSafeEqual(left, right);
+  const hashA = crypto.createHash("sha256").update(a).digest();
+  const hashB = crypto.createHash("sha256").update(b).digest();
+  return crypto.timingSafeEqual(hashA, hashB);
 }
 
 function getPresentedToken(req: Request): string | null {
@@ -140,8 +147,10 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction): v
 /**
  * Redis-backed rate limiter (survives server restarts).
  * Enforces 100 req/min on standard APIs, 10 req/min on sensitive auth/system endpoints.
- * Uses a sliding window via Redis sorted sets.
+ * Uses a sliding window via Redis sorted sets. Degrades to an in-memory fallback if Redis is offline.
  */
+const inMemoryRateLimits = new Map<string, number[]>();
+
 export async function apiRateLimit(req: Request, res: Response, next: NextFunction): Promise<void> {
   const ip = normalizeIp(req.ip || req.socket.remoteAddress) || "unknown";
   const isAuthRoute = req.path.includes("/auth") || req.path.includes("/token");
@@ -151,14 +160,31 @@ export async function apiRateLimit(req: Request, res: Response, next: NextFuncti
   const now = Date.now();
   const bucketKey = `ratelimit:${isAuthRoute ? "auth" : "api"}:${ip}`;
 
+  const applyInMemoryFallback = (): boolean => {
+    let requests = inMemoryRateLimits.get(bucketKey) || [];
+    requests = requests.filter(time => now - time < windowSec * 1000);
+    if (requests.length >= maxRequests) {
+      res.setHeader("Retry-After", windowSec.toString());
+      res.status(429).json({ error: "Too many requests. Rate limit exceeded." });
+      return false;
+    }
+    requests.push(now);
+    inMemoryRateLimits.set(bucketKey, requests);
+    // Cleanup old keys occasionally to prevent memory leaks in the fallback map
+    if (Math.random() < 0.01) {
+      for (const [key, times] of inMemoryRateLimits.entries()) {
+        const valid = times.filter(t => now - t < windowSec * 1000);
+        if (valid.length === 0) inMemoryRateLimits.delete(key);
+        else inMemoryRateLimits.set(key, valid);
+      }
+    }
+    return true;
+  };
+
   try {
     if (redisClient.status !== "ready") {
       if (redisClient.status === "wait") redisClient.connect().catch(() => {});
-      const failClosed = process.env["RATE_LIMIT_FAIL_CLOSED"] === "true";
-      if (failClosed) {
-        res.status(503).json({ error: "Service unavailable (rate limit engine offline)" });
-        return;
-      }
+      if (!applyInMemoryFallback()) return;
       next();
       return;
     }
@@ -185,16 +211,8 @@ export async function apiRateLimit(req: Request, res: Response, next: NextFuncti
       }
     }
   } catch (err) {
-    // If Redis fails, rate limiting behavior is controlled by RATE_LIMIT_FAIL_CLOSED.
-    // By default it fails-open with logging so the trading terminal continues to function offline.
-    const failClosed = process.env["RATE_LIMIT_FAIL_CLOSED"] === "true";
-    if (failClosed) {
-      logger.error({ err }, "Redis rate limiter error, rejecting request (RATE_LIMIT_FAIL_CLOSED=true)");
-      res.status(503).json({ error: "Service unavailable (rate limit engine offline)" });
-      return;
-    } else {
-      logger.debug({ err }, "Redis rate limiter error, allowing request (fail-open)");
-    }
+    logger.warn({ err }, "Redis rate limiter error, degrading to in-memory fallback");
+    if (!applyInMemoryFallback()) return;
   }
 
   next();

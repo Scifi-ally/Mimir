@@ -494,7 +494,18 @@ export const CreateSuggestionBody = zod.object({
   target1: zod.coerce.number().positive(),
   quantity: zod.coerce.number().int().positive(),
   status: zod.enum(["PENDING", "ACTIVE", "TARGET_1_HIT", "TARGET_2_HIT", "STOP_HIT", "EXPIRED", "MISSED", "CLOSED", "REJECTED"]).default("PENDING").optional(),
-});
+}).refine(
+  (data) => {
+    if (data.direction === "BUY") {
+      return data.stopLoss < data.entryPrice && data.entryPrice < data.target1;
+    } else {
+      return data.stopLoss > data.entryPrice && data.entryPrice > data.target1;
+    }
+  },
+  {
+    message: "Invalid price ordering: BUY requires stopLoss < entryPrice < target1, SELL requires stopLoss > entryPrice > target1",
+  }
+);
 
 export const ModifyStopLossBody = zod.object({
   stopLoss: zod.coerce.number().positive(),

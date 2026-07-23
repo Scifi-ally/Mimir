@@ -319,16 +319,27 @@ class ScannerOrchestrator {
       // Acquire lock for map operations
       const currentLock = this.candidatesLock;
       this.candidatesLock = currentLock.then(() => {
-        if (this.candidates.size <= intelligenceConfig.maxCandidates) return;
-        
-        // Create snapshot for sorting to avoid iterator invalidation
-        const snapshot = Array.from(this.candidates.values());
-        const sorted = snapshot.sort((a, b) => b.score - a.score);
-        const toRemove = sorted.slice(intelligenceConfig.maxCandidates);
+        // Trim Candidates
+        if (this.candidates.size > intelligenceConfig.maxCandidates) {
+          const snapshot = Array.from(this.candidates.values());
+          const sorted = snapshot.sort((a, b) => b.score - a.score);
+          const toRemove = sorted.slice(intelligenceConfig.maxCandidates);
 
-        for (const item of toRemove) {
-          this.candidates.delete(item.instrumentKey);
-          this.candleBuilder.clearBuffer(item.instrumentKey);
+          for (const item of toRemove) {
+            this.candidates.delete(item.instrumentKey);
+            this.candleBuilder.clearBuffer(item.instrumentKey);
+          }
+        }
+        
+        // Trim Opportunities
+        if (this.opportunities.size > intelligenceConfig.maxAiOpportunities * 2) {
+          const oppSnapshot = Array.from(this.opportunities.values());
+          const oppSorted = oppSnapshot.sort((a, b) => b.score - a.score);
+          const oppToRemove = oppSorted.slice(intelligenceConfig.maxAiOpportunities * 2);
+
+          for (const item of oppToRemove) {
+            this.opportunities.delete(item.instrumentKey);
+          }
         }
       });
     }, 500); // Batch trim operations every 500ms

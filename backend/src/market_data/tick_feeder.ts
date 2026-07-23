@@ -1,10 +1,9 @@
 import { logger } from "../lib/logger";
 import { stateStore } from "../lib/redis_state";
-import { createUpstoxClient } from "../lib/upstox-client";
+import yahooFinance from "yahoo-finance2";
 import { broadcast } from "../ws/websocket_server";
 import { createServerEvent } from "../ws/events";
 import { intelligenceBus } from "../intelligence/event_bus";
-import { getAccessToken } from "../upstox/auth";
 import { tickDistribution } from "./tick_distribution";
 import { initSectorRotation, updateSectorFlowFromTick } from "../analysis/sector_rotation";
 import { getISTDateStr } from "../lib/ist-time";
@@ -118,12 +117,21 @@ async function doInitTickFeeder(stocks: Array<{ symbol: string; key: string }>):
 
   // Subscribe to central connection manager tick stream via internal event bus
   eventBusUnsubscribe = intelligenceBus.subscribe("marketTick", (tickEvent) => {
-    const sub = subscriptions.get(tickEvent.symbol);
+    let sub = subscriptions.get(tickEvent.symbol);
     if (!sub) {
-      if (process.env["LOG_UNMONITORED_TICKS"] === "1") {
-        logger.debug({ symbol: tickEvent.symbol }, "Ignored tick for non-monitored symbol");
-      }
-      return;
+      sub = {
+        instrumentKey: tickEvent.instrumentKey || tickEvent.symbol,
+        symbol: tickEvent.symbol,
+        ticks: [],
+        lastPrice: null,
+        volume: 0,
+        bid: null,
+        ask: null,
+        openPrice: null,
+        highPrice: null,
+        lowPrice: null,
+      };
+      subscriptions.set(tickEvent.symbol, sub);
     }
 
     if (Date.now() - tickEvent.timestamp > 2000) {
@@ -196,8 +204,10 @@ async function doInitTickFeeder(stocks: Array<{ symbol: string; key: string }>):
       else if (sub.symbol === "SENSEX") prop = "sensex";
 
       if (prop) {
+        const cached = tickDistribution.getCacheSnapshot(sub.symbol);
+        const changePct = cached?.changePercent ?? null;
         // "monitoring" topic: market-data channel filter only passes non-tick events with this topic
-        broadcast(createServerEvent.indicesUpdate({ [prop]: { ltp: lastPrice, changePct: null } }), "monitoring");
+        broadcast(createServerEvent.indicesUpdate({ [prop]: { ltp: lastPrice, changePct } }), "monitoring");
       }
     }
 
@@ -238,23 +248,30 @@ function startVolumePoller(): void {
     if (subscriptions.size === 0) return;
 
     try {
-      const token = getAccessToken("data");
-      if (!token) return;
-
-      const keysToFetch = Array.from(subscriptions.values())
-        .map(sub => sub.instrumentKey)
+      const symbolsToFetch = Array.from(subscriptions.values())
+        .map(sub => sub.symbol)
         .filter(k => !k.includes("_INDEX")); // Only fetch for equities
 
-      if (keysToFetch.length === 0) return;
+      if (symbolsToFetch.length === 0) return;
 
-      const upstoxApiClient = createUpstoxClient();
-      const quotes = await upstoxApiClient.fetchQuotesForInstruments(keysToFetch, token);
+      // Map to Yahoo Finance symbols
+      const yfSymbols = symbolsToFetch.map(s => `${s}.NS`);
+      const quotes = await (yahooFinance.quote as any)(yfSymbols);
+
+      const quoteMap = new Map<string, any>();
+      for (const quote of quotes) {
+         if (quote.symbol) {
+             // Remove .NS suffix to match back
+             const baseSymbol = quote.symbol.replace(".NS", "");
+             quoteMap.set(baseSymbol, quote);
+         }
+      }
 
       for (const sub of subscriptions.values()) {
-        if (quotes[sub.instrumentKey]) {
-          const quote = quotes[sub.instrumentKey];
-          const volume = Number(quote.volume || 0);
-          const price = sub.lastPrice || Number(quote.last_price || 0);
+        const quote = quoteMap.get(sub.symbol);
+        if (quote) {
+          const volume = Number(quote.regularMarketVolume || 0);
+          const price = Number(quote.regularMarketPrice || sub.lastPrice || 0);
 
           if (volume > 0 && price > 0) {
             sub.volume = volume;

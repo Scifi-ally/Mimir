@@ -78,6 +78,11 @@ export interface FeatureVector {
   volOfVol: number;          // std of rolling 5-day vol over last 20d (vol regime instability)
   cprWidthPct: number;       // Central Pivot Range width as % of price (narrow → trend day)
 
+  // Microstructure & F&O Flow
+  bidAskImbalance: number;   // -1.0 to 1.0 (sellers vs buyers)
+  optionsOiChangeRate: number; // % change in OI
+  fiiDiiNetFlowLag: number;  // lagged net flow figure
+
   // Set true by builders that cannot populate the full candle-history feature
   // set (e.g. the tick path's buildMonitorFeatureVector, which hardcodes ~15
   // fields to neutral placeholders). Such a vector is fine for the risk engine
@@ -131,6 +136,9 @@ export const RANKER_FEATURE_KEYS = [
   "realizedVol20",
   "volOfVol",
   "cprWidthPct",
+  "bidAskImbalance",
+  "optionsOiChangeRate",
+  "fiiDiiNetFlowLag",
 ] as const satisfies readonly (keyof FeatureVector)[];
 
 export type RankerFeatureKey = (typeof RANKER_FEATURE_KEYS)[number];
@@ -372,6 +380,9 @@ export function computeFeatureVector(
   rsVsNifty: number,
   rsVsSector: number,
   riskReward: number,
+  bidAskImbalance: number = 0,
+  optionsOiChangeRate: number = 0,
+  fiiDiiNetFlowLag: number = 0,
 ): FeatureVector {
   const closes = candles.map(c => c.close);
   const lastCandle = candles[candles.length - 1]!;
@@ -495,6 +506,11 @@ export function computeFeatureVector(
     realizedVol20: realizedVol(closes, 20),
     volOfVol: computeVolOfVol(closes),
     cprWidthPct: computeCprWidthPct(lastCandle),
+
+    // Microstructure & F&O Flow
+    bidAskImbalance,
+    optionsOiChangeRate,
+    fiiDiiNetFlowLag,
   };
 
   logger.debug({ symbol, momentumScore, trendScore, volatilityScore, riskRewardScore }, "Feature vector computed");
@@ -513,6 +529,9 @@ export function computeFeatureVectors(
     rsVsNifty: number;
     rsVsSector: number;
     riskReward: number;
+    bidAskImbalance?: number;
+    optionsOiChangeRate?: number;
+    fiiDiiNetFlowLag?: number;
   }>,
 ): FeatureVector[] {
   return candidates.map(c => computeFeatureVector(
@@ -523,5 +542,8 @@ export function computeFeatureVectors(
     c.rsVsNifty,
     c.rsVsSector,
     c.riskReward,
+    c.bidAskImbalance ?? 0,
+    c.optionsOiChangeRate ?? 0,
+    c.fiiDiiNetFlowLag ?? 0,
   ));
 }

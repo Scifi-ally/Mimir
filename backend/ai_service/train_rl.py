@@ -163,7 +163,12 @@ def fetch_data() -> pd.DataFrame:
         
         # Join Macro Data
         if not macro_df.empty:
-            df = df.join(macro_df, how='left')
+            # Prevent look-ahead bias: FII/DII is published post-market. 
+            # Shift it so today's action only sees yesterday's flow.
+            macro_for_join = macro_df.copy()
+            if 'fiiNet' in macro_for_join.columns:
+                macro_for_join['fiiNet'] = macro_for_join['fiiNet'].shift(1)
+            df = df.join(macro_for_join, how='left')
             
         # Forward fill and fillna for missing macro data
         if 'vix' in df.columns:

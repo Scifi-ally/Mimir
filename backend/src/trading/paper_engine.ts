@@ -1,4 +1,4 @@
-import { db } from "../../db/src";
+import { db, suggestionsTable } from "../../db/src";
 import { eq, sql, gte, and } from "drizzle-orm";
 import { intelligenceBus } from "../intelligence/event_bus";
 import { getConfig } from "../config";
@@ -8,7 +8,7 @@ import {
   paperOrdersTable, 
   paperPositionsTable 
 } from "../../db/src/schema/paper_trading";
-import type { SuggestionGeneratedEvent, MarketTickEvent } from "../intelligence/types";
+import type { SuggestionTriggeredEvent, MarketTickEvent } from "../intelligence/types";
 import { todayStartUTC } from "../lib/ist-time";
 import { broadcast } from "../ws/websocket_server";
 import { createServerEvent } from "../ws/events";
@@ -50,25 +50,52 @@ export async function initPaperEngine() {
   // The engine runs in BOTH modes. PAPER: simulated fills only. LIVE: the same
   // simulated book is kept (position tracking + PnL), and every fill is
   // mirrored to the broker as a real order via broker_orders.ts.
+  // An inconsistent config must NOT abort init: the per-event guards below
+  // re-read config dynamically, so subscribing anyway means a Settings toggle
+  // takes effect immediately instead of requiring a backend restart.
   if (!config.paperTradingEnabled && config.tradingMode !== "LIVE") {
-    throw new Error(
-      'Inconsistent trading config: paperTradingEnabled=false requires tradingMode="LIVE". ' +
-      'Enable paper trading or arm LIVE mode from Settings.'
+    logger.warn(
+      'Inconsistent trading config: paperTradingEnabled=false while tradingMode!="LIVE". ' +
+      'Engine subscribed but will not trade until paper trading is enabled or LIVE mode is armed from Settings.'
     );
   }
   
   await getAccount(); // Ensure account exists
 
-  intelligenceBus.subscribe("suggestionGenerated", async (event: SuggestionGeneratedEvent) => {
+  intelligenceBus.subscribe("suggestionTriggered", async (event: SuggestionTriggeredEvent) => {
     try {
       const config = getConfig();
       if (!config.paperTradingEnabled && config.tradingMode !== "LIVE") {
-        logger.debug("TradingEngine: suggestion received but engine is disabled");
+        logger.warn({ suggestionId: event.suggestionId }, "PaperEngine: suggestion triggered but engine is disabled — no trade taken");
         return;
       }
-      logger.info({ symbol: event.suggestion.symbol, confidence: event.suggestion.confidence }, "PaperEngine: Processing suggestionGenerated event");
 
-      const { suggestion } = event;
+      const [sugRow] = await db.select().from(suggestionsTable).where(eq(suggestionsTable.id, event.suggestionId)).limit(1);
+      if (!sugRow) {
+         logger.error({ suggestionId: event.suggestionId }, "PaperEngine: Triggered suggestion not found in DB");
+         return;
+      }
+      
+      const suggestion = {
+        id: sugRow.id,
+        symbol: sugRow.symbol,
+        direction: sugRow.direction,
+        setup: sugRow.setupType,
+        confidence: sugRow.confidence || 50,
+        entry: parseFloat(sugRow.entryPrice),
+        stopLoss: parseFloat(sugRow.stopLoss),
+        target: parseFloat(sugRow.target1),
+        riskReward: sugRow.riskReward ? parseFloat(sugRow.riskReward) : 0,
+        reasoning: sugRow.reasoning || "",
+        marketRegime: sugRow.marketRegime,
+        signalFactors: sugRow.signalFactors,
+        aiScore: sugRow.aiScore,
+        patternScore: sugRow.patternScore,
+        technicalScore: sugRow.technicalScore,
+      };
+
+      logger.info({ symbol: suggestion.symbol, confidence: suggestion.confidence, fillPrice: event.fillPrice }, "PaperEngine: Processing suggestionTriggered event");
+
       const account = await getAccount();
       const balance = new Decimal(account.balance);
       const allocated = new Decimal(account.allocatedMargin);
@@ -154,7 +181,9 @@ export async function initPaperEngine() {
       // usually cover it; this makes sizing not depend on scheduler health).
       const KELLY_MIN_SAMPLES = 30;
       await ensureFresh();
-      const cal = getCalibration(suggestion.setup, "INTRADAY");
+      const isSwingTrade = Boolean(suggestion.setup?.toLowerCase().includes("swing") || suggestion.setup?.toLowerCase().includes("cnc"));
+      const tradeCategory = isSwingTrade ? "SWING" : "INTRADAY";
+      const cal = getCalibration(suggestion.setup, tradeCategory);
       if (cal && cal.samples >= KELLY_MIN_SAMPLES && suggestion.riskReward > 0) {
         const p = cal.winRate;
         const b = suggestion.riskReward;
@@ -318,6 +347,16 @@ export async function initPaperEngine() {
 
       logger.info({ symbol: suggestion.symbol, quantity, requiredMargin }, "PaperEngine: Entered Position");
 
+      broadcast(createServerEvent.positionUpdate({
+        id: suggestion.id,
+        symbol: suggestion.symbol,
+        entryPrice: entry.toNumber(),
+        stopLoss: stopLoss.toNumber(),
+        target1: suggestion.target,
+        direction: suggestion.direction as "BUY" | "SELL",
+        mode: "OPEN",
+      }));
+
       // LIVE mode: mirror the entry to the broker. The internal book is the
       // strategy's source of truth; the broker order is the real-money mirror.
       if (isLiveModeActive()) {
@@ -327,13 +366,27 @@ export async function initPaperEngine() {
           direction: suggestion.direction as "BUY" | "SELL",
           quantity,
           orderType: "ENTRY",
-          tradeType: "INTRADAY",
+          tradeType: isSwingTrade ? "SWING" : "INTRADAY",
           referencePrice: entry.toNumber(),
         });
+
+        if (!orderResult.ok) {
+          logger.error({ symbol: suggestion.symbol, error: orderResult.error }, "PaperEngine: Live broker order failed — reverting internal DB position");
+          await db.transaction(async (tx) => {
+            await tx.update(paperPositionsTable)
+              .set({ status: "REJECTED" })
+              .where(sql`${paperPositionsTable.suggestionId} = ${suggestion.id} AND ${paperPositionsTable.status} = 'OPEN'`);
+            
+            await tx.update(paperAccountsTable)
+              .set({ allocatedMargin: sql`GREATEST(0, allocated_margin - ${requiredMargin.toFixed(2)})` })
+              .where(eq(paperAccountsTable.id, account.id));
+          });
+        }
+
         broadcast(createServerEvent.systemAlert({
           message: orderResult.ok
             ? `LIVE order placed: ${suggestion.direction} ${quantity} ${suggestion.symbol}`
-            : `LIVE order FAILED: ${suggestion.symbol} — ${orderResult.error}`,
+            : `LIVE order FAILED: ${suggestion.symbol} — ${orderResult.error} (Position reverted)`,
           severity: orderResult.ok ? "info" : "error",
         }), "system");
       }
@@ -569,9 +622,12 @@ export async function initPaperEngine() {
           
           const realizedPnl = isBuy ? slippedLtp.minus(entryPrice).mul(qty) : entryPrice.minus(slippedLtp).mul(qty);
 
+          const isSwingExit = pos.symbol.includes("-SWING");
+          const exitLeverage = isSwingExit ? 1 : 5;
+          const releasedMargin = qty.mul(entryPrice).div(exitLeverage);
+
           const account = await getAccount();
           await db.transaction(async (tx) => {
-            
             // 1. Close Position
             const updateRes = await tx.update(paperPositionsTable)
               .set({
@@ -598,8 +654,7 @@ export async function initPaperEngine() {
               status: "EXECUTED"
             });
 
-            // 3. Update Account (release intraday 5x required margin cleanly without going below zero)
-            const releasedMargin = qty.mul(entryPrice).div(5);
+            // 3. Update Account (release margin cleanly without going below zero)
             await tx.update(paperAccountsTable)
               .set({ 
                 allocatedMargin: sql`GREATEST(0, allocated_margin - ${releasedMargin.toFixed(2)})`,
@@ -610,6 +665,16 @@ export async function initPaperEngine() {
 
           logger.info({ symbol: pos.symbol, exitReason, realizedPnl: realizedPnl.toNumber() }, "PaperEngine: Exited Position");
 
+          broadcast(createServerEvent.positionUpdate({
+            id: pos.id,
+            symbol: pos.symbol,
+            entryPrice: parseFloat(pos.avgEntryPrice),
+            stopLoss: parseFloat(pos.trailingStopLoss ?? "0"),
+            target1: 0,
+            direction: pos.direction as "BUY" | "SELL",
+            mode: "CLOSED",
+          }));
+
           if (isLiveModeActive()) {
             const exitOrder = await placeLiveOrder({
               suggestionId: pos.suggestionId,
@@ -617,13 +682,34 @@ export async function initPaperEngine() {
               direction: isBuy ? "SELL" : "BUY",
               quantity: qty.toNumber(),
               orderType: exitReason,
-              tradeType: "INTRADAY",
+              tradeType: isSwingExit ? "SWING" : "INTRADAY",
               referencePrice: slippedLtp.toNumber(),
             });
+
+            if (!exitOrder.ok) {
+              logger.error({ symbol: pos.symbol, error: exitOrder.error }, "PaperEngine: LIVE exit order failed — reverting internal position to OPEN");
+              await db.transaction(async (tx) => {
+                await tx.update(paperPositionsTable)
+                  .set({
+                    status: "OPEN",
+                    realizedPnl: "0.00",
+                    closedAt: null
+                  })
+                  .where(eq(paperPositionsTable.id, pos.id));
+
+                await tx.update(paperAccountsTable)
+                  .set({
+                    allocatedMargin: sql`allocated_margin + ${releasedMargin.toFixed(2)}`,
+                    balance: sql`balance - ${realizedPnl.toFixed(2)}`
+                  })
+                  .where(eq(paperAccountsTable.id, account.id));
+              });
+            }
+
             broadcast(createServerEvent.systemAlert({
               message: exitOrder.ok
                 ? `LIVE exit placed: ${isBuy ? "SELL" : "BUY"} ${qty.toNumber()} ${pos.symbol} (${exitReason})`
-                : `LIVE exit FAILED: ${pos.symbol} — ${exitOrder.error}. Close manually at your broker!`,
+                : `LIVE exit FAILED: ${pos.symbol} — ${exitOrder.error}. Position reverted to OPEN for safety!`,
               severity: exitOrder.ok ? "info" : "error",
             }), "system");
           }

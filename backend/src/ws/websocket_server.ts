@@ -3,7 +3,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import type { Server } from "http";
 import { logger } from "../lib/logger";
 import { parseClientEvent, ServerEvent, createServerEvent, packr } from "./events";
-import { isAllowedOrigin } from "../lib/security";
+import { isAllowedOrigin, isPrivateOrLocalIp } from "../lib/security";
 import { createRedisClient } from "../lib/redis";
 
 const redisSubscriber = createRedisClient("ws-subscriber");
@@ -119,15 +119,16 @@ export function initWebSocketServer(server: Server): void {
       // SECURITY FIX (Issue #39): Timing-safe token comparison with proper padding
       // Always use constant-time comparison regardless of length to prevent timing attacks
       const normalizedIp = (ipStr || "").replace(/^::ffff:/, "");
-      const isLocal = normalizedIp === "::1" || normalizedIp === "127.0.0.1" || normalizedIp.startsWith("127.");
-      const isRemoteAuthDisabled = process.env.DISABLE_REMOTE_API_AUTH === "1" || process.env.DISABLE_REMOTE_API_AUTH === "true";
+      const isLocal = isPrivateOrLocalIp(normalizedIp);
+      const isTokenConfigured = Boolean(process.env.UPSTOXBOT_ADMIN_TOKEN?.trim());
+      const isRemoteAuthDisabled = process.env.DISABLE_REMOTE_API_AUTH === "1" || process.env.DISABLE_REMOTE_API_AUTH === "true" || !isTokenConfigured;
 
       // CRITICAL FIX (Issue #6): Store timeout ID and clear it after successful auth
       let authTimeoutId: NodeJS.Timeout | null = null;
 
       if (isLocal || isRemoteAuthDisabled) {
         tc.isAuthenticated = true;
-        tc.topics.add("suggestions").add("alerts"); // default low-frequency subscription
+        tc.topics.add("suggestions").add("alerts").add("ticks"); // default subscriptions
       } else {
         // Enforce 5-second auth timeout
         authTimeoutId = setTimeout(() => {
@@ -173,6 +174,14 @@ export function initWebSocketServer(server: Server): void {
 
           // Handle client events
           if (clientEvent.event === "auth") {
+            // Already authenticated (e.g. local connection) — skip re-processing.
+            // Without this guard, a local client that sends an auth token while
+            // UPSTOXBOT_ADMIN_TOKEN is unset would have its connection closed with
+            // 4003 "Remote access disabled", killing an already-working session.
+            if (tc.isAuthenticated) {
+              logger.debug({ channel: tc.channelName }, "Ignoring auth event — client already authenticated");
+              return;
+            }
             // SECURITY FIX (Issue #41): Check rate limit before processing auth
             const now = Date.now();
             const tracker = authAttempts.get(normalizedIp) || {
@@ -426,20 +435,40 @@ let broadcastFn = (event: ServerEvent, topic: string = "suggestions"): void => {
               const requested = new Set<string>();
               tc.subscribedSymbols?.forEach((s) => requested.add(s.toUpperCase()));
               if (tc.activeSymbol) requested.add(tc.activeSymbol.toUpperCase());
-              if (requested.size === 0) return;
+
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               const ticks = (event.data as any[]).filter((tick) => {
-                // Validate tick format
                 if (!tick || (typeof tick !== 'object' && !Array.isArray(tick))) {
                   return false;
                 }
 
                 const symbol = Array.isArray(tick) ? tick[0] : tick.symbol;
+                if (typeof symbol !== "string" || symbol.length === 0) return false;
+                if (requested.size === 0) return false;
 
-                // MEDIUM FIX (Issue #15): Validate symbol is non-empty string
-                return typeof symbol === "string" &&
-                       symbol.length > 0 &&
-                       requested.has(symbol.toUpperCase());
+                const rawUpper = symbol.trim().toUpperCase();
+                if (requested.has(rawUpper)) return true;
+
+                const cleanTick = rawUpper
+                  .replace(/^(NSE_INDEX|NSE_EQ|BSE_INDEX|NSE|BSE)[:|]/, "")
+                  .replace(/-EQ$/, "")
+                  .replace(/[^A-Z0-9]/g, "");
+
+                for (const req of requested) {
+                  if (req === rawUpper) return true;
+                  const cleanReq = req
+                    .replace(/^(NSE_INDEX|NSE_EQ|BSE_INDEX|NSE|BSE)[:|]/, "")
+                    .replace(/-EQ$/, "")
+                    .replace(/[^A-Z0-9]/g, "");
+
+                  if (cleanReq === cleanTick && cleanReq.length > 0) return true;
+                  if ((cleanReq === "NIFTY50" || cleanReq === "NIFTY") && (cleanTick === "NIFTY50" || cleanTick === "NIFTY")) return true;
+                  if (cleanReq === "BANKNIFTY" && cleanTick === "BANKNIFTY") return true;
+                  if (cleanReq === "FINNIFTY" && cleanTick === "FINNIFTY") return true;
+                  if ((cleanReq === "INDIAVIX" || cleanReq === "VIX") && (cleanTick === "INDIAVIX" || cleanTick === "VIX")) return true;
+                }
+
+                return false;
               });
               if (ticks.length === 0) return;
               client.send(packr.pack({ ...event, data: ticks }));

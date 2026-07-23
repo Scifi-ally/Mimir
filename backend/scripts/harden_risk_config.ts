@@ -1,6 +1,6 @@
 import "../load-env.cjs";
-import { db, tradingConfigTable, suggestionsTable } from "../db/src";
-import { eq, inArray, sql } from "drizzle-orm";
+import { db, suggestionsTable } from "../db/src";
+import { inArray, sql } from "drizzle-orm";
 import { updateConfig } from "../src/config";
 import { logger } from "../src/lib/logger";
 
@@ -28,7 +28,7 @@ async function run() {
     logger.info("Database config updated with hardened thresholds.");
 
     // 2. Clear out any existing suggestions that were generated under relaxed criteria
-    const result = await db.update(suggestionsTable)
+    await db.update(suggestionsTable)
       .set({ status: "REJECTED", reasoning: "[SYSTEM] Rejected due to stricter risk gates being enabled." })
       .where(inArray(suggestionsTable.status, ["ACTIVE", "PENDING"]));
     

@@ -1,4 +1,5 @@
 import { logger } from "../lib/logger";
+import { fetchRecentNews } from "./news_feed";
 
 import { getAccessToken } from "../upstox/auth";
 import { getConfig } from "../config";
@@ -113,6 +114,8 @@ import { updateMarketState } from "../market_data/market_state";
 import { analyzeMultiTimeframeFromData } from "./multi_timeframe";
 import { createUpstoxClient } from "../lib/upstox-client";
 import { getISTDateStr, getLastCompletedTradingDayStr, shiftISTDateStr } from "../lib/ist-time";
+import { isSetupDemoted, isSetupDemotedForRegime } from "./calibration_engine";
+import { getLastRegimeOutput } from "./regime_detector";
 
 export type StockSector =
   | "IT"
@@ -1357,7 +1360,9 @@ function scoreSetupQuality(
     };
   }
 
-  if (!isIntradayFallback && isLateExtendedEntry(snap, candidate.direction)) {
+  const isMomentumBreakout = candidate.setupType === "MOMENTUM_BREAKOUT";
+
+  if (!isIntradayFallback && !isMomentumBreakout && isLateExtendedEntry(snap, candidate.direction)) {
     return { accepted: false, adjustment: 0, reason: "late extended entry" };
   }
 
@@ -1612,8 +1617,13 @@ export async function scanStock(
     // Compute RS vs Nifty
     const rs60 = niftyCandles ? computeRS60(dailyCandles, niftyCandles) : 1.0;
 
+    // Walk-forward validation: Reject natively disabled setups OR setups demoted by recent rolling expectancy
+    const currentRegime = getLastRegimeOutput()?.regime ?? null;
     let allCandidates = workerResult.allCandidates.filter(
-      (c) => !NEGATIVE_EXPECTANCY_SETUPS.has(c.setupType),
+      (c) => 
+        !NEGATIVE_EXPECTANCY_SETUPS.has(c.setupType) && 
+        !isSetupDemoted(c.setupType) && 
+        !isSetupDemotedForRegime(c.setupType, currentRegime)
     );
 
     if (!allCandidates.length) {
@@ -1632,8 +1642,10 @@ export async function scanStock(
         // Hard RS gates — avoid swimming against the index too much.
         // Slightly looser only for intraday fallback setups.
         const isIntradayFallback = c.setupType.startsWith("INTRADAY_MTF");
-        const buyThreshold = isIntradayFallback ? 0.75 : 0.8;
-        const sellThreshold = isIntradayFallback ? 1.25 : 1.2;
+        const isMomentumBreakout = c.setupType === "MOMENTUM_BREAKOUT";
+        // Momentum breakouts bypass strict RS gates because they are sudden explosive moves
+        const buyThreshold = isMomentumBreakout ? 0.5 : (isIntradayFallback ? 0.75 : 0.8);
+        const sellThreshold = isMomentumBreakout ? 1.5 : (isIntradayFallback ? 1.25 : 1.2);
         if (c.direction === "BUY" && rs60 < buyThreshold) return false;
         if (c.direction === "SELL" && rs60 > sellThreshold) return false;
         return true;
@@ -1684,6 +1696,14 @@ export async function scanStock(
 
     // Get hourly confirmation status for the winning setup
     const htfConf = getHourlyConfirmation(hourlyCandles, best.direction);
+
+    if (best.setupType === "MOMENTUM_BREAKOUT") {
+      const news = await fetchRecentNews(stock.symbol);
+      if (news.length > 0) {
+        best.confluence.push(`Recent News: ${news[0]}`);
+        best.reasoning += ` News Catalyst: ${news[0]}`;
+      }
+    }
 
     const categoryMap: Record<string, string> = {
       BREAKOUT: "BREAKOUT_WATCH",

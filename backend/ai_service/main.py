@@ -347,7 +347,7 @@ app.add_middleware(
 
 class CandidateRequest(BaseModel):
     symbol: str
-    ohlcv: List[List[float]] = Field(..., min_length=2, description="[[o,h,l,c,v], …]")
+    ohlcv: List[List[float]] = Field(..., min_length=20, description="[[o,h,l,c,v], …]")
     closes: Optional[List[float]] = Field(None, description="Close prices for Chronos; auto-derived from ohlcv if absent")
     features: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Extra indicators")
     as_of_date: Optional[str] = Field(None, description="ISO date for PIT fundamental lookups")
@@ -355,8 +355,8 @@ class CandidateRequest(BaseModel):
     @field_validator("ohlcv", mode="before")
     @classmethod
     def _validate_ohlcv(cls, v: Any) -> Any:
-        if not isinstance(v, list) or len(v) < 2:
-            raise ValueError("ohlcv must contain at least 2 candles")
+        if not isinstance(v, list) or len(v) < 20:
+            raise ValueError("ohlcv must contain at least 20 candles for adequate model context")
         return v
 
 
@@ -431,6 +431,7 @@ class HealthResponse(BaseModel):
 # Globals
 # ---------------------------------------------------------------------------
 _start_time: float = time.time()
+_gpu_semaphore = asyncio.Semaphore(1)
 
 # ---------------------------------------------------------------------------
 # Endpoints
@@ -482,7 +483,8 @@ async def infer_chronos(req: ChronosRequest):
     """Single Chronos inference on close prices."""
     t0 = time.time()
     try:
-        result = await asyncio.to_thread(chronos_service.infer, req.closes, req.steps or 5)
+        async with _gpu_semaphore:
+            result = await asyncio.to_thread(chronos_service.infer, req.closes, req.steps or 5)
         InferenceStats.record((time.time() - t0) * 1000)
         return ChronosResponse(
             median_forecast=result.median_forecast,
@@ -565,7 +567,8 @@ async def infer_batch(req: BatchRequest):
         return c
 
     closes_batch = [_closes_for(cand) for cand in req.candidates]
-    chronos_results = await asyncio.to_thread(chronos_service.infer_batch, closes_batch)
+    async with _gpu_semaphore:
+        chronos_results = await asyncio.to_thread(chronos_service.infer_batch, closes_batch)
     chronos_by_symbol = {
         id(cand): chronos_results[i] for i, cand in enumerate(req.candidates)
     }
@@ -748,6 +751,37 @@ async def get_rl_status():
     return rl_lifecycle_manager.get_status()
 
 
+from models.confluence_service import confluence_service
+
+class ConfluenceRequest(BaseModel):
+    regime: str
+    features: Dict[str, float]
+
+class ConfluenceResponse(BaseModel):
+    score: float
+    fallback: bool = False
+
+@app.post("/confluence_score", response_model=ConfluenceResponse)
+def get_confluence_score(req: ConfluenceRequest):
+    """
+    Returns the regime-gated combination score (0-100) based on the stage inputs.
+    """
+    try:
+        if not confluence_service.models:
+            # Try to load models if they were trained since startup
+            confluence_service.load_models()
+        
+        fallback = req.regime not in confluence_service.models
+        score = confluence_service.get_score(req.regime, req.features)
+        
+        return ConfluenceResponse(
+            score=score,
+            fallback=fallback
+        )
+    except Exception as e:
+        logger.error(f"Error computing confluence score: {e}")
+        return ConfluenceResponse(score=50.0, fallback=True)
+
 class RankerTrainRequest(BaseModel):
     data_path: Optional[str] = Field(
         default=None, description="Path to the JSONL training data; defaults to ../data/ranker_train.jsonl"
@@ -763,6 +797,22 @@ async def trigger_ranker_train(req: RankerTrainRequest):
     if started:
         return {"message": "Ranker training started"}
     return {"message": "Ranker training already in progress", "status": "TRAINING"}
+
+
+@app.post("/api/v1/confluence_train", tags=["Training"])
+async def trigger_confluence_train():
+    """Trigger confluence model retraining in the background."""
+    def run_train():
+        try:
+            data_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data", "confluence_train.jsonl"))
+            subprocess.run([sys.executable, "train_confluence.py", "--data", data_path], check=True)
+            # Reload models in the service after training completes
+            confluence_service.load_models()
+        except Exception as e:
+            logger.error(f"Confluence training failed: {e}")
+            
+    threading.Thread(target=run_train, daemon=True).start()
+    return {"message": "Confluence training started"}
 
 
 @app.get("/api/v1/ranker_status", tags=["Training"])

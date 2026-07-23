@@ -147,13 +147,101 @@ function analyzeTechnicalStateless(candidate: CandidateSignal, candles: OHLCV[])
   // Require meaningful trend strength — ADX below 15 means no trend
   const hasTrendStrength = snap == null || snap.adx14 >= 16;
 
+  let scoreBonus = 0;
+  const reasoning = [...candidate.reasons];
+  let setupName = direction === "BUY" ? "LIVE_MOMENTUM_CONTINUATION" : "LIVE_BEAR_MOMENTUM";
+
+  if (snap) {
+    if (trendAligned) {
+      scoreBonus += 1.2;
+      reasoning.push("technical trend aligned");
+    } else {
+      scoreBonus -= 0.6;
+    }
+    
+    if (hasTrendStrength) {
+      scoreBonus += 0.3;
+    } else {
+      scoreBonus -= 0.5;
+    }
+
+    if (snap.volumeRatio > 1.2) {
+      scoreBonus += 0.6;
+    }
+
+    // Trader Insight 1: VWAP Reclaim
+    if (direction === "BUY" && snap.vwap > 0 && entry > snap.vwap) {
+      scoreBonus += 0.5;
+      reasoning.push("VWAP Reclaim");
+      if (setupName.includes("CONTINUATION")) setupName = "VWAP_RECLAIM_LONG";
+    } else if (direction === "SELL" && snap.vwap > 0 && entry < snap.vwap) {
+      scoreBonus += 0.5;
+      reasoning.push("VWAP Breakdown");
+      if (setupName.includes("MOMENTUM")) setupName = "VWAP_BREAKDOWN_SHORT";
+    }
+
+    // Trader Insight 2: VPVR POC Breakout
+    if (direction === "BUY" && snap.vpvrPOC > 0 && entry > snap.vpvrPOC) {
+      scoreBonus += 0.8;
+      reasoning.push("VPVR POC Breakout");
+    } else if (direction === "SELL" && snap.vpvrPOC > 0 && entry < snap.vpvrPOC) {
+      scoreBonus += 0.8;
+      reasoning.push("VPVR POC Breakdown");
+    }
+
+    // Trader Insight 3: Bollinger Squeeze Breakout
+    if (snap.bbBandwidth != null && snap.bbBandwidth < 5 && snap.bbUpper != null && snap.bbLower != null) {
+      if (direction === "BUY" && entry > snap.bbUpper) {
+        scoreBonus += 1.0;
+        reasoning.push("Bollinger Squeeze Breakout");
+        setupName = "VOLATILITY_SQUEEZE_BREAKOUT";
+      } else if (direction === "SELL" && entry < snap.bbLower) {
+        scoreBonus += 1.0;
+        reasoning.push("Bollinger Squeeze Breakdown");
+        setupName = "VOLATILITY_SQUEEZE_BREAKDOWN";
+      }
+    }
+
+    // Trader Insight 4: Liquidity Sweep
+    if (direction === "BUY" && snap.swingLow > 0 && entry > snap.swingLow) {
+      const recentLows = candles.slice(-4, -1).map(c => c.low);
+      if (recentLows.length > 0 && Math.min(...recentLows) < snap.swingLow) {
+        scoreBonus += 1.5;
+        reasoning.push("Liquidity Sweep Reclaim");
+        setupName = "LIQUIDITY_SWEEP_LONG";
+      }
+    }
+
+    // Trader Insight 5: RSI Momentum Confirmation
+    if (direction === "BUY" && snap.rsi14 > 60) {
+      scoreBonus += 0.5;
+      reasoning.push("RSI > 60");
+    } else if (direction === "SELL" && snap.rsi14 < 40) {
+      scoreBonus += 0.5;
+      reasoning.push("RSI < 40");
+    }
+
+    // Trader Insight 6: SuperTrend Alignment
+    if (snap.superTrend > 0) {
+      if (direction === "BUY" && entry > snap.superTrend) {
+        scoreBonus += 1.0;
+        reasoning.push("SuperTrend Aligned (Bullish)");
+      } else if (direction === "SELL" && entry < snap.superTrend) {
+        scoreBonus += 1.0;
+        reasoning.push("SuperTrend Aligned (Bearish)");
+      } else {
+        // User requested penalty if fighting SuperTrend
+        scoreBonus -= 1.0;
+        reasoning.push("Fighting SuperTrend");
+      }
+    }
+  }
+
+  // The base logic requires minimum score without trend/ADX
   if (!trendAligned && candidate.score < 5.5) return null;
   if (!hasTrendStrength && candidate.score < 5.5) return null;
 
-  const score = Math.min(
-    10,
-    candidate.score + (trendAligned ? 1.2 : -0.6) + (hasTrendStrength ? 0.3 : -0.5) + (snap?.volumeRatio && snap.volumeRatio > 1.2 ? 0.6 : 0),
-  );
+  const score = Math.min(10, candidate.score + scoreBonus);
 
   if (score < 5.8) return null;
 
@@ -161,13 +249,13 @@ function analyzeTechnicalStateless(candidate: CandidateSignal, candles: OHLCV[])
     instrumentKey: candidate.instrumentKey,
     symbol: candidate.symbol,
     direction,
-    setup: direction === "BUY" ? "LIVE_MOMENTUM_CONTINUATION" : "LIVE_BEAR_MOMENTUM",
+    setup: setupName,
     score: Number(score.toFixed(2)),
     entry: Number(entry.toFixed(2)),
     stopLoss: Number(stopLoss.toFixed(2)),
     target: Number(target.toFixed(2)),
     riskReward: 2,
-    reasoning: [...candidate.reasons, trendAligned ? "technical trend aligned" : "early momentum candidate"],
+    reasoning,
     qualifiedAt: Date.now(),
   };
 }

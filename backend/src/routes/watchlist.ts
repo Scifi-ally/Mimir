@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { logger } from "../lib/logger";
 import { db } from "../../db/src";
-import { overnightWatchlistTable, suggestionsTable } from "../../db/src";
+import { overnightWatchlistTable, suggestionsTable, customWatchlistTable } from "../../db/src";
 import { desc, asc, eq, inArray } from "drizzle-orm";
 import {
   getISTDateStr,
@@ -59,6 +59,57 @@ function emptyWatchlist(forDate = getISTDateStr()) {
     generatedAt: null,
   };
 }
+
+// GET /api/watchlist/custom — all custom tracked symbols
+router.get("/watchlist/custom", async (req, res) => {
+  try {
+    const items = await db
+      .select({ symbol: customWatchlistTable.symbol, createdAt: customWatchlistTable.createdAt })
+      .from(customWatchlistTable)
+      .orderBy(desc(customWatchlistTable.createdAt));
+    res.json({ data: items });
+  } catch (err) {
+    logApiError(req, err);
+    res.status(500).json({ error: "Failed to fetch custom watchlist" });
+  }
+});
+
+// POST /api/watchlist/custom — add a symbol
+router.post("/watchlist/custom", async (req, res) => {
+  try {
+    const symbol = req.body.symbol?.trim();
+    if (!symbol) {
+      return res.status(400).json({ error: "Symbol is required" });
+    }
+    
+    // Check if it already exists to avoid throwing on unique constraint
+    const existing = await db.select().from(customWatchlistTable).where(eq(customWatchlistTable.symbol, symbol)).limit(1);
+    if (existing.length === 0) {
+      await db.insert(customWatchlistTable).values({ symbol });
+    }
+    
+    return res.json({ success: true, symbol });
+  } catch (err) {
+    logApiError(req, err);
+    return res.status(500).json({ error: "Failed to add symbol" });
+  }
+});
+
+// DELETE /api/watchlist/custom/:symbol — remove a symbol
+router.delete("/watchlist/custom/:symbol", async (req, res) => {
+  try {
+    const symbol = req.params.symbol?.trim();
+    if (!symbol) {
+      return res.status(400).json({ error: "Symbol is required" });
+    }
+    
+    await db.delete(customWatchlistTable).where(eq(customWatchlistTable.symbol, symbol));
+    return res.json({ success: true });
+  } catch (err) {
+    logApiError(req, err);
+    return res.status(500).json({ error: "Failed to remove symbol" });
+  }
+});
 
 // GET /api/watchlist/tomorrow — candidates for the next trading session
 router.get("/watchlist/tomorrow", async (req, res) => {
@@ -231,10 +282,19 @@ async function enrichItemsWithRealPrices(
       const suggestionLabel = deriveSuggestionLabel(sug, mon);
       const signalGenerated = mon?.signalGenerated || false;
 
+      const changePct = (typeof price === "number" && typeof prevClose === "number" && prevClose > 0)
+        ? Number((((price - prevClose) / prevClose) * 100).toFixed(2))
+        : (typeof quote?.net_change === "number" && typeof price === "number" && price > 0)
+          ? Number(((quote.net_change / (price - quote.net_change)) * 100).toFixed(2))
+          : null;
+
       if (typeof price === "number" && Number.isFinite(price) && price > 0) {
         return {
           ...serialized,
+          price,
           ltp: price,
+          changePct,
+          change_pct: changePct,
           prevClose: typeof prevClose === "number" ? prevClose : null,
           indicatorStatus,
           suggestionLabel,
@@ -247,7 +307,10 @@ async function enrichItemsWithRealPrices(
       } else {
         return {
           ...serialized,
+          price: null,
           ltp: null,
+          changePct: null,
+          change_pct: null,
           prevClose: null,
           indicatorStatus,
           suggestionLabel,
@@ -279,7 +342,7 @@ async function buildResponse(
   items: (typeof overnightWatchlistTable.$inferSelect)[],
 ) {
   // Check cache first
-  const cacheKey = `${forDate}_${items.length}`;
+  const cacheKey = `${forDate}_${items.map((i) => i.symbol || i.id).sort().join(',')}`;
   const cached = enrichedCache.get(cacheKey);
   const now = Date.now();
   

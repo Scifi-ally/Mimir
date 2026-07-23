@@ -4,6 +4,7 @@ import { eq, and, lt, lte, or, inArray, isNull, sql } from "drizzle-orm";
 import { broadcast } from "../ws/websocket_server";
 import { createServerEvent } from "../ws/events";
 import { logger } from "../lib/logger";
+import { intelligenceBus } from "../intelligence/event_bus";
 import { todayStartUTC } from "../lib/ist-time";
 import { tickDistribution } from "../market_data/tick_distribution";
 
@@ -271,6 +272,7 @@ export async function checkSuggestionOutcomes(prices: PriceMap): Promise<void> {
           createServerEvent.suggestionUpdated({ id: promo.id, status: "ACTIVE" }),
           "suggestions",
         );
+        intelligenceBus.publish("suggestionTriggered", { suggestionId: promo.id, fillPrice: promo.fillPrice });
       }
       logger.info({ count: promotions.length }, "Promoted PENDING suggestions to ACTIVE (entry touched)");
     } catch (err) {

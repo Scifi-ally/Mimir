@@ -5,7 +5,7 @@ import { UpdateConfigBody } from "../schemas";
 const router = Router();
 const SECRET_MASK = "********";
 
-function serializeConfig(cfg: ReturnType<typeof getConfig>, reveal = false) {
+function serializeConfig(cfg: ReturnType<typeof getConfig>) {
   return {
     tradingCapital: cfg.tradingCapital,
     maxRiskPerTradePct: cfg.maxRiskPerTradePct,
@@ -31,24 +31,23 @@ function serializeConfig(cfg: ReturnType<typeof getConfig>, reveal = false) {
     // Read-only here; mode changes go through POST /api/trading/mode (arming flow)
     tradingMode: cfg.tradingMode,
     upstoxApiKey: cfg.upstoxApiKey,
-    upstoxApiSecret: reveal ? (cfg.upstoxApiSecret || "") : (cfg.upstoxApiSecret ? SECRET_MASK : ""),
+    upstoxApiSecret: cfg.upstoxApiSecret ? SECRET_MASK : "",
     upstoxDataApiKey: cfg.upstoxDataApiKey,
-    upstoxDataApiSecret: reveal ? (cfg.upstoxDataApiSecret || "") : (cfg.upstoxDataApiSecret ? SECRET_MASK : ""),
+    upstoxDataApiSecret: cfg.upstoxDataApiSecret ? SECRET_MASK : "",
     useDualApiKeys: cfg.useDualApiKeys,
     upstoxRedirectUri: cfg.upstoxRedirectUri,
     stopLossMode: cfg.stopLossMode,
     maxDeployedCapitalPct: cfg.maxDeployedCapitalPct,
     discordWebhookUrl: cfg.discordWebhookUrl,
-    telegramBotToken: reveal ? (cfg.telegramBotToken || "") : (cfg.telegramBotToken ? SECRET_MASK : ""),
+    telegramBotToken: cfg.telegramBotToken ? SECRET_MASK : "",
     telegramChatId: cfg.telegramChatId,
   };
 }
 
 // GET /api/config
-router.get("/config", (req, res) => {
+router.get("/config", (_req, res) => {
   const cfg = getConfig();
-  const reveal = req.query.reveal === "true" || req.query.reveal === "1";
-  res.json(serializeConfig(cfg, reveal));
+  res.json(serializeConfig(cfg));
 });
 
 // PATCH /api/config

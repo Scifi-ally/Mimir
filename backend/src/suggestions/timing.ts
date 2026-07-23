@@ -63,12 +63,24 @@ export function calculateSuggestionTiming(input: SuggestionTimingInput): Suggest
   const empirical = input.empiricalMedianMinutes;
 
   if (input.tradeType === "INTRADAY") {
-    const heuristic = Math.max(30, Math.min(240, targetAtrMultiple * 90));
+    // A momentum burst or gap-fill doesn't take 90 minutes per ATR; typical intraday moves happen in 45m-60m per ATR.
+    // We adjust the heuristic to 60m per ATR to give more variation instead of always hitting the 240m cap.
+    const heuristic = Math.max(30, Math.min(240, targetAtrMultiple * 60));
     // Blend 60/40 toward realized outcomes when we have them
     const blended = empirical != null && empirical > 0
       ? Math.max(30, Math.min(240, empirical * 0.6 + heuristic * 0.4))
       : heuristic;
-    const expectedHoldMinutes = Math.round(blended / 5) * 5;
+    let expectedHoldMinutes = Math.round(blended / 5) * 5;
+
+    // INTRADAY trades are force-closed at the end of the session. 
+    // The hold time cannot exceed the time remaining before the 3:15 PM cutoff.
+    const nowIST = getMinutesInIST(generatedAt);
+    const closeInMinutes = MARKET_CLOSE_MINUTES_IST - nowIST;
+    // Only cap if we are currently inside the active trading window (between Open and Close)
+    if (closeInMinutes > 5 && nowIST >= MARKET_OPEN_MINUTES_IST) {
+      expectedHoldMinutes = Math.min(expectedHoldMinutes, closeInMinutes - 5);
+    }
+
     const expiresAt = intradayExpiry(generatedAt, Math.round(expectedHoldMinutes * 1.5));
     return {
       expectedHoldMinutes,

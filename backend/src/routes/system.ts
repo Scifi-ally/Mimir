@@ -1,5 +1,8 @@
 import { Router } from "express";
 import crypto from "crypto";
+import { z } from "zod";
+import { db, suggestionsTable } from "../../db/src";
+import { inArray } from "drizzle-orm";
 import {
   isAuthenticated,
   isDirectlyAuthenticated,
@@ -38,11 +41,8 @@ import {
 import { getScannerState } from "../analysis/post_market_scanner";
 import { getMonitoringStatus, MONITORING_MAX_STOCKS } from "../analysis/intraday_monitor";
 import { HandleAuthCallbackQueryParams } from "../schemas";
-import { db } from "../../db/src";
-import { suggestionsTable } from "../../db/src";
-import { and, eq, gte, sql, inArray } from "drizzle-orm";
 import { logger } from "../lib/logger";
-import { todayStartUTC } from "../lib/ist-time";
+import { checkDbConnection, getDailyStats, getCalibrationReport } from "../services/system_stats";
 import { getWorkflowStatus, resetActiveWorkflow } from "../workflow/coordinator";
 import { checkAIHealth } from "../analysis/ai_client";
 import {
@@ -101,7 +101,7 @@ function getUnifiedScanStatus() {
 
 
 // GET /api/system/status
-router.get("/system/status", async (req, res) => {
+router.get("/system/status", async (_req, res) => {
   const state = getMarketState();
   const cfg = getConfig();
   const feed = getMarketFeedSnapshot();
@@ -110,59 +110,18 @@ router.get("/system/status", async (req, res) => {
   const aiHealth = await checkAIHealth();
 
   // Real DB connectivity check
-  let dbConnected: boolean;
-  let dailyLossToday = 0;
-  let signalsGenerated = 0;
-  let averageConfidence: number | null = null;
-  let averageRiskReward: number | null = null;
+  const dbConnected = await checkDbConnection();
+  const stats = await getDailyStats();
+  
+  const dailyLossToday = stats.dailyLossToday;
+  const signalsGenerated = stats.signalsGenerated;
+  const averageConfidence = stats.averageConfidence;
+  const averageRiskReward = stats.averageRiskReward;
+  
   const candidatesScanned = generation.eligibleCandidates || 0;
   const candidatesQualified = generation.generated;
   const candidatesRejected = Object.values(generation.rejectionCounts ?? {}).reduce((sum, value) => sum + value, 0);
   const avgScanDurationMs = generation.averageDurationMs ?? generation.lastDurationMs ?? 0;
-
-  try {
-    // Lightweight query to confirm DB is reachable
-    await db.execute(sql`SELECT 1`);
-    dbConnected = true;
-
-    const rows = await db
-      .select({ totalLoss: sql<number>`SUM(CAST(${suggestionsTable.pnlInr} AS NUMERIC))` })
-      .from(suggestionsTable)
-      .where(
-        and(
-          gte(suggestionsTable.generatedAt, todayStartUTC()),
-          eq(suggestionsTable.status, "STOP_HIT"),
-        ),
-      );
-
-    dailyLossToday = rows[0]?.totalLoss ?? 0;
-
-    // Query real count of signals generated today (Issue #8)
-    const todaySuggestions = await db
-      .select({ confidence: suggestionsTable.confidence, riskReward: suggestionsTable.riskReward })
-      .from(suggestionsTable)
-      .where(gte(suggestionsTable.generatedAt, todayStartUTC()));
-    signalsGenerated = todaySuggestions.length;
-
-    const confidenceValues = todaySuggestions
-      .map((row) => row.confidence)
-      .filter((value): value is number => value != null);
-
-    averageConfidence = confidenceValues.length > 0
-      ? confidenceValues.reduce((sum, value) => sum + value, 0) / confidenceValues.length
-      : null;
-
-    const riskRewardValues = todaySuggestions
-      .map((row) => (row.riskReward != null ? Number(row.riskReward) : null))
-      .filter((value): value is number => value != null && Number.isFinite(value) && value > 0);
-
-    averageRiskReward = riskRewardValues.length > 0
-      ? riskRewardValues.reduce((sum, value) => sum + value, 0) / riskRewardValues.length
-      : null;
-  } catch (err) {
-    req.log.error({ err }, "System status DB connectivity check failed");
-    dbConnected = false;
-  }
 
   const aiMode = aiHealth.ai_mode ?? (aiHealth.status === "healthy" ? "AI Mode" : "Fallback Mode");
   const rankingProvider = aiHealth.ranking_provider ?? (aiHealth.status === "healthy" ? "AI Ranking" : "Technical Ranking");
@@ -242,8 +201,12 @@ router.get("/system/session-state", (_req, res) => {
     scanMode: scanStatus.mode,
     scanMessage: scanStatus.lastScanMessage,
     scanProgress: {
-      current: scanStatus.generation.currentProgress ?? 0,
-      total: scanStatus.generation.eligibleCandidates ?? 0,
+      current: scanStatus.mode === "post-market-scan" ? ((scanStatus.postMarket as { currentProgress?: number }).currentProgress ?? 0) :
+               scanStatus.mode === "offhours-watchlist" ? ((scanStatus.offhours as { currentProgress?: number }).currentProgress ?? 0) :
+               ((scanStatus.generation as { currentProgress?: number }).currentProgress ?? 0),
+      total: scanStatus.mode === "post-market-scan" ? ((scanStatus.postMarket as { eligibleCandidates?: number }).eligibleCandidates ?? 0) :
+             scanStatus.mode === "offhours-watchlist" ? ((scanStatus.offhours as { eligibleCandidates?: number }).eligibleCandidates ?? 0) :
+             ((scanStatus.generation as { eligibleCandidates?: number }).eligibleCandidates ?? 0),
     },
     updatedAt: new Date().toISOString(),
   });
@@ -261,42 +224,7 @@ router.get("/system/calibration", async (req, res) => {
     const lookbackDays = Math.min(Number(req.query.days) || 90, 365);
     const since = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000);
 
-    const rows = await db
-      .select({
-        setupType: suggestionsTable.setupType,
-        direction: suggestionsTable.direction,
-        trades: sql<number>`count(*)::int`,
-        wins: sql<number>`count(*) filter (where ${suggestionsTable.status} in ('TARGET_1_HIT','TARGET_2_HIT'))::int`,
-        losses: sql<number>`count(*) filter (where ${suggestionsTable.status} = 'STOP_HIT')::int`,
-        expired: sql<number>`count(*) filter (where ${suggestionsTable.status} = 'EXPIRED')::int`,
-        avgConfidence: sql<number>`round(avg(${suggestionsTable.confidence}))::int`,
-        totalPnlInr: sql<number>`round(coalesce(sum(${suggestionsTable.pnlInr}), 0)::numeric, 2)::float`,
-      })
-      .from(suggestionsTable)
-      .where(
-        and(
-          gte(suggestionsTable.generatedAt, since),
-          sql`${suggestionsTable.status} in ('TARGET_1_HIT','TARGET_2_HIT','STOP_HIT','EXPIRED')`,
-        ),
-      )
-      .groupBy(suggestionsTable.setupType, suggestionsTable.direction)
-      .orderBy(sql`count(*) desc`);
-
-    const setups = rows.map((r) => {
-      const decided = r.wins + r.losses;
-      const realizedWinRate = decided > 0 ? Math.round((r.wins / decided) * 100) : null;
-      return {
-        ...r,
-        realizedWinRate,
-        // confidence is a 0-100 predicted-quality proxy; gap > ~15 means the
-        // engine systematically overrates this setup
-        calibrationGap:
-          realizedWinRate != null && r.avgConfidence != null
-            ? r.avgConfidence - realizedWinRate
-            : null,
-        expectancyPerTrade: decided > 0 ? Math.round((r.totalPnlInr / decided) * 100) / 100 : null,
-      };
-    });
+    const setups = await getCalibrationReport(since);
 
     res.json({
       lookbackDays,
@@ -314,17 +242,22 @@ router.get("/system/calibration", async (req, res) => {
 
 // GET /api/system/monitored-symbols
 router.get("/system/monitored-symbols", async (_req, res) => {
-  const stocks = await getMonitoredSubscriptionStocks();
-  const scanStatus = getUnifiedScanStatus();
-  res.json({
-    symbols: stocks.map((s) => s.symbol),
-    stocks,
-    manualSymbols: getManualSymbols(),
-    watchlistDate: getCachedWatchlistDate(),
-    scanRunning: scanStatus.running,
-    scanMode: scanStatus.mode,
-    maxStocks: MONITORING_MAX_STOCKS,
-  });
+  try {
+    const stocks = await getMonitoredSubscriptionStocks();
+    const scanStatus = getUnifiedScanStatus();
+    res.json({
+      symbols: stocks.map((s) => s.symbol),
+      stocks,
+      manualSymbols: getManualSymbols(),
+      watchlistDate: getCachedWatchlistDate(),
+      scanRunning: scanStatus.running,
+      scanMode: scanStatus.mode,
+      maxStocks: MONITORING_MAX_STOCKS,
+    });
+  } catch (err) {
+    logger.error({ err }, "Failed to get monitored symbols");
+    res.status(500).json({ error: "Failed to get monitored symbols" });
+  }
 });
 
 // POST /api/system/monitored-symbols — add symbol to manual monitored set
@@ -334,13 +267,18 @@ router.post("/system/monitored-symbols", async (req, res) => {
     res.status(400).json({ error: "symbol is required" });
     return;
   }
-  const added = await addManualMonitoredSymbol(symbol);
-  if (!added) {
-    res.status(404).json({ error: `Symbol ${symbol} not found in universe` });
-    return;
+  try {
+    const added = await addManualMonitoredSymbol(symbol);
+    if (!added) {
+      res.status(404).json({ error: `Symbol ${symbol} not found in universe` });
+      return;
+    }
+    const stocks = await getMonitoredSubscriptionStocks();
+    res.json({ success: true, symbol: added.symbol, stocks: stocks.map((s) => s.symbol) });
+  } catch (err) {
+    logger.error({ err }, "Failed to add monitored symbol");
+    res.status(500).json({ error: "Failed to add monitored symbol" });
   }
-  const stocks = await getMonitoredSubscriptionStocks();
-  res.json({ success: true, symbol: added.symbol, stocks: stocks.map((s) => s.symbol) });
 });
 
 // DELETE /api/system/monitored-symbols — remove symbol from manual monitored set
@@ -350,13 +288,18 @@ router.delete("/system/monitored-symbols", async (req, res) => {
     res.status(400).json({ error: "symbol is required" });
     return;
   }
-  const removed = await removeManualMonitoredSymbol(symbol);
-  if (!removed) {
-    res.status(404).json({ error: `Symbol ${symbol} not found in manual monitored list` });
-    return;
+  try {
+    const removed = await removeManualMonitoredSymbol(symbol);
+    if (!removed) {
+      res.status(404).json({ error: `Symbol ${symbol} not found in manual monitored list` });
+      return;
+    }
+    const stocks = await getMonitoredSubscriptionStocks();
+    res.json({ success: true, symbol, stocks: stocks.map((s) => s.symbol) });
+  } catch (err) {
+    logger.error({ err }, "Failed to remove monitored symbol");
+    res.status(500).json({ error: "Failed to remove monitored symbol" });
   }
-  const stocks = await getMonitoredSubscriptionStocks();
-  res.json({ success: true, symbol, stocks: stocks.map((s) => s.symbol) });
 });
 
 // GET /api/system/symbols
@@ -434,8 +377,9 @@ router.get("/system/auth-url", (req, res) => {
     return;
   }
 
+  const cookieName = `${AUTH_STATE_COOKIE}_${type}`;
   const state = crypto.randomBytes(24).toString("hex") + "_" + type;
-  res.cookie(AUTH_STATE_COOKIE, state, {
+  res.cookie(cookieName, state, {
     httpOnly: true,
     sameSite: "lax",
     secure: cfg.upstoxRedirectUri.startsWith("https://"),
@@ -446,11 +390,18 @@ router.get("/system/auth-url", (req, res) => {
   res.json({ url });
 });
 
+const HeadlessBeginSchema = z.object({ type: z.enum(["data", "trading"]).optional().default("trading") });
+
 // POST /api/system/headless/begin — reuses saved Upstox session; usually lands
 // straight on the PIN step (or completes outright) so phone + OTP are skipped.
 router.post("/system/headless/begin", async (req, res) => {
   const cfg = getConfig();
-  const type = req.body.type === "data" ? "data" : "trading";
+  const parsed = HeadlessBeginSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid payload", details: parsed.error.issues });
+    return;
+  }
+  const type = parsed.data.type;
 
   if (type === "trading" && (!cfg.upstoxApiKey || !cfg.upstoxApiSecret)) {
     res.status(400).json({ error: "Upstox API key and secret are required" });
@@ -468,11 +419,20 @@ router.post("/system/headless/begin", async (req, res) => {
   }
 });
 
+const HeadlessPhoneSchema = z.object({ 
+  type: z.enum(["data", "trading"]).optional().default("trading"), 
+  phone: z.string().min(1, "Phone number is required") 
+});
+
 // POST /api/system/headless/phone
 router.post("/system/headless/phone", async (req, res) => {
   const cfg = getConfig();
-  const type = req.body.type === "data" ? "data" : "trading";
-  const phone = req.body.phone;
+  const parsed = HeadlessPhoneSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid payload", details: parsed.error.issues });
+    return;
+  }
+  const { type, phone } = parsed.data;
 
   if (type === "trading" && (!cfg.upstoxApiKey || !cfg.upstoxApiSecret)) {
     res.status(400).json({ error: "Upstox API key and secret are required" });
@@ -491,20 +451,36 @@ router.post("/system/headless/phone", async (req, res) => {
   }
 });
 
+const HeadlessOtpSchema = z.object({ otp: z.string().min(1, "OTP is required") });
+
 // POST /api/system/headless/otp
 router.post("/system/headless/otp", async (req, res) => {
+  const parsed = HeadlessOtpSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid payload", details: parsed.error.issues });
+    return;
+  }
+  const { otp } = parsed.data;
   try {
-    const result = await upstoxHeadlessAuth.submitOTP(req.body.otp);
+    const result = await upstoxHeadlessAuth.submitOTP(otp);
     res.json(result);
   } catch (err: unknown) {
     res.status(500).json({ error: err instanceof Error ? err.message : "Failed to submit OTP" });
   }
 });
 
+const HeadlessPinSchema = z.object({ pin: z.string().min(1, "PIN is required") });
+
 // POST /api/system/headless/pin
 router.post("/system/headless/pin", async (req, res) => {
+  const parsed = HeadlessPinSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid payload", details: parsed.error.issues });
+    return;
+  }
+  const { pin } = parsed.data;
   try {
-    const result = await upstoxHeadlessAuth.submitPIN(req.body.pin);
+    const result = await upstoxHeadlessAuth.submitPIN(pin);
     res.json(result);
   } catch (err: unknown) {
     res.status(500).json({ error: err instanceof Error ? err.message : "Failed to submit PIN" });
@@ -513,7 +489,11 @@ router.post("/system/headless/pin", async (req, res) => {
 
 // POST /api/system/headless/cancel
 router.post("/system/headless/cancel", async (_req, res) => {
-  await upstoxHeadlessAuth.cleanup();
+  try {
+    await upstoxHeadlessAuth.cleanup();
+  } catch (err) {
+    logger.error({ err }, "Headless cleanup error (non-fatal)");
+  }
   res.json({ status: "cancelled" });
 });
 
@@ -658,14 +638,21 @@ router.post("/system/offhours-scan/stop", (_req, res) => {
   }
 });
 
+const OffhoursScanSchema = z.object({
+  test: z.boolean().optional(),
+  force: z.boolean().optional(),
+  forceSuggestions: z.boolean().optional(),
+  scanSessionId: z.string().optional()
+});
+
 // POST /api/system/offhours-scan
 router.post("/system/offhours-scan", async (req, res) => {
-  const testMode =
-    req.query.test === "true" || Boolean(req.body && req.body.test === true);
-  const forceReset =
-    req.query.force === "true" || Boolean(req.body && req.body.force === true);
-  const forceSuggestions =
-    req.query.forceSuggestions === "true" || Boolean(req.body && req.body.forceSuggestions === true);
+  const bodyParsed = OffhoursScanSchema.safeParse(req.body || {});
+  const body = bodyParsed.success ? bodyParsed.data : {};
+  
+  const testMode = req.query.test === "true" || Boolean(body.test);
+  const forceReset = req.query.force === "true" || Boolean(body.force);
+  const forceSuggestions = req.query.forceSuggestions === "true" || Boolean(body.forceSuggestions);
 
   if (forceSuggestions) {
     if (!getAccessToken()) {
@@ -701,7 +688,7 @@ router.post("/system/offhours-scan", async (req, res) => {
 
     const scanSessionId =
       (req.query.scanSessionId as string) ||
-      (req.body?.scanSessionId as string) ||
+      body.scanSessionId ||
       crypto.randomUUID();
 
     if (forceReset) {
@@ -737,7 +724,7 @@ router.post("/system/offhours-scan", async (req, res) => {
 
   const scanSessionId =
     (req.query.scanSessionId as string) ||
-    (req.body?.scanSessionId as string) ||
+    body.scanSessionId ||
     crypto.randomUUID();
 
   void runManualScannerPipeline({ testMode, forceReset, scanSessionId });
@@ -848,7 +835,10 @@ router.get("/system/auth-callback", async (req, res) => {
     return;
   }
 
-  const expectedState = req.cookies?.[AUTH_STATE_COOKIE];
+  const type = parsed.data.state?.endsWith("_data") ? "data" : "trading";
+  const cookieName = `${AUTH_STATE_COOKIE}_${type}`;
+  const expectedState = req.cookies?.[cookieName] || req.cookies?.[AUTH_STATE_COOKIE];
+  res.clearCookie(cookieName);
   res.clearCookie(AUTH_STATE_COOKIE);
   if (!expectedState || parsed.data.state !== expectedState) {
     req.log.error({ expectedState, receivedState: parsed.data.state }, "Auth state mismatch or missing cookie (CSRF validation failed)");
@@ -860,8 +850,6 @@ router.get("/system/auth-callback", async (req, res) => {
     ));
     return;
   }
-
-  const type = parsed.data.state?.endsWith("_data") ? "data" : "trading";
 
   try {
     await exchangeCodeForToken(parsed.data.code, type);
@@ -907,8 +895,11 @@ if (process.env.NODE_ENV !== "production") {
     res.json({ count: getConnectedClients() });
   });
 
+  const DebugRegimeSchema = z.object({ regime: z.string().optional() });
+
   router.post("/system/debug/set-regime", (req, res) => {
-    const { regime } = req.body;
+    const parsed = DebugRegimeSchema.safeParse(req.body);
+    const regime = parsed.success ? parsed.data.regime : undefined;
     // For testing dynamic island regime changes, we can broadcast a mock system_alert
     // or we can just trigger an orchestrator update.
     // The instructions say: POST /api/system/debug/set-regime -> DynamicIsland expands showing old regime -> new regime
@@ -924,8 +915,11 @@ if (process.env.NODE_ENV !== "production") {
     res.json({ success: true, regime });
   });
 
+  const DebugEventSchema = z.object({ event: z.string().optional() });
+
   router.post("/system/debug/trigger-event", (req, res) => {
-    const { event } = req.body;
+    const parsed = DebugEventSchema.safeParse(req.body);
+    const event = parsed.success ? parsed.data.event : undefined;
     if (event === "market:open") {
       broadcast({
         event: "system_alert",

@@ -199,14 +199,22 @@ export async function batchInference(
   if (aiCircuitBreaker.canRequest()) {
     try {
       const divergence = await getFiiDiiDivergence();
-      const enrichedCandidates = candidates.map((c) => ({
-        ...c,
-        features: {
-          ...(c.features || {}),
-          macro_divergence_penalty: divergence.penaltyOrBoost,
-          ofi_ratio: computeOFI(c.symbol).ofiRatio
-        }
-      }));
+      const enrichedCandidates = candidates.map((c) => {
+        // Explode OHLCV into target and covariates for the Chronos T5 python backend
+        const target = c.ohlcv.map((row) => row[3]); // Close price
+        const past_covariates = c.ohlcv.map((row) => [row[0], row[1], row[2], row[4]]); // Open, High, Low, Volume
+        
+        return {
+          ...c,
+          target,
+          past_covariates,
+          features: {
+            ...(c.features || {}),
+            macro_divergence_penalty: divergence.penaltyOrBoost,
+            ofi_ratio: computeOFI(c.symbol).ofiRatio
+          }
+        };
+      });
 
       const url = `${getAiServiceUrl()}/inference/batch`;
       // Scale the timeout with the batch size. A flat 2s budget was the real
@@ -602,5 +610,39 @@ export async function getRLStatus(): Promise<RLStatusResponse | null> {
   } catch (err) {
     logger.error({ err }, "Failed to get RL status");
     return null;
+  }
+}
+
+export async function getConfluenceScore(
+  regime: string,
+  features: Record<string, number>
+): Promise<{ score: number, fallback: boolean }> {
+  if (!process.env.AI_SERVICE_URL) return { score: 50.0, fallback: true };
+  try {
+    const url = `${getAiServiceUrl()}/confluence_score`;
+    const response = await axios.post(url, { regime, features }, { timeout: 3000 });
+    if (response.status === 200 && response.data) {
+      return {
+        score: response.data.score,
+        fallback: response.data.fallback || false
+      };
+    }
+  } catch (err) {
+    logger.error({ err: (err as Error).message }, "Failed to get confluence score");
+  }
+  return { score: 50.0, fallback: true };
+}
+export async function triggerConfluenceTraining(): Promise<boolean> {
+  if (!process.env.AI_SERVICE_URL) return false;
+  try {
+    const response = await axios.post(
+      `${getAiServiceUrl()}/api/v1/confluence_train`,
+      {},
+      { timeout: 5000 }
+    );
+    return response.status === 200;
+  } catch (err) {
+    logger.error({ err }, "Failed to trigger confluence training");
+    return false;
   }
 }

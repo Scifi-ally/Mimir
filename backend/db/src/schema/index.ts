@@ -20,3 +20,4 @@ export * from "./alpha_health";
 export * from "./institutional_flows";
 export * from "./live_orders";
 export * from "./rejected_candidates";
+export * from "./custom_watchlist";

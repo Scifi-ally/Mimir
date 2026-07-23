@@ -27,7 +27,7 @@
  *      npx tsx backend/scripts/research_meanrev.ts --sweep    (grid search, TRAIN ONLY)
  */
 import { db, candlesTable, pool } from "../db/src";
-import { and, eq, asc } from "drizzle-orm";
+import { eq, asc } from "drizzle-orm";
 
 const COST_RATE_PER_SIDE = 0.0005; // keep in sync with backtest_setups.ts
 const WARMUP_BARS = 41; // longest EMA (40) + 1; signals never earlier

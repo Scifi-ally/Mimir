@@ -59,7 +59,8 @@ export interface RiskAssessment {
 
 import { db } from "../../db/src";
 import { suggestionsTable } from "../../db/src/schema/suggestions";
-import { and, gte, sql, inArray } from "drizzle-orm";
+import { paperPositionsTable } from "../../db/src/schema/paper_trading";
+import { and, gte, eq } from "drizzle-orm";
 import { todayStartUTC } from "../lib/ist-time";
 import { STOCK_SECTOR_MAP } from "./stock_scanner";
 
@@ -104,38 +105,57 @@ export function getOpenPositionCount(): number {
  */
 export async function syncRiskEngineState(): Promise<void> {
   try {
-    const active = await db
-      .select()
-      .from(suggestionsTable)
-      .where(inArray(suggestionsTable.status, ["ACTIVE", "PENDING"]));
+    // We now use paperPositionsTable as the ground-truth for open positions.
+    // If the paper engine rejects a trade, it never hits the portfolio.
+    const activePositions = await db
+      .select({
+        symbol: paperPositionsTable.symbol,
+        direction: paperPositionsTable.direction,
+        entryPrice: paperPositionsTable.avgEntryPrice,
+        quantity: paperPositionsTable.quantity,
+        suggestionId: paperPositionsTable.suggestionId
+      })
+      .from(paperPositionsTable)
+      .where(eq(paperPositionsTable.status, "OPEN"));
 
-    const mapped: OpenPosition[] = active.map(p => ({
-      symbol: p.symbol,
-      sector: STOCK_SECTOR_MAP[p.symbol] ?? "Other",
-      direction: p.direction as "BUY" | "SELL",
-      entryPrice: parseFloat(p.entryPrice),
-      quantity: p.quantity,
-      maxRiskInr: p.maxRiskInr ? parseFloat(p.maxRiskInr) : 0,
-    }));
+    // We still need maxRiskInr and setup from suggestionsTable for advanced limits
+    const mapped: OpenPosition[] = [];
+    for (const p of activePositions) {
+      let maxRisk = 0;
+      if (p.suggestionId) {
+        const [sug] = await db.select().from(suggestionsTable).where(eq(suggestionsTable.id, p.suggestionId)).limit(1);
+        if (sug && sug.maxRiskInr) {
+          maxRisk = parseFloat(sug.maxRiskInr);
+        }
+      }
+      mapped.push({
+        symbol: p.symbol,
+        sector: STOCK_SECTOR_MAP[p.symbol] ?? "Other",
+        direction: p.direction as "BUY" | "SELL",
+        entryPrice: parseFloat(p.entryPrice),
+        quantity: p.quantity,
+        maxRiskInr: maxRisk,
+      });
+    }
 
     updateOpenPositions(mapped);
 
     const todayStart = todayStartUTC();
     const closedToday = await db
       .select()
-      .from(suggestionsTable)
+      .from(paperPositionsTable)
       .where(
         and(
-          gte(suggestionsTable.closedAt, todayStart),
-          sql`status != 'ACTIVE'`
+          gte(paperPositionsTable.closedAt, todayStart),
+          eq(paperPositionsTable.status, 'CLOSED')
         )
       );
 
     let pnl = 0;
     let lossCount = 0;
     for (const c of closedToday) {
-      pnl += c.pnlInr ? parseFloat(c.pnlInr) : 0;
-      if (c.status === "STOP_HIT") {
+      pnl += parseFloat(c.realizedPnl);
+      if (parseFloat(c.realizedPnl) < 0) {
         lossCount++;
       }
     }

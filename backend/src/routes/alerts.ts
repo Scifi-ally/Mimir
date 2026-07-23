@@ -8,7 +8,7 @@ router.get("/alerts/history", async (_req, res) => {
     const alerts = await getAlertHistory();
     const mappedAlerts = alerts.map((a) => ({
       ...a,
-      createdAt: a.createdAt || a.timestamp
+      createdAt: a.timestamp
     }));
     res.json(mappedAlerts);
   } catch (err) {

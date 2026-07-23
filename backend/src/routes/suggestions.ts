@@ -340,6 +340,7 @@ router.post("/suggestions/:id/accept", async (req, res) => {
       )
       .where(and(eq(suggestionsTable.id, id), eq(suggestionsTable.status, "PENDING")));
     res.json({ success: true });
+    broadcast(createServerEvent.suggestionUpdated({ id, status: "ACTIVE" }), "suggestions");
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (err: any) {
     logApiError(req, err);
@@ -351,11 +352,30 @@ router.post("/suggestions/:id/accept", async (req, res) => {
 router.post("/suggestions/:id/reject", async (req, res) => {
   try {
     const id = req.params.id;
+    const [suggestion] = await db
+      .select()
+      .from(suggestionsTable)
+      .where(eq(suggestionsTable.id, id))
+      .limit(1);
+
+    if (!suggestion) {
+      res.status(404).json({ error: "Suggestion not found" });
+      return;
+    }
+
+    if (suggestion.status !== "ACTIVE" && suggestion.status !== "PENDING") {
+      res
+        .status(409)
+        .json({ error: `Cannot reject suggestion with status ${suggestion.status}` });
+      return;
+    }
+
     await db
       .update(suggestionsTable)
       .set({ status: "REJECTED", closedAt: new Date() })
-      .where(eq(suggestionsTable.id, id));
+      .where(and(eq(suggestionsTable.id, id), inArray(suggestionsTable.status, ["ACTIVE", "PENDING"])));
     res.json({ success: true });
+    broadcast(createServerEvent.suggestionUpdated({ id, status: "REJECTED" }), "suggestions");
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (err: any) {
     logApiError(req, err);
@@ -394,6 +414,7 @@ router.post("/suggestions/:id/close", async (req, res) => {
       .set({ status: nextStatus, closedAt: new Date() })
       .where(and(eq(suggestionsTable.id, id), eq(suggestionsTable.status, suggestion.status)));
     res.json({ success: true, status: nextStatus });
+    broadcast(createServerEvent.suggestionUpdated({ id, status: nextStatus }), "suggestions");
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (err: any) {
     logApiError(req, err);
@@ -410,12 +431,32 @@ router.post("/suggestions/:id/modify-stop", async (req, res) => {
       res.status(400).json({ error: "Invalid stopLoss value" });
       return;
     }
+
+    const [suggestion] = await db
+      .select()
+      .from(suggestionsTable)
+      .where(eq(suggestionsTable.id, id))
+      .limit(1);
+
+    if (!suggestion) {
+      res.status(404).json({ error: "Suggestion not found" });
+      return;
+    }
+
+    if (suggestion.status !== "ACTIVE" && suggestion.status !== "PENDING") {
+      res
+        .status(409)
+        .json({ error: `Cannot modify suggestion with status ${suggestion.status}` });
+      return;
+    }
+
     const { stopLoss } = parsed.data;
     await db
       .update(suggestionsTable)
       .set({ stopLoss: stopLoss.toFixed(2) })
-      .where(eq(suggestionsTable.id, id));
+      .where(and(eq(suggestionsTable.id, id), inArray(suggestionsTable.status, ["ACTIVE", "PENDING"])));
     res.json({ success: true });
+    broadcast(createServerEvent.suggestionUpdated({ id, status: suggestion.status }), "suggestions");
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (err: any) {
     logApiError(req, err);
@@ -432,12 +473,32 @@ router.post("/suggestions/:id/modify-target", async (req, res) => {
       res.status(400).json({ error: "Invalid target1 value" });
       return;
     }
+
+    const [suggestion] = await db
+      .select()
+      .from(suggestionsTable)
+      .where(eq(suggestionsTable.id, id))
+      .limit(1);
+
+    if (!suggestion) {
+      res.status(404).json({ error: "Suggestion not found" });
+      return;
+    }
+
+    if (suggestion.status !== "ACTIVE" && suggestion.status !== "PENDING") {
+      res
+        .status(409)
+        .json({ error: `Cannot modify suggestion with status ${suggestion.status}` });
+      return;
+    }
+
     const { target1 } = parsed.data;
     await db
       .update(suggestionsTable)
       .set({ target1: target1.toFixed(2) })
-      .where(eq(suggestionsTable.id, id));
+      .where(and(eq(suggestionsTable.id, id), inArray(suggestionsTable.status, ["ACTIVE", "PENDING"])));
     res.json({ success: true });
+    broadcast(createServerEvent.suggestionUpdated({ id, status: suggestion.status }), "suggestions");
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (err: any) {
     logApiError(req, err);

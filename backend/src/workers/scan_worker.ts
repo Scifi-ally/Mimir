@@ -11,6 +11,7 @@ import {
   detectMacdCrossover,
   detectBollingerSqueezeBreakout,
   detectLiquiditySweep,
+  detectMomentumBreakout,
 } from "../analysis/technical";
 import { detectMeanReversionLong, detectMeanReversionShort } from "../analysis/mean_reversion_scanner";
 import { detectRangeLong, detectRangeShort } from "../analysis/range_scanner";
@@ -42,6 +43,7 @@ parentPort.on("message", (msg: { id: string; payload: any }) => {
       detectMacdCrossover(dailyCandles, snap),
       detectBollingerSqueezeBreakout(dailyCandles, snap),
       detectLiquiditySweep(dailyCandles, snap),
+      detectMomentumBreakout(dailyCandles, snap),
       detectMeanReversionLong(dailyCandles, snap),
       detectMeanReversionShort(dailyCandles, snap),
       detectRangeLong(dailyCandles, snap),

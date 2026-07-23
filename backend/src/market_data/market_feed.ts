@@ -8,28 +8,28 @@
  * HIGH FIX (Issue #9): Added retry logic with exponential backoff and trading
  * calendar awareness to handle transient failures and market holidays properly.
  */
-import axios from "axios";
-import { getAccessToken, invalidateTokenByValue } from "../upstox/auth";
+import yahooFinance from "yahoo-finance2";
 import { updateMarketState } from "./market_state";
 import { recordVixSample } from "../analysis/market_internals";
 import { detectRegime } from "../analysis/regime_detector";
 import { logger } from "../lib/logger";
 import { getISTDateStr } from "../lib/ist-time";
-import { createUpstoxClient } from "../lib/upstox-client";
 
-const NIFTY_KEY = "NSE_INDEX|Nifty 50";
-const VIX_KEY = "NSE_INDEX|India VIX";
-const marketFeedClient = createUpstoxClient({ cacheTimeMs: 1_000 });
+const NIFTY_KEY = "^NSEI";
+const VIX_KEY = "^INDIAVIX";
 
 // HIGH FIX (Issue #9): Track retry attempts and implement exponential backoff
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 2000;
 
-function normalizeInstrumentKey(value: string): string {
-  return value.trim().toUpperCase().replace(":", "|");
+
+
+
+interface QuoteResult {
+  regularMarketPreviousClose?: number;
+  regularMarketPrice?: number;
 }
-
-
+type QuoteFn = (symbol: string) => Promise<QuoteResult>;
 
 export interface MarketFeedSnapshot {
   status:
@@ -69,18 +69,6 @@ let prevCloseFetchedDate: string | null = null;
  * Called once per day at market open (09:15 IST).
  */
 export async function initMarketFeed(): Promise<void> {
-  const token = getAccessToken("data");
-  if (!token) {
-    feedSnapshot = {
-      ...feedSnapshot,
-      status: "unauthenticated",
-      authenticated: false,
-      note: "Upstox authorization required",
-    };
-    logger.warn("Market feed init skipped — not authenticated");
-    return;
-  }
-
   feedSnapshot = {
     ...feedSnapshot,
     status: "loading",
@@ -103,43 +91,13 @@ export async function initMarketFeed(): Promise<void> {
   }
 
   try {
-    const now = new Date();
-    const toDate = new Date(now);
-    const fromDate = new Date(now);
-    fromDate.setUTCDate(fromDate.getUTCDate() - 7); // look back 7 days to skip holidays
-    const toStr = toDate.toISOString().split("T")[0]!;
-    const fromStr = fromDate.toISOString().split("T")[0]!;
-
-    const url = `https://api.upstox.com/v2/historical-candle/${encodeURIComponent(NIFTY_KEY)}/day/${toStr}/${fromStr}`;
-    const resp = await axios.get(url, {
-      headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
-      timeout: 10_000,
-    });
-
-    // Candles come newest-first from Upstox. During market hours candles[0]
-    // is today's in-progress candle; pre-open there is NO today candle, so
-    // blindly taking candles[1] returns the close from two days ago. Pick the
-    // newest candle whose IST date is before today instead.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const candles: any[][] = resp.data?.data?.candles ?? [];
-    if (candles.length < 1) {
-      logger.warn(
-        { candles: candles.length },
-        "Not enough Nifty candles for prev close",
-      );
-      return;
+    const quote = await ((yahooFinance.quote as unknown) as QuoteFn)(NIFTY_KEY);
+    niftyPrevClose = quote.regularMarketPreviousClose ?? null;
+    
+    if (niftyPrevClose === null) {
+       throw new Error("Missing regularMarketPreviousClose");
     }
 
-    const prevCandle = candles.find((c: unknown[]) => {
-      const ts = c?.[0];
-      return typeof ts === "string" && getISTDateStr(new Date(ts)) < todayIST;
-    });
-    if (!prevCandle || typeof prevCandle[4] !== "number") {
-      logger.warn({ candles: candles.length }, "No completed prior-day Nifty candle found");
-      return;
-    }
-
-    niftyPrevClose = prevCandle[4] as number; // [4] = close
     prevCloseFetchedDate = todayIST;
     feedSnapshot = {
       ...feedSnapshot,
@@ -165,16 +123,10 @@ export async function initMarketFeed(): Promise<void> {
  * HIGH FIX (Issue #9): Added retry logic with exponential backoff for transient failures
  */
 export async function updateMarketFeed(): Promise<void> {
-  const token = getAccessToken("data");
-  if (!token) {
-    feedSnapshot = {
-      ...feedSnapshot,
-      status: "unauthenticated",
-      authenticated: false,
-      note: "Upstox authorization required",
-    };
-    return;
-  }
+  feedSnapshot = {
+    ...feedSnapshot,
+    authenticated: true,
+  };
 
   // Lazily initialise prev close if not done yet
   if (niftyPrevClose === null) {
@@ -185,14 +137,14 @@ export async function updateMarketFeed(): Promise<void> {
   let lastError: unknown = null;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
-      const prices = await marketFeedClient.fetchLTPForInstruments(
-        [NIFTY_KEY, VIX_KEY],
-        token,
-      );
+      const niftyQuote = await ((yahooFinance.quote as unknown) as QuoteFn)(NIFTY_KEY).catch(() => null);
+      const vixQuote = await ((yahooFinance.quote as unknown) as QuoteFn)(VIX_KEY).catch(() => null);
 
-      const niftyLTP = prices[normalizeInstrumentKey(NIFTY_KEY)] ?? null;
-      const vixLTP = prices[normalizeInstrumentKey(VIX_KEY)] ?? null;
-      const availableKeys = Object.keys(prices);
+      const niftyLTP = niftyQuote?.regularMarketPrice ?? null;
+      const vixLTP = vixQuote?.regularMarketPrice ?? null;
+      const availableKeys = [];
+      if (niftyLTP !== null) availableKeys.push(NIFTY_KEY);
+      if (vixLTP !== null) availableKeys.push(VIX_KEY);
 
       if (niftyLTP === null && vixLTP === null) {
         feedSnapshot = {
@@ -204,7 +156,7 @@ export async function updateMarketFeed(): Promise<void> {
         };
         logger.warn(
           { availableKeys, attempt },
-          "Market feed: no Nifty/VIX data returned from Upstox",
+          "Market feed: no Nifty/VIX data returned from yfinance",
         );
         
         // Retry if no data returned
@@ -242,7 +194,7 @@ export async function updateMarketFeed(): Promise<void> {
         niftyChangePct: stateUpdate.niftyChangePct ?? null,
         note:
           niftyLTP !== null || vixLTP !== null
-            ? "Upstox quotes updated"
+            ? "Market feed quotes updated"
             : "Waiting for quote data",
       };
 
@@ -261,25 +213,8 @@ export async function updateMarketFeed(): Promise<void> {
       );
       return;
       
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } catch (err: any) {
+    } catch (err: unknown) {
       lastError = err;
-      const status = err?.response?.status;
-      
-      if (status === 401 || status === 403) {
-        // getAccessToken("data") may have fallen back to the trading token —
-        // invalidate whichever token was actually used, not a guessed type
-        await invalidateTokenByValue(token, `market_feed_http_${status}`);
-        feedSnapshot = {
-          ...feedSnapshot,
-          status: "unauthenticated",
-          authenticated: false,
-          fetchedAt: new Date().toISOString(),
-          note: "Upstox session expired. Re-authorize.",
-        };
-        logger.warn({ status }, "Market feed authentication failed");
-        return;
-      }
 
       // Retry on transient errors
       if (attempt < MAX_RETRIES) {
@@ -303,22 +238,7 @@ export async function updateMarketFeed(): Promise<void> {
     note: `Market feed poll failed after ${MAX_RETRIES} retries`,
   };
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const errData = lastError as any;
-  if (errData && (errData.name === "AxiosError" || errData.isAxiosError)) {
-    logger.error(
-      {
-        status: errData.response?.status,
-        message: errData.message,
-        code: errData.code,
-        url: errData.config?.url,
-        retries: MAX_RETRIES
-      },
-      "Market feed poll failed after all retries (AxiosError)",
-    );
-  } else {
-    logger.error({ err: lastError instanceof Error ? lastError.message : lastError, retries: MAX_RETRIES }, "Market feed poll failed after all retries");
-  }
+  logger.error({ err: lastError instanceof Error ? lastError : new Error(String(lastError)), retries: MAX_RETRIES }, "Market feed poll failed after all retries");
 }
 
 /** Reset the prev-close cache at midnight so it's re-fetched next morning. */
@@ -338,17 +258,8 @@ export function resetMarketFeedCache(): void {
 }
 
 export function getMarketFeedSnapshot(): MarketFeedSnapshot {
-  const tokenPresent = getAccessToken("data") !== null;
   return {
     ...feedSnapshot,
-    authenticated: feedSnapshot.authenticated || tokenPresent,
-    status:
-      tokenPresent && feedSnapshot.status === "idle"
-        ? "loading"
-        : feedSnapshot.status,
-    note:
-      tokenPresent && feedSnapshot.status === "idle"
-        ? "Token available. Waiting for first quote poll."
-        : feedSnapshot.note,
+    authenticated: true,
   };
 }
