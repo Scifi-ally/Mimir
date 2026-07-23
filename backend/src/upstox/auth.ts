@@ -110,27 +110,18 @@ export function getDirectTokenExpiryInfo(type: "trading" | "data" = "trading"): 
 
 export function getAccessToken(type: "trading" | "data" = "trading"): string | null {
   const direct = getDirectToken(type);
-  if (direct) return direct.access_token;
-
-  // Seamless two-way fallback: if requested token is not available/expired, check the other key
-  const fallbackType = type === "trading" ? "data" : "trading";
-  const fallback = getDirectToken(fallbackType);
-  if (fallback) {
-    return fallback.access_token;
-  }
-  return null;
+  return direct?.access_token ?? null;
 }
 
 export function isAuthenticated(type?: "trading" | "data"): boolean {
   if (type) {
     return getAccessToken(type) !== null;
   }
-  // If no type specified, true if either token is valid
-  return getAccessToken("trading") !== null || getAccessToken("data") !== null;
+  return getAccessToken("trading") !== null && getAccessToken("data") !== null;
 }
 
 export function getTokenExpiryInfo(type: "trading" | "data" = "trading"): number | null {
-  const token = getDirectToken(type) ?? getDirectToken(type === "trading" ? "data" : "trading");
+  const token = getDirectToken(type);
   if (!token) return null;
   return token.obtained_at + token.expires_in * 1000;
 }

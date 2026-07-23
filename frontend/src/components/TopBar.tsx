@@ -203,7 +203,7 @@ export const TopBar = memo(function TopBar({
           </div>
         </div>
 
-        <div className="flex min-w-0 shrink items-center justify-end gap-1.5 sm:gap-2 overflow-x-auto [&::-webkit-scrollbar]:hidden pl-2 pb-1 -mb-1">
+        <div className="flex min-w-0 max-w-[65vw] shrink items-center justify-end gap-1.5 sm:gap-2 overflow-x-auto [&::-webkit-scrollbar]:hidden pl-2 pb-1 -mb-1">
           <div className="flex shrink-0 items-center gap-1">
             <motion.div whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} transition={SPRING_SNAPPY}>
             <Button
@@ -240,13 +240,12 @@ export const TopBar = memo(function TopBar({
             <motion.div whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} transition={SPRING_SNAPPY}>
             <Button
               variant="ghost"
-              size="sm"
+              size="icon"
               onClick={onOpenSuggestions}
-              className="apple-hover h-7 flex items-center gap-1.5 text-[10px] px-3 font-medium bg-foreground/[0.03] text-foreground/70 hover:bg-foreground/[0.08] hover:text-foreground transition-all duration-200 rounded-lg"
+              className="apple-hover h-7 w-7 flex items-center justify-center p-0 bg-foreground/[0.03] text-foreground/70 hover:bg-foreground/[0.08] hover:text-foreground transition-all duration-200 rounded-lg"
               title="View Signals Generated"
             >
-              <BarChart2 strokeWidth={3} className="h-3.5 w-3.5 sm:mr-0.5" />
-              <span className="hidden sm:inline">Signals</span>
+              <BarChart2 strokeWidth={3} className="h-3.5 w-3.5" />
             </Button>
             </motion.div>
 

@@ -269,19 +269,19 @@ export const WatchlistStack = memo(function WatchlistStack({ items, customItems,
             <button
               type="button"
               onClick={() => setCommandPaletteOpen(true, "", "CUSTOM")}
-              className="shrink-0 ml-2 px-3 py-1 rounded-md border-2 border-foreground bg-transparent text-foreground font-bold uppercase tracking-wider text-[10px] transition-colors duration-200 hover:bg-foreground hover:text-background"
+              className="shrink-0 ml-1 sm:ml-2 px-2 sm:px-3 py-1 rounded-md border-2 border-foreground bg-transparent text-foreground font-bold uppercase tracking-wider text-[9px] sm:text-[10px] transition-colors duration-200 hover:bg-foreground hover:text-background"
             >
               Add Symbol
             </button>
           </div>
         ) : (
           /* The empty list is exactly when Add Symbol matters most — keep it. */
-          <div className="flex items-center justify-end gap-4 w-full text-[10px] font-normal uppercase tracking-[0.08em] text-muted-foreground/60">
-            <span>0 Symbols</span>
+          <div className="flex items-center justify-end gap-2 sm:gap-4 w-full text-[10px] font-normal uppercase tracking-[0.08em] text-muted-foreground/60 shrink overflow-hidden">
+            <span className="hidden sm:inline">0 Symbols</span>
             <button
               type="button"
               onClick={() => setCommandPaletteOpen(true, "", "CUSTOM")}
-              className="shrink-0 px-3 py-1 rounded-md border-2 border-foreground bg-transparent text-foreground font-bold uppercase tracking-wider text-[10px] transition-colors duration-200 hover:bg-foreground hover:text-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60"
+              className="shrink-0 px-2 sm:px-3 py-1 rounded-md border-2 border-foreground bg-transparent text-foreground font-bold uppercase tracking-wider text-[9px] sm:text-[10px] transition-colors duration-200 hover:bg-foreground hover:text-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60"
             >
               Add Symbol
             </button>
@@ -290,8 +290,10 @@ export const WatchlistStack = memo(function WatchlistStack({ items, customItems,
       </CardHeader>
 
       {filteredRows.length === 0 ? (
-        <div className="flex-1 w-full h-full min-h-[180px] flex flex-col items-center justify-center text-center p-6 gap-3">
-          <p className="text-xs font-normal text-muted-foreground">No scan yet — run one or pick from Screener.</p>
+        <div className="flex-1 w-full h-full min-h-[180px] flex flex-col items-center justify-center text-center px-4 py-8 gap-4">
+          <p className="text-xs sm:text-sm font-normal text-muted-foreground max-w-[80%] mx-auto leading-relaxed">
+            No scan yet. Run the scanner or select from Screener.
+          </p>
           <button
             type="button"
             onClick={() => setCommandPaletteOpen(true, "", "CUSTOM")}

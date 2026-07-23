@@ -130,7 +130,7 @@ class UpstoxHeadlessAuth {
       } catch { /* ignore */ }
       
       if (errorMsg) {
-        throw new Error(errorMsg); // Do not cleanup() on validation error
+        throw new Error(errorMsg, { cause: e }); // Do not cleanup() on validation error
       }
 
       logger.error({ err: e }, "Failed to find phone input or click Get OTP");
@@ -190,7 +190,7 @@ class UpstoxHeadlessAuth {
     } catch (e) {
       logger.error({ err: e }, "Failed to submit OTP");
       if (e instanceof Error && e.message.startsWith("VALIDATION:")) {
-        throw new Error(e.message.replace("VALIDATION:", ""));
+        throw new Error(e.message.replace("VALIDATION:", ""), { cause: e });
       }
       throw new Error("Failed to submit OTP", { cause: e });
     }
@@ -268,7 +268,7 @@ class UpstoxHeadlessAuth {
     } catch (e) {
       logger.error({ err: e }, "Failed to submit PIN");
       if (e instanceof Error && e.message.startsWith("VALIDATION:")) {
-        throw new Error(e.message.replace("VALIDATION:", ""));
+        throw new Error(e.message.replace("VALIDATION:", ""), { cause: e });
       }
       throw new Error("Failed to complete login", { cause: e });
     }
