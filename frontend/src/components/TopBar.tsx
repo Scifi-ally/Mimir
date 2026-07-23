@@ -142,7 +142,9 @@ export const TopBar = memo(function TopBar({
       return;
     }
 
-    document.documentElement.classList.add("is-transitioning");
+    document.documentElement.style.setProperty("--theme-origin-x", `${x}px`);
+    document.documentElement.style.setProperty("--theme-origin-y", `${y}px`);
+    document.documentElement.classList.add("theme-transitioning");
 
     const transition = document.startViewTransition(() => {
       flushSync(() => {
@@ -152,29 +154,8 @@ export const TopBar = memo(function TopBar({
       window.dispatchEvent(new Event("themechange"));
     });
 
-    transition.ready.then(() => {
-      const endRadius = Math.hypot(
-        Math.max(x, innerWidth - x),
-        Math.max(y, innerHeight - y)
-      );
-
-      const clipPath = [
-        `circle(0px at ${x}px ${y}px)`,
-        `circle(${endRadius}px at ${x}px ${y}px)`,
-      ];
-
-      document.documentElement.animate(
-        { clipPath },
-        {
-          duration: 450,
-          easing: "cubic-bezier(0.87, 0, 0.13, 1)",
-          pseudoElement: "::view-transition-new(root)",
-        }
-      );
-    });
-
     transition.finished.finally(() => {
-      document.documentElement.classList.remove("is-transitioning");
+      document.documentElement.classList.remove("theme-transitioning");
     });
   };
 
