@@ -126,8 +126,12 @@ export const TopBar = memo(function TopBar({
       rect = e.currentTarget.getBoundingClientRect();
     }
     
-    const x = rect.left + rect.width / 2;
-    const y = rect.top + rect.height / 2;
+    // Prefer actual click coordinates if available (mouse/touch), fallback to button center (keyboard)
+    const clickX = 'clientX' in e && e.clientX ? e.clientX : 0;
+    const clickY = 'clientY' in e && e.clientY ? e.clientY : 0;
+    
+    const x = clickX || (rect.left + rect.width / 2);
+    const y = clickY || (rect.top + rect.height / 2);
 
     const oldStyle = document.getElementById("theme-transition-style");
     if (oldStyle) oldStyle.remove();
@@ -200,7 +204,7 @@ export const TopBar = memo(function TopBar({
           </div>
         </div>
 
-        <div className="flex min-w-0 w-full sm:w-auto sm:max-w-[65vw] shrink items-center justify-end gap-1.5 sm:gap-2 overflow-x-auto [&::-webkit-scrollbar]:hidden pl-2 pb-1 -mb-1">
+        <div className="flex min-w-0 w-full sm:w-auto sm:max-w-[65vw] shrink items-center sm:justify-end gap-1.5 sm:gap-2 overflow-x-auto [&::-webkit-scrollbar]:hidden pl-2 pb-1 -mb-1">
           <div className="flex shrink-0 items-center gap-1">
             <motion.div whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} transition={SPRING_SNAPPY}>
             <Button
