@@ -37,7 +37,7 @@
     "msgpackr": "^2.0.4",
     "node-cron": "^4.2.1",
     "pg": "^8.20.0",
-    "pino": "^9",
+    "pino": "^10",
     "pino-http": "^10",
     "playwright": "^1.61.1",
     "protobufjs": "^7.4.0",
