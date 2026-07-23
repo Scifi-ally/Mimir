@@ -129,23 +129,21 @@ export const TopBar = memo(function TopBar({
     const x = rect.left + rect.width / 2;
     const y = rect.top + rect.height / 2;
 
-    // --- DEBUG VISUALIZER ---
-    const dot = document.createElement("div");
-    dot.style.position = "fixed";
-    dot.style.left = `${x}px`;
-    dot.style.top = `${y}px`;
-    dot.style.width = "12px";
-    dot.style.height = "12px";
-    dot.style.backgroundColor = "#FF0000"; // bright red
-    dot.style.borderRadius = "50%";
-    dot.style.transform = "translate(-50%, -50%)";
-    dot.style.zIndex = "2147483647"; // max z-index
-    dot.style.pointerEvents = "none";
-    dot.style.boxShadow = "0 0 10px #FF0000";
-    document.body.appendChild(dot);
-    setTimeout(() => dot.remove(), 4000);
-    console.log(`[Theme Toggle] Calculated origin -> X: ${x}, Y: ${y}`);
-    // ------------------------
+    const oldStyle = document.getElementById("theme-transition-style");
+    if (oldStyle) oldStyle.remove();
+
+    const style = document.createElement("style");
+    style.id = "theme-transition-style";
+    style.innerHTML = `
+      @keyframes reveal-theme-dynamic {
+        from { clip-path: circle(0px at ${x}px ${y}px); }
+        to { clip-path: circle(150vmax at ${x}px ${y}px); }
+      }
+      html.theme-transitioning::view-transition-new(root) {
+        animation: reveal-theme-dynamic 450ms cubic-bezier(0.87, 0, 0.13, 1) forwards !important;
+      }
+    `;
+    document.head.appendChild(style);
 
     const willBeLight = !isLight;
     

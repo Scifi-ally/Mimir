@@ -382,25 +382,7 @@
 
 ::view-transition-new(root) {
   z-index: 9999;
-}
 
-html.theme-transitioning::view-transition-new(root) {
-  animation: reveal-theme 450ms cubic-bezier(0.87, 0, 0.13, 1) forwards;
-}
-
-html.theme-transitioning::view-transition-old(root) {
-  animation: none;
-  z-index: 1;
-}
-
-@keyframes reveal-theme {
-  from {
-    clip-path: circle(0px at var(--theme-origin-x, 50%) var(--theme-origin-y, 50%));
-  }
-  to {
-    clip-path: circle(150vmax at var(--theme-origin-x, 50%) var(--theme-origin-y, 50%));
-  }
-}
 
 @layer base {
   html.light {
