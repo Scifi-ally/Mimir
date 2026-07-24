@@ -254,7 +254,7 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
 
         <div className="flex items-center gap-2 shrink-0">
           {scoreHistory.length >= 3 && (
-            <Tooltip content="Composite score evolution across recent scans" align="end">
+            <Tooltip content="Composite score evolution across recent scans" align="end" side="bottom">
               <div className="flex flex-col items-end gap-0.5">
                 <Sparkline
                   data={scoreHistory}
@@ -317,7 +317,7 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
                   {selectedSignal.direction === "BUY" ? "Long" : "Short"} · {(selectedSignal.setupType || "").replace(/_/g, " ").toLowerCase()}
                 </span>
                 {selectedSignal.setupStats && (
-                  <Tooltip content={`Historical hit rate over ${selectedSignal.setupStats.samples} closed trades of this setup`} align="end">
+                  <Tooltip content={`Historical hit rate over ${selectedSignal.setupStats.samples} closed trades of this setup`} align="end" side="bottom">
                     <span className={cn(
                       "text-[9px] font-mono tabular-nums",
                       selectedSignal.setupStats.winRate >= 60 ? "text-bull" : selectedSignal.setupStats.winRate >= 45 ? "text-amber-500" : "text-bear",
