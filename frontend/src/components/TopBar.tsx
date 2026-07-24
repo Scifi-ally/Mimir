@@ -194,7 +194,7 @@ export const TopBar = memo(function TopBar({
           <div className="flex w-full min-w-0 items-center justify-between gap-3 sm:gap-4 whitespace-nowrap">
             <div className="hidden sm:flex min-w-0 flex-1 items-center gap-x-3 pr-2 relative">
 
-          <div className="flex min-w-0 shrink items-center gap-3 text-[11px] font-normal text-foreground/50 overflow-x-auto [&::-webkit-scrollbar]:hidden">
+          <div className="flex min-w-0 shrink items-center gap-3 text-[11px] font-normal text-foreground/50 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden pt-2 -mt-2 pb-2 -mb-2">
             <IndexMetric label="NIFTY 50" ltp={indices?.nifty50?.ltp} changePct={indices?.nifty50?.changePct} storeKey="nifty" onSelect={() => onSelectSymbol?.("NIFTY 50")} />
             <div className="hidden sm:contents">
               <IndexMetric label="SENSEX" ltp={indices?.sensex?.ltp} changePct={indices?.sensex?.changePct} storeKey="sensex" onSelect={() => onSelectSymbol?.("SENSEX")} />
@@ -209,7 +209,7 @@ export const TopBar = memo(function TopBar({
           </div>
         </div>
 
-        <div className="flex min-w-0 w-full sm:w-auto sm:max-w-[65vw] shrink items-center sm:justify-end gap-1.5 sm:gap-2 overflow-x-auto [&::-webkit-scrollbar]:hidden pl-2 pb-1 -mb-1">
+        <div className="flex min-w-0 w-full sm:w-auto sm:max-w-[65vw] shrink items-center sm:justify-end gap-1.5 sm:gap-2 pl-2">
           <div className="flex shrink-0 items-center gap-1">
             <motion.div whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} transition={SPRING_SNAPPY}>
             <Button
@@ -295,7 +295,7 @@ export const TopBar = memo(function TopBar({
             >
               <Wallet strokeWidth={3} className="h-3.5 w-3.5" />
               {isLiveTrading && (
-                <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-destructive animate-pulse" />
+                <span className="absolute top-0.5 right-0.5 w-2 h-2 rounded-full bg-destructive animate-pulse" />
               )}
             </Button>
             </motion.div>
@@ -310,7 +310,7 @@ export const TopBar = memo(function TopBar({
             >
               <Bell strokeWidth={3} className="h-3.5 w-3.5" />
               {unreadCount > 0 && (
-                <span className="absolute -top-1 -right-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-destructive px-0.5 text-[8px] font-normal text-white">
+                <span className="absolute top-0 right-0 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-destructive px-0.5 text-[8px] font-normal text-white shadow-sm">
                   {unreadCount > 9 ? "9+" : unreadCount}
                 </span>
               )}
