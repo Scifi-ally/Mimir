@@ -98,6 +98,14 @@ export interface IntradayMonitoring {
   monitoredStocks: MonitoredStock[];
 }
 
+export interface ModelDecayTelemetry {
+  realizedHitRate: number;
+  realizedSharpe: number;
+  referenceSharpeLow: number;
+  isFlagged: boolean;
+  sampleSize: number;
+}
+
 export interface ScanStatus {
   running: boolean;
   mode: string;

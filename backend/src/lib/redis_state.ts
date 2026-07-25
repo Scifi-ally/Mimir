@@ -6,6 +6,12 @@ export function getRedisClient(): Redis | null {
   return redisClient;
 }
 
+export interface RealtimeFeatures {
+  bidAskImbalance: number;
+  optionsOiChangeRate: number;
+  timestamp: string;
+}
+
 export const stateStore = {
   // HIGH FIX (Issue #7): Upgrade logger level and add retry logic for Redis failures
   // Previously all failures were silently logged with debug level
@@ -132,6 +138,31 @@ export const stateStore = {
       await client.del(`upstox:ticks:${symbol}`);
     } catch (err) {
       logger.warn({ err, symbol }, "Failed to clear ticks from Redis");
+    }
+  },
+
+  async getRealtimeFeatures(symbol: string): Promise<RealtimeFeatures | null> {
+    const client = getRedisClient();
+    if (!client) return null;
+    try {
+      if (client.status === "wait") await client.connect();
+      const data = await client.get(`upstox:features:${symbol}`);
+      if (!data) return null;
+      return JSON.parse(data) as RealtimeFeatures;
+    } catch (err) {
+      logger.warn({ err, symbol }, "Failed to get realtime features from Redis");
+      return null;
+    }
+  },
+
+  async saveRealtimeFeatures(symbol: string, features: RealtimeFeatures): Promise<void> {
+    const client = getRedisClient();
+    if (!client) return;
+    try {
+      if (client.status === "wait") await client.connect();
+      await client.set(`upstox:features:${symbol}`, JSON.stringify(features), "EX", 300); // 5 minutes TTL
+    } catch (err) {
+      logger.warn({ err, symbol }, "Failed to save realtime features");
     }
   }
 };

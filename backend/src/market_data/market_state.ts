@@ -32,6 +32,10 @@ export interface MarketState {
   indiaVix: number | null;
   advanceCount: number;
   declineCount: number;
+  advancingVolume: number;
+  decliningVolume: number;
+  upTickCount: number;
+  downTickCount: number;
   topSectors: SectorData[];
   updatedAt: Date;
   suggestionsPaused: boolean;
@@ -52,6 +56,10 @@ const state: MarketState = {
   indiaVix: null,
   advanceCount: 0,
   declineCount: 0,
+  advancingVolume: 0,
+  decliningVolume: 0,
+  upTickCount: 0,
+  downTickCount: 0,
   topSectors: [],
   updatedAt: new Date(),
   suggestionsPaused: false,

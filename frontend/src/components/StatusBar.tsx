@@ -5,6 +5,7 @@ import { ArrowUpRight, ArrowDownRight } from "lucide-react";
 import { Tooltip } from "@/components/mimir/tooltip";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { useStore } from "@/store/useStore";
 
 function StatusLed({ status }: { status: "ok" | "warn" | "error" | "unknown" }) {
   const color = status === "ok" ? "bg-green-500" : status === "warn" ? "bg-yellow-500" : status === "error" ? "bg-red-500" : "bg-neutral-500";
@@ -45,6 +46,8 @@ export const StatusBar = memo(function StatusBar({ status, regime, wsConnected, 
     ? status.aiStatus.toUpperCase()
     : "UNKNOWN";
 
+  const modelDecayTelemetry = useStore((s) => s.modelDecayTelemetry);
+
   return (
     <div className="shrink-0 h-9 lg:h-10 w-full bg-background flex items-center px-4 sm:px-6 text-[10px] sm:text-[10px] xl:text-[10px] font-sans text-muted-foreground/60 tracking-[0.1em] uppercase z-50 overflow-x-auto whitespace-nowrap [&::-webkit-scrollbar]:hidden">
       <div className="flex shrink-0 items-center gap-5 sm:gap-6 text-foreground/60">
@@ -65,6 +68,48 @@ export const StatusBar = memo(function StatusBar({ status, regime, wsConnected, 
             </span>
           </div>
         </span>
+        {modelDecayTelemetry && (
+          <Tooltip
+            className="cursor-help flex items-center gap-1.5"
+            content={
+              <div className="flex flex-col gap-1 w-48 text-[11px]">
+                <div className="font-normal pb-1 mb-1 text-foreground/60">OUT OF SAMPLE DECAY</div>
+                <div className="flex justify-between text-muted-foreground">
+                  <span>Rolling Sharpe:</span>
+                  <span className="font-mono font-normal text-foreground">
+                    {toFixed(modelDecayTelemetry.realizedSharpe, 2)}
+                  </span>
+                </div>
+                <div className="flex justify-between text-muted-foreground">
+                  <span>Hit Rate:</span>
+                  <span className="font-mono font-normal text-foreground">
+                    {fmtPct(modelDecayTelemetry.realizedHitRate * 100, 1)}
+                  </span>
+                </div>
+                <div className="flex justify-between text-muted-foreground">
+                  <span>Sample Size:</span>
+                  <span className="font-mono font-normal text-foreground">
+                    {modelDecayTelemetry.sampleSize} trades
+                  </span>
+                </div>
+                <div className="flex justify-between text-muted-foreground mt-1">
+                  <span>Reference Band:</span>
+                  <span className="font-mono font-normal text-foreground">
+                    &ge; {toFixed(modelDecayTelemetry.referenceSharpeLow, 2)}
+                  </span>
+                </div>
+              </div>
+            }
+          >
+            EDGE
+            <div className="flex items-center gap-1.5 bg-foreground/5 px-2 py-0.5 rounded-full">
+              <StatusLed status={modelDecayTelemetry.isFlagged ? "error" : "ok"} />
+              <span className={cn("font-mono font-normal text-[10px]", modelDecayTelemetry.isFlagged ? "text-bear" : "text-bull")}>
+                {toFixed(modelDecayTelemetry.realizedSharpe, 2)}
+              </span>
+            </div>
+          </Tooltip>
+        )}
         <Tooltip
           className="cursor-help flex items-center gap-1.5"
           content={

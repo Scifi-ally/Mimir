@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, RefreshCw } from "lucide-react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { api } from "@/lib/api";
 import { FADE_FAST, FADE_SLOW } from "@/lib/motion";
 import { Skeleton } from "@/components/atoms/Skeleton";
@@ -124,7 +125,7 @@ export function ReportsLibrary({ isOpen, onClose }: ReportsLibraryProps) {
                         <p className="text-sm text-muted-foreground mb-4 pl-4">{report.summary}</p>
                       )}
                       <div className="prose prose-sm dark:prose-invert prose-p:leading-relaxed prose-headings:font-normal prose-h1:text-xl prose-h2:text-lg prose-h3:text-base prose-a:text-primary max-w-none text-foreground/90 pl-4">
-                        <ReactMarkdown>{report.content?.replace(/\\n/g, '\n')}</ReactMarkdown>
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{report.content?.replace(/\\n/g, '\n')}</ReactMarkdown>
                       </div>
                     </div>
                   ))}

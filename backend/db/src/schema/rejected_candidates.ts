@@ -28,6 +28,7 @@ export const rejectedCandidatesTable = pgTable("rejected_candidates", {
   confidence: integer("confidence"),
   marketRegime: varchar("market_regime", { length: 30 }),
   featureVector: jsonb("feature_vector"),
+  decisionTrace: jsonb("decision_trace"),
   // Counterfactual resolution — filled by the outcome poller.
   // PENDING → WOULD_HAVE_WON | WOULD_HAVE_LOST | NEVER_TRIGGERED
   cfStatus: varchar("cf_status", { length: 20 }).notNull().default("PENDING"),

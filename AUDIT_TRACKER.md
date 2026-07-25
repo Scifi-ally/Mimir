@@ -10,39 +10,25 @@
 | `.github/ISSUE_TEMPLATE/bug_report.md` | MD | Low | Not Started |
 | `.github/ISSUE_TEMPLATE/feature_request.md` | MD | Low | Not Started |
 | `.github/PULL_REQUEST_TEMPLATE.md` | MD | Low | Not Started |
+| `.github/dependabot.yml` | YML | Low | Not Started |
 | `.github/workflows/ci.yml` | YML | High | Not Started |
 | `.gitignore` | Config/Script | Low | Not Started |
+| `AUDIT_TRACKER.md` | MD | Low | Not Started |
 | `CHANGELOG.md` | MD | Low | Not Started |
 | `CHANGES_SUMMARY.md` | MD | Low | Not Started |
 | `CODE_OF_CONDUCT.md` | MD | Low | Not Started |
 | `CONTRIBUTING.md` | MD | Low | Not Started |
 | `LICENSE` | Config/Script | Low | Not Started |
+| `Makefile` | Config/Script | Low | Not Started |
 | `README.md` | MD | Low | Not Started |
 | `SECURITY.md` | MD | Critical | Not Started |
 | `TESTING_GUIDE.md` | MD | Low | Not Started |
 | `backend/Dockerfile` | Config/Script | Medium | Not Started |
-| `backend/ai_service/.flake8` | Config/Script | Medium | Not Started |
-| `backend/ai_service/Dockerfile` | Config/Script | Medium | Not Started |
-| `backend/ai_service/backtest/alpha_validation.py` | PY | Medium | Not Started |
-| `backend/ai_service/backtest/run_weekly_ic.py` | PY | Medium | Not Started |
-| `backend/ai_service/main.py` | PY | Medium | Not Started |
-| `backend/ai_service/models/__init__.py` | PY | Medium | Not Started |
-| `backend/ai_service/models/chronos_service.py` | PY | Medium | Not Started |
-| `backend/ai_service/models/ranker_service.py` | PY | Medium | Not Started |
-| `backend/ai_service/models/rl_agent.py` | PY | Medium | Not Started |
-| `backend/ai_service/models/technical_pattern_engine.py` | PY | Medium | Not Started |
-| `backend/ai_service/ranker_lifecycle.py` | PY | Medium | Not Started |
-| `backend/ai_service/requirements.txt` | TXT | Medium | Not Started |
-| `backend/ai_service/rl_lifecycle.py` | PY | Medium | Not Started |
-| `backend/ai_service/run_ai.bat` | BAT | Medium | Not Started |
-| `backend/ai_service/sentiment.py` | PY | Medium | Not Started |
-| `backend/ai_service/setup_ai.bat` | BAT | Medium | Not Started |
-| `backend/ai_service/test_ai_models.py` | PY | Medium | Not Started |
-| `backend/ai_service/train_ranker.py` | PY | Medium | Not Started |
-| `backend/ai_service/train_rl.py` | PY | Medium | Not Started |
 | `backend/alter-table.cjs` | CJS | Medium | Not Started |
 | `backend/build.mjs` | MJS | Medium | Not Started |
+| `backend/check_config.cjs` | CJS | Medium | Not Started |
 | `backend/check_db.ts` | TS | Medium | Not Started |
+| `backend/check_paper_state.cjs` | CJS | Medium | Not Started |
 | `backend/check_pg.js` | JS | Medium | Not Started |
 | `backend/check_pg2.cjs` | CJS | Medium | Not Started |
 | `backend/create-tables.cjs` | CJS | Medium | Not Started |
@@ -52,6 +38,7 @@
 | `backend/db/src/schema/alpha_health.ts` | TS | Medium | Not Started |
 | `backend/db/src/schema/candles.ts` | TS | Medium | Not Started |
 | `backend/db/src/schema/custom_screener.ts` | TS | Medium | Not Started |
+| `backend/db/src/schema/custom_watchlist.ts` | TS | Medium | Not Started |
 | `backend/db/src/schema/fundamentals.ts` | TS | Medium | Not Started |
 | `backend/db/src/schema/index.ts` | TS | Medium | Not Started |
 | `backend/db/src/schema/institutional_flows.ts` | TS | Medium | Not Started |
@@ -81,14 +68,19 @@
 | `backend/drizzle/0007_live_trading.sql` | SQL | Critical | Not Started |
 | `backend/drizzle/0008_feature_persistence.sql` | SQL | Medium | Not Started |
 | `backend/drizzle/0009_rejected_candidates.sql` | SQL | Medium | Not Started |
+| `backend/drizzle/0010_premium_machine_man.sql` | SQL | Medium | Not Started |
 | `backend/drizzle/meta/0000_snapshot.json` | JSON | Medium | Not Started |
 | `backend/drizzle/meta/0001_snapshot.json` | JSON | Medium | Not Started |
 | `backend/drizzle/meta/0002_snapshot.json` | JSON | Medium | Not Started |
 | `backend/drizzle/meta/0005_snapshot.json` | JSON | Medium | Not Started |
 | `backend/drizzle/meta/0006_snapshot.json` | JSON | Medium | Not Started |
+| `backend/drizzle/meta/0010_snapshot.json` | JSON | Medium | Not Started |
 | `backend/drizzle/meta/_journal.json` | JSON | Medium | Not Started |
 | `backend/eslint-out.json` | JSON | Medium | Not Started |
 | `backend/eslint.config.mjs` | MJS | Medium | Not Started |
+| `backend/fix_config.ts` | TS | Medium | Not Started |
+| `backend/fix_imports.py` | PY | Medium | Not Started |
+| `backend/fix_paper_schema.cjs` | CJS | Medium | Not Started |
 | `backend/load-env.cjs` | CJS | Critical | Not Started |
 | `backend/mimir.db` | DB | Medium | Not Started |
 | `backend/package-lock.json` | JSON | Medium | Not Started |
@@ -99,9 +91,12 @@
 | `backend/quote.ts` | TS | Medium | Not Started |
 | `backend/scripts/backtest_filters.ts` | TS | Medium | Not Started |
 | `backend/scripts/backtest_setups.ts` | TS | Medium | Not Started |
+| `backend/scripts/check_nse_json.ts` | TS | Medium | Not Started |
+| `backend/scripts/dev/check_db.ts` | TS | Medium | Not Started |
 | `backend/scripts/dev/check_paper_db.ts` | TS | Medium | Not Started |
 | `backend/scripts/dev/clear_db.ts` | TS | Medium | Not Started |
 | `backend/scripts/dev/count_suggestions.ts` | TS | High | Not Started |
+| `backend/scripts/dev/reset_paper.ts` | TS | Medium | Not Started |
 | `backend/scripts/dev/test-tcs.ts` | TS | Medium | Not Started |
 | `backend/scripts/dev/test-ws.ts` | TS | Medium | Not Started |
 | `backend/scripts/dev/test_ai.ts` | TS | Medium | Not Started |
@@ -109,71 +104,26 @@
 | `backend/scripts/dev/test_paper.ts` | TS | Medium | Not Started |
 | `backend/scripts/dev/test_screener.ts` | TS | Medium | Not Started |
 | `backend/scripts/expectancy_report.ts` | TS | Medium | Not Started |
+| `backend/scripts/extract_confluence_data.ts` | TS | Medium | Not Started |
 | `backend/scripts/extract_training_data.ts` | TS | Medium | Not Started |
 | `backend/scripts/fix_db.ts` | TS | Medium | Not Started |
 | `backend/scripts/harden_risk_config.ts` | TS | Medium | Not Started |
 | `backend/scripts/preflight.ts` | TS | Medium | Not Started |
+| `backend/scripts/query_node_sqlite.mjs` | MJS | Medium | Not Started |
+| `backend/scripts/query_rejected.ts` | TS | Medium | Not Started |
+| `backend/scripts/query_sqlite.ts` | TS | Medium | Not Started |
 | `backend/scripts/research_audit_bench.ts` | TS | Medium | Not Started |
 | `backend/scripts/research_meanrev.ts` | TS | Medium | Not Started |
 | `backend/scripts/research_pullback.ts` | TS | Medium | Not Started |
 | `backend/scripts/research_volbreak.ts` | TS | Medium | Not Started |
 | `backend/scripts/research_xsmom.ts` | TS | Medium | Not Started |
-| `backend/src/analysis/ai_client.ts` | TS | Medium | Not Started |
-| `backend/src/analysis/alerts.ts` | TS | Medium | Not Started |
-| `backend/src/analysis/calibration_engine.ts` | TS | Medium | Not Started |
-| `backend/src/analysis/confidence_engine.ts` | TS | Medium | Not Started |
-| `backend/src/analysis/custom_screener_engine.ts` | TS | Medium | Not Started |
-| `backend/src/analysis/divergence_engine.ts` | TS | Medium | Not Started |
-| `backend/src/analysis/earnings_filter.ts` | TS | Medium | Not Started |
-| `backend/src/analysis/feature_engine.ts` | TS | Medium | Not Started |
-| `backend/src/analysis/gap_risk.ts` | TS | Medium | Not Started |
-| `backend/src/analysis/gap_scanner.ts` | TS | Medium | Not Started |
-| `backend/src/analysis/global_macro.ts` | TS | Medium | Not Started |
-| `backend/src/analysis/intraday_monitor.test.ts` | TS | Medium | Not Started |
-| `backend/src/analysis/intraday_monitor.ts` | TS | Medium | Not Started |
-| `backend/src/analysis/intraday_scanner.ts` | TS | Medium | Not Started |
-| `backend/src/analysis/learning_engine.ts` | TS | Medium | Not Started |
-| `backend/src/analysis/market_internals.ts` | TS | Medium | Not Started |
-| `backend/src/analysis/mean_reversion_scanner.ts` | TS | Medium | Not Started |
-| `backend/src/analysis/multi_timeframe.ts` | TS | Medium | Not Started |
-| `backend/src/analysis/options_sentiment.ts` | TS | Medium | Not Started |
-| `backend/src/analysis/order_flow.ts` | TS | Medium | Not Started |
-| `backend/src/analysis/overnight_scanner.ts` | TS | Medium | Not Started |
-| `backend/src/analysis/post_market.ts` | TS | Medium | Not Started |
-| `backend/src/analysis/post_market_report.ts` | TS | Medium | Not Started |
-| `backend/src/analysis/post_market_scanner.ts` | TS | Medium | Not Started |
-| `backend/src/analysis/range_scanner.ts` | TS | Medium | Not Started |
-| `backend/src/analysis/regime_detector.ts` | TS | Medium | Not Started |
-| `backend/src/analysis/risk_engine.test.ts` | TS | Medium | Not Started |
-| `backend/src/analysis/risk_engine.ts` | TS | Medium | Not Started |
-| `backend/src/analysis/scanner_activation.ts` | TS | Medium | Not Started |
-| `backend/src/analysis/sector_rotation.ts` | TS | Medium | Not Started |
-| `backend/src/analysis/signal_generator.ts` | TS | Medium | Not Started |
-| `backend/src/analysis/sparklines.ts` | TS | Medium | Not Started |
-| `backend/src/analysis/stock_scanner.test.ts` | TS | Medium | Not Started |
-| `backend/src/analysis/stock_scanner.ts` | TS | Medium | Not Started |
-| `backend/src/analysis/technical.test.ts` | TS | Medium | Not Started |
-| `backend/src/analysis/technical.ts` | TS | Medium | Not Started |
+| `backend/scripts/test_gandhar.ts` | TS | Medium | Not Started |
+| `backend/split.ts` | TS | Medium | Not Started |
 | `backend/src/api_server.ts` | TS | Medium | Not Started |
 | `backend/src/app.ts` | TS | Medium | Not Started |
 | `backend/src/config.ts` | TS | Medium | Not Started |
 | `backend/src/create_screener_tables.ts` | TS | Medium | Not Started |
 | `backend/src/index.ts` | TS | Medium | Not Started |
-| `backend/src/intelligence/breadth_engine.ts` | TS | Medium | Not Started |
-| `backend/src/intelligence/candle_builder.ts` | TS | Medium | Not Started |
-| `backend/src/intelligence/config.ts` | TS | Medium | Not Started |
-| `backend/src/intelligence/connection_manager.test.ts` | TS | Medium | Not Started |
-| `backend/src/intelligence/connection_manager.ts` | TS | Medium | Not Started |
-| `backend/src/intelligence/event_bus.ts` | TS | Medium | Not Started |
-| `backend/src/intelligence/load_balancer.ts` | TS | Medium | Not Started |
-| `backend/src/intelligence/orchestrator.ts` | TS | Medium | Not Started |
-| `backend/src/intelligence/redis_cache.ts` | TS | Medium | Not Started |
-| `backend/src/intelligence/suggestion_generator.ts` | TS | Medium | Not Started |
-| `backend/src/intelligence/tick_engine.ts` | TS | Medium | Not Started |
-| `backend/src/intelligence/types.ts` | TS | Medium | Not Started |
-| `backend/src/intelligence/universe_manager.ts` | TS | Medium | Not Started |
-| `backend/src/intelligence/worker_pool.ts` | TS | Medium | Not Started |
-| `backend/src/intelligence/workers/intelligence_worker.ts` | TS | Medium | Not Started |
 | `backend/src/lib/api-errors.ts` | TS | Medium | Not Started |
 | `backend/src/lib/cache.ts` | TS | Medium | Not Started |
 | `backend/src/lib/data_telemetry.ts` | TS | Medium | Not Started |
@@ -251,9 +201,11 @@
 | `backend/src/schemas/types/tradingConfigUpdate.ts` | TS | Critical | Not Started |
 | `backend/src/schemas/types/watchlistItem.ts` | TS | Medium | Not Started |
 | `backend/src/schemas/types/watchlistItemCategory.ts` | TS | Medium | Not Started |
+| `backend/src/services/system_stats.ts` | TS | Medium | Not Started |
 | `backend/src/suggestions/accuracy_tracker.ts` | TS | High | Not Started |
 | `backend/src/suggestions/expectancy.ts` | TS | High | Not Started |
 | `backend/src/suggestions/generator.ts` | TS | High | Not Started |
+| `backend/src/suggestions/outcome_verifier.ts` | TS | High | Not Started |
 | `backend/src/suggestions/timing.test.ts` | TS | High | Not Started |
 | `backend/src/suggestions/timing.ts` | TS | High | Not Started |
 | `backend/src/test-db.ts` | TS | Medium | Not Started |
@@ -261,6 +213,7 @@
 | `backend/src/trading/paper_engine.test.ts` | TS | Critical | Not Started |
 | `backend/src/trading/paper_engine.ts` | TS | Critical | Not Started |
 | `backend/src/trading/position_tracker.ts` | TS | Critical | Not Started |
+| `backend/src/trading/reconciler.ts` | TS | Critical | Not Started |
 | `backend/src/trading_engine.ts` | TS | Critical | Not Started |
 | `backend/src/upstox/auth.ts` | TS | Critical | Not Started |
 | `backend/src/upstox/headless_auth.ts` | TS | Critical | Not Started |
@@ -271,6 +224,9 @@
 | `backend/src/ws/events.ts` | TS | High | Not Started |
 | `backend/src/ws/websocket_server.ts` | TS | High | Not Started |
 | `backend/test_EIEL.ts` | TS | Medium | Not Started |
+| `backend/test_auth.ts` | TS | Critical | Not Started |
+| `backend/test_auth2.ts` | TS | Critical | Not Started |
+| `backend/test_auth3.ts` | TS | Critical | Not Started |
 | `backend/tests/cache/redis.test.ts` | TS | Medium | Not Started |
 | `backend/tests/divergence_engine.test.ts` | TS | Medium | Not Started |
 | `backend/tests/order_flow.test.ts` | TS | Medium | Not Started |
@@ -280,12 +236,17 @@
 | `backend/tests/regression/risk_regression.test.ts` | TS | Medium | Not Started |
 | `backend/tests/setup.ts` | TS | Medium | Not Started |
 | `backend/tsconfig.json` | JSON | Medium | Not Started |
+| `backend/upstox_login.html` | HTML | Critical | Not Started |
+| `backend/upstox_login_127.html` | HTML | Critical | Not Started |
+| `backend/upstox_login_localhost.html` | HTML | Critical | Not Started |
 | `backend/vitest.config.ts` | TS | Medium | Not Started |
 | `bot.bat` | BAT | Low | Not Started |
+| `create-custom-watchlist.mjs` | MJS | Low | Not Started |
 | `deploy/HOSTING.md` | MD | Low | Not Started |
 | `deploy/cloudflared-config.yml` | YML | Low | Not Started |
 | `deploy/start-demo.cmd` | CMD | Low | Not Started |
 | `docker-compose.yml` | YML | Low | Not Started |
+| `docs/ARCHITECTURE.md` | MD | Low | Not Started |
 | `docs/ARCHITECTURE_ANALYSIS.md` | MD | Low | Not Started |
 | `docs/IMPLEMENTATION_COMPLETE.md` | MD | Low | Not Started |
 | `docs/NUMBER_HANDLING_GUIDE.md` | MD | Low | Not Started |
@@ -326,6 +287,7 @@
 | `frontend/src/components/PriceChart.tsx` | TSX | Low | Not Started |
 | `frontend/src/components/ReportsLibrary.tsx` | TSX | Low | Not Started |
 | `frontend/src/components/ScanClockPanel.tsx` | TSX | Low | Not Started |
+| `frontend/src/components/ScreenerTargetRow.tsx` | TSX | Low | Not Started |
 | `frontend/src/components/ScreenerTargetsStack.tsx` | TSX | Low | Not Started |
 | `frontend/src/components/SettingsDialog.tsx` | TSX | Low | Not Started |
 | `frontend/src/components/Sparkline.tsx` | TSX | Low | Not Started |
@@ -347,6 +309,7 @@
 | `frontend/src/components/mimir/separator.tsx` | TSX | Low | Not Started |
 | `frontend/src/components/mimir/tooltip.tsx` | TSX | Low | Not Started |
 | `frontend/src/hooks/useMediaQuery.ts` | TS | Low | Not Started |
+| `frontend/src/hooks/useScreener.ts` | TS | Low | Not Started |
 | `frontend/src/hooks/useWebSocket.ts` | TS | Low | Not Started |
 | `frontend/src/index.css` | CSS | Low | Not Started |
 | `frontend/src/lib/api.ts` | TS | Medium | Not Started |
@@ -374,6 +337,9 @@
 | `frontend/tsconfig.node.json` | JSON | Low | Not Started |
 | `frontend/vite.config.ts` | TS | Low | Not Started |
 | `frontend/vitest.config.ts` | TS | Low | Not Started |
+| `generate_tracker.mjs` | MJS | Low | Not Started |
+| `mimir-confluence-engine.md` | MD | Low | Not Started |
+| `mimir-unified-strategy.md` | MD | Low | Not Started |
 | `nginx/mimir.conf` | CONF | Low | Not Started |
 | `package-lock.json` | JSON | Low | Not Started |
 | `package.json` | JSON | Low | Not Started |
@@ -396,12 +362,4 @@
 
 | ID | File:line | Severity | Issue | Root cause | Fix applied | Verification evidence | Status |
 |---|---|---|---|---|---|---|---|
-| 1 | `backend/src/routes/system.ts:694` | High | Build failed due to missing imports (`db`, `suggestionsTable`, `inArray`). | Code merged without importing required DB elements. | Added missing imports from `../../db/src` and `drizzle-orm`. | Output of `npm run typecheck` passing successfully. | **Fixed** |
-| 2 | `package.json` | High | Moderate/High CVEs in NPM dependencies. | `fast-uri` and `brace-expansion` unpinned or outdated in lockfile. | Ran `npm audit fix` which upgraded vulnerable packages without breaking changes. | Output of `npm audit fix` showing High vulnerabilities cleared. | **Fixed** |
-| 3 | `package.json` | Medium | 7 moderate vulnerabilities remain (e.g. `esbuild` via `drizzle-kit`). | Fixing requires major version bumps (breaking changes) to core tools like `drizzle-kit`. | Deferred. Not internet-facing in production (dev dependencies). | `npm audit` shows 7 moderate CVEs. | Deferred |
-| 4 | `backend/ai_service/requirements.txt` | Medium | `ta` and `yfinance` lack version pinning. | Missing `=x.x.x` in requirements. | None yet. | `pip show` output. | Deferred |
-| 5 | repo-wide | Low | Multiple unused TS schemas/interfaces (e.g., `NewSuggestionEventSchema`). | Leftover from iterative development or Drizzle auto-generation. | Left as-is since they don't impact runtime logic but might be useful. | Output of `npx ts-prune` showing dead code list. | Deferred |
-| 6 | `backend/src/lib/security.ts:160` | High | Rate limiter fails open when Redis is unreachable. | Explicit check for `redisClient.status !== "ready"` calling `next()` directly if `RATE_LIMIT_FAIL_CLOSED` is not "true". | Implemented a sliding window in-memory fallback store to degrade gracefully. | Verified code uses `applyInMemoryFallback()` on Redis failure. | **Fixed** |
-| 7 | `backend/src/lib/security.ts:96` | High | `timingSafeEquals` leaks string length. | Early return if `left.length !== right.length` before `crypto.timingSafeEqual`. | Replaced with SHA256 hashing of both strings before comparison to guarantee constant time. | Code verified to use `createHash("sha256")`. | **Fixed** |
-| 8 | `backend/src/lib/security.ts:44` | Critical | Cloudflare Tunnel proxy traffic bypasses authentication. | `isLocalRequest` only checks `req.socket.remoteAddress`, which is `127.0.0.1` for tunneled traffic. | Updated `isLocalRequest` to reject requests with `cf-connecting-ip`, `cf-ray`, or non-local `x-forwarded-for` IPs. | Code verifies proxy headers before allowing local bypass. | **Fixed** |
-| 9 | `backend/src/app.ts`, `api-errors.ts` | Medium | Missing security headers and potential log leak of query params on error. | No `X-Frame-Options` etc. `logApiError` logged `req.originalUrl` including query params. | Added security headers middleware to `app.ts`. Strip query string in `logApiError`. | Headers are present, `url: sanitizedUrl` in error log. | **Fixed** |
+

@@ -27,6 +27,7 @@ import { isSymbolBanned, getDeliveryPct, getBulkDealSignal, refreshNSEFreeData }
 import { calibrateConfidence, isSetupDemoted, isSetupDemotedForRegime } from "../analysis/calibration_engine";
 import { checkMarketInternals } from "../analysis/market_internals";
 import { getGapRisk } from "../analysis/gap_risk";
+import { getCompositeMarketContext } from "../analysis/composite_context";
 import { broadcast } from "../ws/websocket_server";
 import { createServerEvent } from "../ws/events";
 import { logger } from "../lib/logger";
@@ -575,6 +576,7 @@ export async function generateSuggestionsFromWatchlist(options?: {
           confidence: Math.round(signal.confidence),
           marketRegime: signal.regime,
           featureVector: signal.featureVector ?? null,
+          decisionTrace: signal.decisionTrace ?? null,
         })
         .catch((err) => logger.warn({ err, symbol: signal.symbol }, "Failed to log rejected candidate"));
     };
@@ -676,6 +678,15 @@ export async function generateSuggestionsFromWatchlist(options?: {
 
     logger.info({ scanResults: scanResults.length }, "Running consolidated scan results through Layer 7 pipeline");
     const pipelineResult = await runIntelligencePipeline(scanResults);
+
+    // Log signals that were rejected inside the intelligence pipeline
+    if (pipelineResult.rejectedSignals && pipelineResult.rejectedSignals.length > 0) {
+      for (const rejected of pipelineResult.rejectedSignals) {
+        const reason = rejected.decisionTrace?.rejectionGate || 'pipeline_rejection';
+        addRejection(reason);
+        logRejectedCandidate(rejected, reason);
+      }
+    }
 
     // Calculate dynamic minimum RR threshold based on India VIX and Market Breadth
     let minRequiredRR = 1.3;
@@ -952,6 +963,17 @@ export async function ingestSignal(
     return "corporate_action";
   }
 
+  // Master Composite Flow Gate
+  const compositeContext = getCompositeMarketContext();
+  if (signal.signal === "BUY" && compositeContext.compositeScore < -25) {
+    logger.warn({ symbol: signal.symbol, compositeScore: compositeContext.compositeScore }, "Discarding BUY: Composite Market Context is heavily bearish");
+    return "market_context";
+  }
+  if (signal.signal === "SELL" && compositeContext.compositeScore > 25) {
+    logger.warn({ symbol: signal.symbol, compositeScore: compositeContext.compositeScore }, "Discarding SELL: Composite Market Context is heavily bullish");
+    return "market_context";
+  }
+
   // Market internals: VIX spike halt, breadth + sector-RS gates for momentum.
   const internals = checkMarketInternals(signal.symbol, signal.signal as "BUY" | "SELL", signal.setupType);
   if (!internals.allowed) {
@@ -1203,6 +1225,7 @@ export async function ingestSignal(
         // Persist the full feature vector so a model can later be trained on the
         // realized outcome of this exact signal (Phase 1.1). Discarded before now.
         featureVector: signal.featureVector ?? null,
+        decisionTrace: signal.decisionTrace ?? null,
       })
       .onConflictDoNothing()
       .returning();

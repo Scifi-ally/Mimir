@@ -34,6 +34,15 @@ export async function initPositionTracker() {
     void refreshActivePositions();
   }, 5000);
 
+  // Instantly refresh cache when new positions are created/triggered
+  // to avoid missing initial ticks (up to 5s delay previously)
+  intelligenceBus.subscribe("suggestionGenerated", () => {
+    void refreshActivePositions();
+  });
+  intelligenceBus.subscribe("suggestionTriggered", () => {
+    void refreshActivePositions();
+  });
+
   // Subscribe to market ticks
   const unsubscribe = intelligenceBus.subscribe("processedTick", (tick) => {
     const symbol = tick.symbol;

@@ -149,6 +149,9 @@ export function useWebSocket() {
 
       const handleCloseInt = () => {
         if (cancelled) return;
+        // If this event belongs to an old socket, ignore it to prevent tearing down the new one.
+        if (socketInt !== nextSocketInt) return;
+
         checkConnected();
         if (socketInt && socketInt.readyState !== WebSocket.CLOSED) socketInt.close();
 
@@ -195,6 +198,9 @@ export function useWebSocket() {
 
       const handleCloseMd = () => {
         if (cancelled) return;
+        // If this event belongs to an old socket, ignore it to prevent tearing down the new one.
+        if (socketMd !== nextSocketMd) return;
+
         if (activeWsSocket === socketMd) activeWsSocket = null;
         if (wsRef.current === socketMd) wsRef.current = null;
         lastSubscribedSymbolsKey = "";
@@ -470,6 +476,11 @@ export function useWebSocket() {
             case "watchlist_counts":
               updateWatchlistCounts(event.data);
               break;
+            case "market_intelligence_update":
+              if (event.data.modelDecayTelemetry) {
+                useStore.getState().setModelDecayTelemetry(event.data.modelDecayTelemetry);
+              }
+              break;
             default:
               break;
           }
@@ -488,16 +499,24 @@ export function useWebSocket() {
     connectInt();
     connectMd();
 
+    let lastTimerRun = Date.now();
     pingTimer = window.setInterval(() => {
+      const now = Date.now();
+      const timeSinceLastRun = now - lastTimerRun;
+      lastTimerRun = now;
+      
+      // If browser throttled the timer (e.g. background tab), allow more time
+      const timeoutThreshold = Math.max(35_000, timeSinceLastRun + 15_000);
+
       if (socketInt?.readyState === WebSocket.OPEN) {
-        if (Date.now() - lastMessageTimeInt > 35_000) {
+        if (now - lastMessageTimeInt > timeoutThreshold) {
           socketInt.close();
         } else {
           socketInt.send(JSON.stringify({ event: "ping" }));
         }
       }
       if (socketMd?.readyState === WebSocket.OPEN) {
-        if (Date.now() - lastMessageTimeMd > 35_000) {
+        if (now - lastMessageTimeMd > timeoutThreshold) {
           socketMd.close();
         } else {
           socketMd.send(JSON.stringify({ event: "ping" }));

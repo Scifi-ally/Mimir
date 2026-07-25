@@ -1,0 +1,156 @@
+<USER_REQUEST>
+# Mimir — signal validation remediation prompt
+
+## Context
+
+Mimir is a Node.js/TypeScript algo trading terminal for NSE/BSE with a Python FastAPI AI service (Chronos-Bolt-Small, FinBERT, an XGBoost learned ranker). Full architecture is in `ARCHITECTURE.md` at the repo root — read it before starting.
+
+The goal of this work is **not** new predictive features. It's building the evaluation discipline needed to know whether the features and models already in place (technical, F&O microstructure, macro/FII-DII, sentiment) are finding real edge or are curve-fit to their training window. Right now there is no walk-forward methodology and no SHAP-based feature diagnostics, so that question is unanswerable.
+
+## How to use this document
+
+Six phases below, in dependency order. **Phase 1 and Phase 6 are independent of everything else** and can be run in a separate session in parallel if useful. **Phases 2 → 3 → 4 → 5 are strictly sequential** — each depends on the previous phase's output.
+
+For every phase:
+- Locate the actual relevant code first. `ARCHITECTURE.md` describes the system at a high level; treat file/function names below as best guesses from that doc, not guaranteed ground truth. If something doesn't match, say so and adapt rather than forcing the doc's description onto the real code.
+- Do not proceed to the next phase in the same session. Finish the phase, run its acceptance criteria, write a short summary of what you found and changed, and stop.
+- If a phase's findings would invalidate an assumption in a later phase (e.g. Phase 1 forces a historical-data regeneration that changes what Phase 2 trains on), flag it explicitly instead of silently adjusting and continuing.
+
+## Global constraints (every phase)
+
+- Do not touch the live signal generation path (`tick_distribution.ts`, `tick_engine.ts`, `orchestrator.ts`, `event_bus.ts`) unless a phase explicitly says to.
+- Do not touch the 2% hard risk cap, the missed-fill guard, or the Postgres row-level locking in `paper_engine.ts`. Phase 5 touches the Kelly fraction *value* only, nothing else in that file.
+- Do not retrain and hot-swap the production XGBoost model into live inference as part of this work. All phases here are offline/diagnostic until explicitly told otherwise.
+- If any UI surface is touched (Phase 6 only), follow the existing conventions: pure black background, white text, monospace for numeric/data readouts, semantic color only (no decorative color), zero decorative borders, no animation on high-frequency updating elements.
+- No scope creep. If you notice an unrelated issue, note it at the end of your phase summary — don't fix it inline.
+
+---
+
+## Phase 1 — Point-in-time data audit
+*(independent — can run before or alongside Phase 2)*
+
+**Why:** A perfect walk-forward harness still validates on garbage if the underlying features weren't actually knowable at the timestamp they're attached to. This has to be true before anything downstream means anything.
+
+**Tasks:**
+1. Audit `feature_engine.ts` (and any Python-side transforms) for how the historical training dataset is generated — this is very likely a separate offline pipeline reconstructing `FeatureVector`s from historical ticks/snapshots, not the live path. Confirm it replays data in true chronological order.
+2. Options OI Change Rate — highest risk item. Confirm the OI value attached to any historical timestamp is the OI as it stood at that moment in the live feed, not an end-of-day snapshot joined back onto intraday bars after the fact.
+3. FII/DII flow lag — already modeled explicitly per the architecture doc, which is the right instinct. Confirm the lag matches actual publication behavior (provisional evening figures vs. next-day final/revised figures) and that training data uses the as-published-at-the-time version.
+4. FinBERT's news feed — confirm every headline used to compute a sentiment feature for timestamp T has a publish timestamp strictly before T, with a small buffer for feed latency.
+5. Price momentum/RSI/MACD — low risk, but confirm candle aggregation has no forward-fill or lookahead.
+6. Macro regime indicator — confirm regime-at-T only uses data available up to T. (Deeper regime-detection scrutiny happens in Phase 3.)
+
+**Acceptance criteria:** a short written audit report — pass/fail per feature. Any fail gets fixed in the data-generation pipeline, with a note on whether historical training data needs regenerating before Phase 2 runs.
+
+**Do not touch:** live inference feature computation. The risk here is almost entirely in how historical data was reconstructed after the fact, not the real-time path.
+
+---
+
+## Phase 2 — Purged, embargoed walk-forward harness
+*(depends on Phase 1's findings if a data regen was triggered)*
+
+**Why:** `P(target1 before stop)` is a path-dependent label — it looks forward an unknown number of bars. A naive chronological split lets training rows whose label window overlaps the test period leak the answer. This harness becomes the standard path for evaluating any model or feature change going forward, not a one-off script.
+
+**Tasks:**
+1. Find the current XGBoost training/evaluation code (likely a standalone script in the Python service, separate from FastAPI serving).
+2. Confirm the historical dataset stores, per row, both the signal timestamp and the label *resolution* timestamp (when target-or-stop actually resolved, or max holding period if neither hit). If only entry timestamp exists, add resolution timestamp storage — this is a prerequisite, not optional.
+3. Implement fold generation:
+   - `purge_start = train_end`
+   - `purge_end = train_end + max_label_horizon` (pull the max holding period from wherever target/stop timeout is defined, likely `signal_generator.ts` or a config)
+   - `embargo_end = purge_end + embargo_window` (configurable; start with a defensible default and note it should be tuned against observed feature/return autocorrelation decay)
+   - `test_start = embargo_end`, `test_end = test_start + test_window_length`
+   - Drop any training row whose label *resolution* timestamp falls at or after `purge_start` — not just rows whose entry timestamp is late.
+4. Default to expanding-window folds (train start fixed, train end grows); make rolling fixed-window mode available via a parameter.
+5. Output per fold: train/test metrics (hit rate, a Sharpe-like metric on paper-engine-equivalent P&L, and probability calibration — predicted P(target before stop) vs. realized frequency). Aggregate into an overall out-of-fold summary.
+
+**Acceptance criteria:**
+- Running the harness on current historical data produces a fold-by-fold report plus an aggregate.
+- A unit test using a synthetic dataset with a deliberately leaky feature (derived from post-boundary data) demonstrates the harness catches it — i.e. the leaky feature looks great under a naive split and appropriately degrades under this harness.
+
+**Do not touch:** production inference code, existing live model artifacts. This phase is the offline harness only.
+
+---
+
+## Phase 3 — SHAP stability across folds
+*(depends on Phase 2)*
+
+**Why:** A single SHAP run tells you what mattered once. Running it per fold tells you what's *stable* — which is the actual question when deciding if a feature (especially anything from the recent F&O/order-flow/macro work) is real signal or noise the model happened to fit in that window.
+
+**Tasks:**
+1. Add `shap.TreeExplainer` computation against each fold's held-out test set from Phase 2.
+2. Produce per-fold feature importance (mean |SHAP value| per feature).
+3. Compute a stability metric across folds — e.g. Spearman rank correlation between each pair of folds' importance rankings, plus an explicit flag for any feature whose importance rank swings by more than a set threshold, or whose average SHAP contribution flips sign, across folds.
+4. While in this territory: confirm whether regime detection is currently the rule-based approach described in `ARCHITECTURE.md` or the HMM-based approach from more recent work — check the actual code, don't assume. Whichever is live, run its regime labels through the same fold-stability check, since a misclassified regime corrupts every feature and label built on top of it.
+5. Output a human-readable report: feature name, per-fold importance, stability flag, recommendation (keep / investigate / drop).
+
+**Acceptance criteria:** report covers every current `FeatureVector` component and the regime label. Diagnostic only — do not auto-drop anything.
+
+**Do not touch:** the `FeatureVector` schema itself. No feature gets removed automatically in this phase — surface the report for review.
+
+---
+
+## Phase 4 — Structural-break-aware fold boundaries (Indian F&O)
+*(depends on Phase 2)*
+
+**Why:** SEBI's index-derivatives framework changed the weekly-expiry structure and roughly tripled minimum contract sizes starting November 20, 2024, and went further on September 1, 2025, consolidating all contracts onto a Tuesday/Thursday expiry cycle. Any fold whose training window straddles either date is partly learning "old contract regime vs. new contract regime" for anything OI- or expiry-shaped, not a tradeable pattern.
+
+**Tasks:**
+1. Add a `STRUCTURAL_BREAKS` constant to the Phase 2 harness: `["2024-11-20", "2025-09-01"]`.
+2. Modify fold generation so no fold's train or test window spans across either date — insert a fold boundary at each one.
+3. Run a standalone comparison: validate F&O-derived features (OI change rate, bid-ask imbalance) using only post-September-2025 data, and compare importance/performance against the full-history Phase 3 results.
+4. Note explicitly in the report: the post-September-2025 window is small (a matter of months), so this comparison is a sanity check and early-warning signal, not a conclusive verdict. Don't let a small-sample result overturn the full-history result outright — flag divergence for human review instead.
+
+**Acceptance criteria:** fold boundaries respect both dates; comparison report exists with the sample-size caveat stated up front.
+
+---
+
+## Phase 5 — Re-derive confidence threshold and Kelly fraction
+*(depends on Phases 2–4)*
+
+**Why:** If the confidence cutoff for firing a trade, or the Quarter-Kelly fraction, was chosen by scanning the full backtest for whatever number produced the best equity curve, that number is overfit the same way a bad feature is — it just doesn't look like it.
+
+**Tasks:**
+1. Locate where confidence threshold and Kelly fraction are currently set (likely `signal_generator.ts` and a risk-sizing module referenced from `paper_engine.ts`).
+2. Using the Phase 2–4 folds, hold out the most recent 1–2 folds as a genuinely untouched final test set.
+3. Choose threshold and Kelly fraction by optimizing a sensible objective (e.g. realized Sharpe or Calmar, net of the 2% hard cap) on the remaining train/validation folds only.
+4. Evaluate the chosen values exactly once against the held-out final fold(s). Report the result. Do not iterate further based on that result — if it's bad, that's information, not a cue to re-tune until it looks better.
+
+**Do not touch:** the 2% hard cap itself, the missed-fill guard, row-level locking. Only the threshold and Kelly-fraction *values* are in scope.
+
+---
+
+## Phase 6 — Live-vs-backtest decay telemetry
+*(independent — can run anytime, low risk)*
+
+**Why:** Existing diagnostic telemetry (feed latency, dropped ticks, queue depth) tells you the system is alive, not that the edge is. Models decay, especially through a structural break like the ones in Phase 4.
+
+**Tasks:**
+1. Find where current diagnostic telemetry is computed and exposed (likely feeding the `marketIntelligenceUpdate` WebSocket payload and/or a dashboard component).
+2. Add a rolling computation (trailing N trades or trailing N trading days) of realized hit-rate and a Sharpe-like metric, pulled from existing Postgres trade records.
+3. Store the out-of-fold performance distribution from the Phase 2 harness as a reference band (e.g. its 10th–90th percentile).
+4. Compare rolling live/paper performance against that band. Flag — don't auto-act on — sustained periods (e.g. 2+ consecutive rolling windows) below the lower bound.
+5. If surfaced in the frontend: monospace numeric readouts, semantic color only for the flagged/warning state, no new borders, no animation on this panel.
+
+**Acceptance criteria:** telemetry includes the decay metric and reference band; purely additive — does not alter trading behavior or auto-pause anything.
+
+---
+
+## After all phases
+
+Summarize all six phase reports together before any decision is made about retraining or swapping the live model. That decision is a separate step, made by review, not something this remediation work triggers automatically.
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-07-25T02:05:11+05:30.
+
+The user's current state is as follows:
+Active Document: c:\Users\sahaj\Desktop\Mimir\docs\ARCHITECTURE.md (LANGUAGE_MARKDOWN)
+Cursor is on line: 1
+Other open documents:
+- c:\Users\sahaj\Desktop\Mimir\docs\ARCHITECTURE.md (LANGUAGE_MARKDOWN)
+- c:\Users\sahaj\Desktop\Mimir\backend\src\analysis\ai_client.ts (LANGUAGE_TYPESCRIPT)
+- c:\Users\sahaj\Desktop\Mimir\backend\src\analysis\feature_engine.ts (LANGUAGE_TYPESCRIPT)
+- c:\Users\sahaj\Desktop\Mimir\backend\src\analysis\signal_generator.ts (LANGUAGE_TYPESCRIPT)
+- c:\Users\sahaj\Desktop\Mimir\backend\src\trading\paper_engine.ts (LANGUAGE_TYPESCRIPT)
+</ADDITIONAL_METADATA>
+<USER_SETTINGS_CHANGE>
+The user changed setting `Model Selection` from None to Gemini 3.1 Pro (High). No need to comment on this change if the user doesn't ask about it. If reporting what model you are, please use a human readable name instead of the exact string.
+</USER_SETTINGS_CHANGE>

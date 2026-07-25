@@ -1,6 +1,6 @@
-import { useState, useMemo, useEffect } from "react";
+import { useMemo, useEffect } from "react";
 import { api } from "@/lib/api";
-import { Wallet, Activity, History, RotateCcw, TrendingUp, TrendingDown, X } from "lucide-react";
+import { Wallet, History, RotateCcw, TrendingUp, TrendingDown, X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { Variants } from "framer-motion";
 import { cn, fmtNum, toFixed, toFixedPct } from "@/lib/format";
@@ -25,7 +25,7 @@ const staggerItem: Variants = {
 };
 
 import type { PaperPosition } from "@/types/api";
-import { FADE_FAST, FADE_SLOW, SPRING_STANDARD } from "@/lib/motion";
+import { FADE_FAST, FADE_SLOW } from "@/lib/motion";
 import { Skeleton } from "@/components/atoms/Skeleton";
 
 const EMPTY_POSITIONS: PaperPosition[] = [];
@@ -33,7 +33,6 @@ const EMPTY_POSITIONS: PaperPosition[] = [];
 const EMPTY_HISTORY: any[] = [];
 
 export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClose?: () => void }) {
-  const [activeTab, setActiveTab] = useState<"positions" | "history">("positions");
   const showIsland = useStore((s) => s.showIsland);
   const queryClient = useQueryClient();
 
@@ -157,6 +156,69 @@ export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClo
     const profitFactor = grossLoss > 0 ? grossWin / grossLoss : grossWin > 0 ? Infinity : 0;
     return { wins: wins.length, losses: losses.length, totalRealizedPnl, winRate, avgWin, avgLoss, profitFactor };
   }, [history]);
+
+  const combinedPaper = useMemo(() => {
+    const items = [
+      ...positions.map(p => ({ type: "open" as const, item: p, date: new Date(p.createdAt) })),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ...history.map(h => ({ type: "closed" as const, item: h, date: new Date((h as any).closedAt || h.createdAt) }))
+    ];
+    items.sort((a, b) => b.date.getTime() - a.date.getTime());
+    
+    const groups: { label: string; items: typeof items }[] = [];
+    const todayStr = new Date().toDateString();
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStr = yesterday.toDateString();
+
+    for (const x of items) {
+      const ds = x.date.toDateString();
+      let label = ds;
+      if (ds === todayStr) label = "Today";
+      else if (ds === yesterdayStr) label = "Yesterday";
+      else label = x.date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+      
+      let lastGroup = groups[groups.length - 1];
+      if (!lastGroup || lastGroup.label !== label) {
+        lastGroup = { label, items: [] };
+        groups.push(lastGroup);
+      }
+      lastGroup.items.push(x);
+    }
+    return groups;
+  }, [positions, history]);
+
+  const combinedLive = useMemo(() => {
+    if (!isLive) return [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const items: Array<{ type: "live-position" | "live-order"; item: any; date: Date }> = [
+      ...(brokerPositions?.filter(p => p.quantity !== 0) || []).map(p => ({ type: "live-position" as const, item: p, date: new Date() })),
+      ...(liveOrders || []).map(o => ({ type: "live-order" as const, item: o, date: new Date(o.placedAt) }))
+    ];
+    items.sort((a, b) => b.date.getTime() - a.date.getTime());
+
+    const groups: { label: string; items: typeof items }[] = [];
+    const todayStr = new Date().toDateString();
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStr = yesterday.toDateString();
+
+    for (const x of items) {
+      const ds = x.date.toDateString();
+      let label = ds;
+      if (ds === todayStr) label = "Today";
+      else if (ds === yesterdayStr) label = "Yesterday";
+      else label = x.date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+      
+      let lastGroup = groups[groups.length - 1];
+      if (!lastGroup || lastGroup.label !== label) {
+        lastGroup = { label, items: [] };
+        groups.push(lastGroup);
+      }
+      lastGroup.items.push(x);
+    }
+    return groups;
+  }, [isLive, brokerPositions, liveOrders]);
 
   return (
     <AnimatePresence>
@@ -365,63 +427,55 @@ export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClo
 
             )}
 
-            {/* Tabs */}
-            <div role="tablist" aria-label="Trading views" className="flex px-8 pt-3 gap-8 relative shrink-0">
-              <button
-                role="tab"
-                aria-selected={activeTab === "positions"}
-                onClick={() => setActiveTab("positions")}
-                className={cn(
-                  "pb-3 text-xs font-normal tracking-[0.08em] uppercase flex items-center gap-2 transition-all duration-300 relative focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60 rounded-sm",
-                  activeTab === "positions" ? "text-foreground" : "text-foreground/40 hover:text-foreground/70"
-                )}
-              >
-                <Activity className="w-4 h-4" /> Open ({isLive ? (brokerPositions?.filter(p => p.quantity !== 0).length ?? 0) : positions.length})
-                {activeTab === "positions" && (
-                  <motion.div layoutId="paperTradingTabIndicator" className="absolute bottom-0 left-0 right-0 h-0.5 bg-foreground rounded-full" transition={SPRING_STANDARD} />
-                )}
-              </button>
-              <button
-                role="tab"
-                aria-selected={activeTab === "history"}
-                onClick={() => setActiveTab("history")}
-                className={cn(
-                  "pb-3 text-xs font-normal tracking-[0.08em] uppercase flex items-center gap-2 transition-all duration-300 relative focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60 rounded-sm",
-                  activeTab === "history" ? "text-foreground" : "text-foreground/40 hover:text-foreground/70"
-                )}
-              >
-                <History className="w-4 h-4" /> {isLive ? `Orders (${liveOrders?.length ?? 0})` : `History (${history.length})`}
-                {activeTab === "history" && (
-                  <motion.div layoutId="paperTradingTabIndicator" className="absolute bottom-0 left-0 right-0 h-0.5 bg-foreground rounded-full" transition={SPRING_STANDARD} />
-                )}
-              </button>
-            </div>
-
-            {/* Tab Content */}
+            {/* Unified Feed */}
             <div className="px-8 pb-8 pt-3 flex-1 overflow-y-auto">
               <AnimatePresence mode="wait">
-                {activeTab === "positions" ? (
-                  <motion.div
-                    key="positions"
-                    variants={staggerContainer}
-                    initial="hidden"
-                    animate="show"
-                    exit="hidden"
-                    className="flex flex-col gap-2.5 pt-2"
-                  >
-                    {isLive ? (
-                      (brokerPositions?.filter(p => p.quantity !== 0).length ?? 0) === 0 ? (
-                        <motion.div variants={staggerItem} className="flex flex-col items-center justify-center py-16 text-foreground/30">
-                          <p className="text-xs font-normal tracking-wide">No open broker positions</p>
+                <motion.div
+                  key="unified-feed"
+                  variants={staggerContainer}
+                  initial="hidden"
+                  animate="show"
+                  exit="hidden"
+                  className="flex flex-col gap-6 pt-2"
+                >
+                  {isLive ? (
+                    combinedLive.length === 0 ? (
+                      <motion.div variants={staggerItem} className="flex flex-col items-center justify-center py-16 text-foreground/30">
+                        <History className="w-10 h-10 mb-3 opacity-30" strokeWidth={1} />
+                        <p className="text-sm font-normal tracking-wide">No live activity yet</p>
+                      </motion.div>
+                    ) : (
+                      combinedLive.map(group => (
+                        <div key={group.label} className="flex flex-col gap-3">
+                          <div className="flex items-center gap-3 mb-1 mt-2">
+                            <div className="w-1 h-4 bg-primary/80 rounded-full" />
+                            <h3 className="font-mono font-normal text-sm text-foreground/80 flex items-center gap-2">
+                              {group.label}
+                            </h3>
+                          </div>
+                          {group.items.map((x, i) => (
+                            x.type === "live-position" ? <BrokerPositionRow key={`pos-${x.item.symbol}-${i}`} pos={x.item} />
+                            : <LiveOrderRow key={`ord-${x.item.id}`} order={x.item} />
+                          ))}
+                        </div>
+                      ))
+                    )
+                  ) : (
+                    <>
+                      {history.length > 0 && (
+                        <motion.div variants={staggerItem} className="flex flex-wrap gap-6 py-2 border-b border-border/10 mb-2 text-[11px] font-mono text-foreground/50">
+                          <span>Realized PnL: <span className={cn("font-normal", stats.totalRealizedPnl >= 0 ? "text-bull" : "text-bear")}>{stats.totalRealizedPnl >= 0 ? '+' : ''}₹{fmtNum(Math.abs(stats.totalRealizedPnl), 2)}</span></span>
+                          <span>Avg Win: <span className="font-normal text-bull">₹{fmtNum(stats.avgWin, 0)}</span></span>
+                          <span>Avg Loss: <span className="font-normal text-bear">₹{fmtNum(stats.avgLoss, 0)}</span></span>
+                          {stats.profitFactor !== Infinity && stats.profitFactor > 0 && (
+                            <span>Profit Factor: <span className="font-normal text-foreground/80">{toFixed(stats.profitFactor, 2)}</span></span>
+                          )}
                         </motion.div>
-                      ) : (
-                        brokerPositions!.filter(p => p.quantity !== 0).map(pos => (
-                          <BrokerPositionRow key={`${pos.symbol}-${pos.product}`} pos={pos} />
-                        ))
-                      )
-                    ) : positions.length === 0 ? (
-                      positionsPending ? (
-                        <div className="flex flex-col gap-2.5 pt-2">
+                      )}
+                      
+                      {positionsPending || historyPending ? (
+                        <div className="flex flex-col gap-4 pt-2">
+                           <Skeleton className="h-4 w-24 mb-2" />
                           {[0, 1, 2].map((i) => (
                             <div key={i} className="flex items-center justify-between rounded-xl border border-border/10 p-4">
                               <div className="flex items-center gap-3">
@@ -432,81 +486,29 @@ export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClo
                             </div>
                           ))}
                         </div>
-                      ) : (
+                      ) : combinedPaper.length === 0 ? (
                         <motion.div variants={staggerItem} className="flex flex-col items-center justify-center py-16 text-foreground/30">
-                          <p className="text-xs font-normal tracking-wide">No open positions</p>
+                          <p className="text-xs font-normal tracking-wide">No paper trading activity yet</p>
                         </motion.div>
-                      )
-                    ) : (
-                      positions.map(pos => (
-                        <PositionRow key={pos.id} pos={pos} />
-                      ))
-                    )}
-                  </motion.div>
-                ) : isLive ? (
-                  <motion.div
-                    key="live-orders"
-                    variants={staggerContainer}
-                    initial="hidden"
-                    animate="show"
-                    exit="hidden"
-                    className="flex flex-col gap-2.5 pt-2"
-                  >
-                    {(liveOrders?.length ?? 0) === 0 ? (
-                      <motion.div variants={staggerItem} className="flex flex-col items-center justify-center py-16 text-foreground/30">
-                        <History className="w-10 h-10 mb-3 opacity-30" strokeWidth={1} />
-                        <p className="text-sm font-normal tracking-wide">No live orders yet</p>
-                        <p className="text-xs text-foreground/20 mt-1">Every real order placed at the broker is audited here.</p>
-                      </motion.div>
-                    ) : (
-                      liveOrders!.map(order => (
-                        <LiveOrderRow key={order.id} order={order} />
-                      ))
-                    )}
-                  </motion.div>
-                ) : (
-                  <motion.div 
-                    key="history"
-                    variants={staggerContainer} 
-                    initial="hidden" 
-                    animate="show" 
-                    exit="hidden"
-                    className="flex flex-col gap-2.5 pt-2"
-                  >
-                    {/* History Summary Bar */}
-                    {history.length > 0 && (
-                      <motion.div variants={staggerItem} className="flex flex-wrap gap-6 py-3 mb-2 text-[11px] font-mono text-foreground/50">
-                        <span>Realized PnL: <span className={cn("font-normal", stats.totalRealizedPnl >= 0 ? "text-bull" : "text-bear")}>{stats.totalRealizedPnl >= 0 ? '+' : ''}₹{fmtNum(Math.abs(stats.totalRealizedPnl), 2)}</span></span>
-                        <span>Avg Win: <span className="font-normal text-bull">₹{fmtNum(stats.avgWin, 0)}</span></span>
-                        <span>Avg Loss: <span className="font-normal text-bear">₹{fmtNum(stats.avgLoss, 0)}</span></span>
-                        {stats.profitFactor !== Infinity && stats.profitFactor > 0 && (
-                          <span>Profit Factor: <span className="font-normal text-foreground/80">{toFixed(stats.profitFactor, 2)}</span></span>
-                        )}
-                      </motion.div>
-                    )}
-                    {history.length === 0 && historyPending ? (
-                      <div className="flex flex-col gap-2.5 pt-2">
-                        {[0, 1, 2].map((i) => (
-                          <div key={i} className="flex items-center justify-between rounded-xl border border-border/10 p-4">
-                            <div className="flex items-center gap-3">
-                              <Skeleton className="h-4 w-20" />
-                              <Skeleton className="h-4 w-12 rounded" />
+                      ) : (
+                        combinedPaper.map(group => (
+                          <div key={group.label} className="flex flex-col gap-3">
+                            <div className="flex items-center gap-3 mb-1 mt-2">
+                              <div className="w-1 h-4 bg-primary/80 rounded-full" />
+                              <h3 className="font-mono font-normal text-sm text-foreground/80 flex items-center gap-2">
+                                {group.label}
+                              </h3>
                             </div>
-                            <Skeleton className="h-4 w-24" />
+                            {group.items.map(x => (
+                              x.type === "open" ? <PositionRow key={`open-${x.item.id}`} pos={x.item} />
+                              : <HistoryRow key={`hist-${x.item.id}`} hist={x.item} />
+                            ))}
                           </div>
-                        ))}
-                      </div>
-                    ) : history.length === 0 ? (
-                      <motion.div variants={staggerItem} className="flex flex-col items-center justify-center py-16 text-foreground/30">
-                        <p className="text-xs font-normal tracking-wide">No completed trades yet</p>
-                      </motion.div>
-                    ) : (
-                      history.map(hist => (
-                        <HistoryRow key={hist.id} hist={hist} />
-                      ))
-                    )}
-                  </motion.div>
-                )}
+                        ))
+                      )}
+                    </>
+                  )}
+                </motion.div>
               </AnimatePresence>
             </div>
             </>

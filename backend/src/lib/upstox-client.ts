@@ -94,15 +94,16 @@ const DEFAULT_RETRY_CONFIG: RetryConfig = {
  * Non-priority timeouts are logged at warn level for observability.
  */
 class GlobalRateLimiter {
-  private queue: { resolve: () => void; reject: (err: Error) => void; enqueueTime: number; priority: boolean }[] = [];
+  private queue: { version: "v2" | "v3", resolve: () => void, reject: (err: Error) => void, enqueueTime: number, priority: boolean }[] = [];
   private processing = false;
-  private reqsInLastSecond = 0;
+  private reqsInLastSecondV2 = 0;
+  private reqsInLastSecondV3 = 0;
   private intervalStarted = Date.now();
   private maxWaitMs = 30000;
 
-  async wait(priority: boolean = false): Promise<void> {
+  async wait(version: "v2" | "v3" = "v2", priority: boolean = false): Promise<void> {
     return new Promise((resolve, reject) => {
-      const item = { resolve, reject, enqueueTime: Date.now(), priority };
+      const item = { version, resolve, reject, enqueueTime: Date.now(), priority };
       if (priority) {
         const idx = this.queue.findIndex(i => !i.priority);
         if (idx === -1) this.queue.push(item);
@@ -141,21 +142,25 @@ class GlobalRateLimiter {
       }
 
       if (now - this.intervalStarted >= 1000) {
-        this.reqsInLastSecond = 0;
+        this.reqsInLastSecondV2 = 0;
+        this.reqsInLastSecondV3 = 0;
         this.intervalStarted = now;
       }
       
-      // Upstox rate limit: 10 req/sec per API version (V2 and V3 counted separately).
-      // This limiter tracks a COMBINED count across all endpoints — it does NOT
-      // enforce per-version limits. During market hours we use a conservative 8 req/s
-      // combined limit. Off-hours, we allow 14 req/s since the load-balancer
-      // (v3RoundRobin in fetchHistoricalCandles) distributes roughly evenly across
-      // V2 and V3. TODO: Track per-version request counts for true per-endpoint limiting.
-      const safeLimit = isMarketOpen() ? 8 : 14;
-      if (this.reqsInLastSecond < safeLimit) {
-        this.reqsInLastSecond++;
-        const item = this.queue.shift();
-        item?.resolve();
+      const safeLimit = 9; // Upstox limit is 10 req/sec per version, using 9 for safety margin
+
+      // Find the first item in queue that can be processed
+      const idx = this.queue.findIndex(item => {
+        if (item.version === "v2") return this.reqsInLastSecondV2 < safeLimit;
+        if (item.version === "v3") return this.reqsInLastSecondV3 < safeLimit;
+        return false;
+      });
+
+      if (idx !== -1) {
+        const item = this.queue.splice(idx, 1)[0]!;
+        if (item.version === "v2") this.reqsInLastSecondV2++;
+        if (item.version === "v3") this.reqsInLastSecondV3++;
+        item.resolve();
         setImmediate(tick);
       } else {
         const delay = 1000 - (now - this.intervalStarted);
@@ -177,12 +182,13 @@ export async function withRetry<T>(
   operation: string,
   config: RetryConfig = DEFAULT_RETRY_CONFIG,
   priority: boolean = false,
+  version: "v2" | "v3" = "v2"
 ): Promise<T> {
   let lastError: Error | null = null;
 
   for (let attempt = 0; attempt <= config.maxRetries; attempt++) {
     try {
-      await apiRateLimiter.wait(priority);
+      await apiRateLimiter.wait(version, priority);
       return await fn();
     } catch (err) {
       lastError = err as Error;
@@ -562,6 +568,27 @@ export function createUpstoxClient(options?: {
       }
     }
 
+    const isV3OnlyInterval =
+      interval === "5minute" ||
+      interval === "15minute" ||
+      interval === "60minute" ||
+      interval === "240minute";
+
+    // V2 caps day-interval requests at 1 year; route longer ranges
+    // straight to V3 (days unit allows up to a decade) instead of
+    // guaranteed-failing on V2 first.
+    const requestedSpanDays =
+      (Date.parse(toDate) - Date.parse(fromDate)) / 86_400_000;
+    let preferV3 =
+      isV3OnlyInterval ||
+      interval === "week" ||
+      (interval === "day" && requestedSpanDays > 300);
+
+    if (!preferV3 && !isMarketOpen()) {
+      v3RoundRobin = !v3RoundRobin;
+      preferV3 = v3RoundRobin;
+    }
+
     return candleDeduplicator.execute(cacheKey, async () => {
       const data = await withRetry(
         async () => {
@@ -591,26 +618,7 @@ export function createUpstoxClient(options?: {
             return v2Resp.data?.data?.candles ?? [];
           };
 
-          const isV3OnlyInterval =
-            interval === "5minute" ||
-            interval === "15minute" ||
-            interval === "60minute" ||
-            interval === "240minute";
 
-          // V2 caps day-interval requests at 1 year; route longer ranges
-          // straight to V3 (days unit allows up to a decade) instead of
-          // guaranteed-failing on V2 first.
-          const requestedSpanDays =
-            (Date.parse(toDate) - Date.parse(fromDate)) / 86_400_000;
-          let preferV3 =
-            isV3OnlyInterval ||
-            interval === "week" ||
-            (interval === "day" && requestedSpanDays > 300);
-
-          if (!preferV3 && !isMarketOpen()) {
-            v3RoundRobin = !v3RoundRobin;
-            preferV3 = v3RoundRobin;
-          }
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           let candles: any[][] = [];
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -630,7 +638,8 @@ export function createUpstoxClient(options?: {
           // Only try the fallback endpoint if the primary endpoint actually failed and fallback supports this interval.
           if (candles.length === 0 && lastError && !isV3OnlyInterval) {
             try {
-              await apiRateLimiter.wait(priority); 
+              const fallbackVersion = preferV3 ? "v2" : "v3";
+              await apiRateLimiter.wait(fallbackVersion, priority); 
               candles = preferV3 ? await fetchV2() : await fetchV3();
               lastError = null; // Clear primary error if fallback succeeded
             } catch (fallbackErr) {
@@ -682,7 +691,8 @@ export function createUpstoxClient(options?: {
         `Candles fetch ${instrumentKey} ${interval}`,
         // Keep retries bounded to avoid freezing full scan cycles.
         { maxRetries: 2, baseDelayMs: 300, maxDelayMs: 2000 },
-        priority
+        priority,
+        preferV3 ? "v3" : "v2"
       );
 
       // Cache and return

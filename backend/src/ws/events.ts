@@ -167,9 +167,23 @@ export const MarketIntelligenceUpdateEventSchema = z.object({
       activeCandidates: z.number(),
       qualifiedOpportunities: z.number(),
       activeSuggestions: z.number(),
+      compositeContext: z.object({
+        macroScore: z.number(),
+        sentimentScore: z.number(),
+        internalsScore: z.number(),
+        compositeScore: z.number(),
+        regime: z.enum(["RISK_OFF", "NEUTRAL", "RISK_ON"]),
+      }).optional(),
       startedAt: z.string().nullable(),
       updatedAt: z.string(),
     }),
+    modelDecayTelemetry: z.object({
+      realizedHitRate: z.number(),
+      realizedSharpe: z.number(),
+      referenceSharpeLow: z.number(),
+      isFlagged: z.boolean(),
+      sampleSize: z.number()
+    }).optional(),
     topMovers: z.array(
       z.object({
         symbol: z.string(),

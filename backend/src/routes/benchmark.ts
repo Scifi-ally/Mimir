@@ -2,6 +2,7 @@ import { Router } from "express";
 import { db } from "../../db/src";
 import { paperPositionsTable, paperAccountsTable } from "../../db/src/schema/paper_trading";
 import { asc } from "drizzle-orm";
+import yahooFinance from "yahoo-finance2";
 
 const router = Router();
 
@@ -21,20 +22,27 @@ router.get("/oos", async (_req, res) => {
     }
 
     const firstTradeDate = positions[0].createdAt;
-    
-    // In a real system we would query historical DB for Nifty50 at firstTradeDate.
-    // For this simulation, we'll fetch current Nifty50 LTP and compare to an estimated starting point or 
-    // ideally the historical Nifty 50 on that date. Since we don't have a historical Nifty50 DB table handy,
-    // we'll return the system's PnL relative to the starting balance.
-    
     const startingBalance = Number(account.startingBalance);
     const currentBalance = Number(account.balance);
     const strategyReturnPct = ((currentBalance - startingBalance) / startingBalance) * 100;
 
-    // Fetch current Nifty 50 (omitted since unused)
-    
-    // Fallback benchmark return logic (mocked if no historical data is available)
-    const benchmarkReturnPct = 0; // Requires historical indexing to calculate properly
+    let benchmarkReturnPct = 0;
+    try {
+      const historicalData = await yahooFinance.historical("^NSEI", {
+        period1: firstTradeDate,
+        period2: new Date(),
+        interval: "1d"
+      }) as any[];
+      if (historicalData.length >= 2) {
+        const startPrice = historicalData[0].close;
+        const endPrice = historicalData[historicalData.length - 1].close;
+        if (startPrice && endPrice) {
+          benchmarkReturnPct = ((endPrice - startPrice) / startPrice) * 100;
+        }
+      }
+    } catch (err) {
+      console.warn("Failed to fetch Nifty50 historical data for benchmark:", err);
+    }
 
     res.json({
       strategyReturnPct,

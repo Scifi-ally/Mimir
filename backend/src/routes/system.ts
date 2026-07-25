@@ -895,42 +895,7 @@ if (process.env.NODE_ENV !== "production") {
     res.json({ count: getConnectedClients() });
   });
 
-  const DebugRegimeSchema = z.object({ regime: z.string().optional() });
 
-  router.post("/system/debug/set-regime", (req, res) => {
-    const parsed = DebugRegimeSchema.safeParse(req.body);
-    const regime = parsed.success ? parsed.data.regime : undefined;
-    // For testing dynamic island regime changes, we can broadcast a mock system_alert
-    // or we can just trigger an orchestrator update.
-    // The instructions say: POST /api/system/debug/set-regime -> DynamicIsland expands showing old regime -> new regime
-    // Dynamic island reacts to regime changes in `StatusBar` or `useStore`?
-    // Let's emit a system_health with the new regime.
-    broadcast({
-      event: "system_alert",
-      data: {
-        message: `Regime changed to ${regime || "RANGING"}. Health checks: postgres=ok, redis=ok, upstox=ok, ai=ok`,
-        severity: "info"
-      }
-    }, "system");
-    res.json({ success: true, regime });
-  });
-
-  const DebugEventSchema = z.object({ event: z.string().optional() });
-
-  router.post("/system/debug/trigger-event", (req, res) => {
-    const parsed = DebugEventSchema.safeParse(req.body);
-    const event = parsed.success ? parsed.data.event : undefined;
-    if (event === "market:open") {
-      broadcast({
-        event: "system_alert",
-        data: {
-          message: "Market is now open. Session: MORNING (09:15 - 10:30). FII Bias: outflow. DII Bias: inflow.",
-          severity: "info"
-        }
-      }, "system");
-    }
-    res.json({ success: true });
-  });
 
   router.post("/system/debug/trigger-scan", async (req, res) => {
     // Triggers a manual scan

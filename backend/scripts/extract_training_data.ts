@@ -28,7 +28,7 @@
 import { writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { db, candlesTable } from "../db/src";
+import { db, candlesTable, institutionalFlowsTable } from "../db/src";
 import { and, eq, gte, asc } from "drizzle-orm";
 import {
   buildSnapshot,
@@ -74,6 +74,7 @@ function argStr(name: string, dflt: string): string {
 interface Labeled {
   outcome: "WIN" | "LOSS" | "NO_FILL" | "TIMEOUT";
   retPct: number; // net of costs, 0 for NO_FILL
+  resolutionTs?: string;
 }
 
 /** Honest-fill walk-forward, identical rules to backtest_setups.simulate(). */
@@ -103,11 +104,11 @@ function labelTrade(
 
     if (stopHit) {
       const gross = isBuy ? (stopLoss - entryPrice) / entryPrice : (entryPrice - stopLoss) / entryPrice;
-      return { outcome: "LOSS", retPct: (gross - 2 * COST_RATE_PER_SIDE) * 100 };
+      return { outcome: "LOSS", retPct: (gross - 2 * COST_RATE_PER_SIDE) * 100, resolutionTs: bar.timestamp };
     }
     if (targetHit) {
       const gross = isBuy ? (target1 - entryPrice) / entryPrice : (entryPrice - target1) / entryPrice;
-      return { outcome: "WIN", retPct: (gross - 2 * COST_RATE_PER_SIDE) * 100 };
+      return { outcome: "WIN", retPct: (gross - 2 * COST_RATE_PER_SIDE) * 100, resolutionTs: bar.timestamp };
     }
   }
 
@@ -115,8 +116,9 @@ function labelTrade(
 
   const lastIdx = Math.min(signalIdx + holdBars, candles.length - 1);
   const exit = candles[lastIdx]!.close;
+  const exitTs = candles[lastIdx]!.timestamp;
   const gross = isBuy ? (exit - entryPrice) / entryPrice : (entryPrice - exit) / entryPrice;
-  return { outcome: "TIMEOUT", retPct: (gross - 2 * COST_RATE_PER_SIDE) * 100 };
+  return { outcome: "TIMEOUT", retPct: (gross - 2 * COST_RATE_PER_SIDE) * 100, resolutionTs: exitTs };
 }
 
 /** RS vs Nifty over the trailing 60 bars, reconstructed from the visible window. */
@@ -134,6 +136,18 @@ function computeRS60PIT(stockVisible: OHLCV[], niftyByTs: Map<number, number>, a
   const niftyRet = niftyNow / niftyAgo;
   if (niftyRet === 0) return 1.0;
   return Math.round((stockRet / niftyRet) * 1000) / 1000;
+}
+
+function getLaggedFlow(asOf: number, flowDates: number[], flowByTs: Map<number, number>): number {
+  let bestDate = 0;
+  for (const d of flowDates) {
+    if (d < asOf) {
+      bestDate = d;
+    } else {
+      break;
+    }
+  }
+  return bestDate > 0 ? (flowByTs.get(bestDate) ?? 0) : 0;
 }
 
 async function loadDaily(instrumentKey: string, since: Date): Promise<OHLCV[]> {
@@ -198,6 +212,18 @@ export async function extractTrainingData(opts?: {
   const niftyByTs = new Map<number, number>();
   for (const c of niftyCandles) niftyByTs.set(new Date(c.timestamp).getTime(), c.close);
 
+  // Load institutional flows for FII/DII lag reconstruction
+  const flows = await db
+    .select()
+    .from(institutionalFlowsTable)
+    .where(gte(institutionalFlowsTable.date, since.toISOString().split("T")[0]!));
+  
+  const flowByTs = new Map<number, number>();
+  for (const f of flows) {
+    flowByTs.set(new Date(f.date).getTime(), f.fiiNet + f.diiNet);
+  }
+  const sortedFlowDates = Array.from(flowByTs.keys()).sort((a, b) => a - b);
+
   const instruments = await db
     .selectDistinct({ instrumentKey: candlesTable.instrumentKey })
     .from(candlesTable)
@@ -229,6 +255,7 @@ export async function extractTrainingData(opts?: {
 
       const asOf = new Date(candles[i]!.timestamp).getTime();
       const rs60 = computeRS60PIT(visible, niftyByTs, asOf);
+      const historicalFiiDiiFlowLag = getLaggedFlow(asOf, sortedFlowDates, flowByTs);
 
       for (const detect of DETECTORS) {
         let setup: SetupCandidate | null = null;
@@ -253,6 +280,10 @@ export async function extractTrainingData(opts?: {
           rs60,
           1.0, // sector RS: scanner's own fallback when sector series unavailable
           setup.riskReward,
+          undefined, // bidAskImbalance
+          undefined, // optionsOiChangeRate
+          false, // rankerIncomplete
+          historicalFiiDiiFlowLag
         );
         const features = toRankerFeatureArray(fv);
 
@@ -266,6 +297,7 @@ export async function extractTrainingData(opts?: {
         lines.push(
           JSON.stringify({
             ts: candles[i]!.timestamp,
+            resolutionTs: labeled.resolutionTs,
             symbol: meta.symbol,
             setupType: setup.setupType,
             direction: setup.direction,

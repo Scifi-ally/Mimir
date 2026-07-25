@@ -7,6 +7,7 @@ describe("security.ts - IP spoofing defense", () => {
     const req = {
       socket: { remoteAddress: "127.0.0.1" },
       ip: "127.0.0.1",
+      headers: {},
     } as unknown as Request;
     
     expect(isLocalRequest(req)).toBe(true);
@@ -18,6 +19,7 @@ describe("security.ts - IP spoofing defense", () => {
     const req = {
       socket: { remoteAddress: "172.18.0.1" },
       ip: "127.0.0.1", // Trust proxy might resolve X-Forwarded-For to local, but socket is 172
+      headers: {},
     } as unknown as Request;
     
     expect(isLocalRequest(req)).toBe(false);
@@ -30,6 +32,7 @@ describe("security.ts - IP spoofing defense", () => {
     const req = {
       socket: { remoteAddress: "203.0.113.50" },
       ip: "127.0.0.1",
+      headers: {},
     } as unknown as Request;
     
     // It should strictly look at socket.remoteAddress, thereby rejecting the spoof
@@ -40,6 +43,7 @@ describe("security.ts - IP spoofing defense", () => {
     const req = {
       socket: { remoteAddress: "::1" },
       ip: "::1",
+      headers: {},
     } as unknown as Request;
     
     expect(isLocalRequest(req)).toBe(true);
@@ -49,6 +53,7 @@ describe("security.ts - IP spoofing defense", () => {
     const req = {
       socket: { remoteAddress: "::ffff:127.0.0.1" },
       ip: "::ffff:127.0.0.1",
+      headers: {},
     } as unknown as Request;
     
     expect(isLocalRequest(req)).toBe(true);

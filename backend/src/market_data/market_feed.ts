@@ -146,13 +146,13 @@ export async function updateMarketFeed(): Promise<void> {
       if (niftyLTP !== null) availableKeys.push(NIFTY_KEY);
       if (vixLTP !== null) availableKeys.push(VIX_KEY);
 
-      if (niftyLTP === null && vixLTP === null) {
+      if (niftyLTP === null) {
         feedSnapshot = {
           ...feedSnapshot,
           status: "partial",
           authenticated: true,
           fetchedAt: new Date().toISOString(),
-          note: "No quote data returned",
+          note: vixLTP !== null ? "Nifty quote failed, VIX succeeded" : "No quote data returned",
         };
         logger.warn(
           { availableKeys, attempt },

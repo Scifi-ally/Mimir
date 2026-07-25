@@ -73,7 +73,8 @@ export const defaultConfig: TradingConfig = {
   vixPauseThreshold: 22,
   minSuggestionScore: 7.5,  // Raised to enforce high quality setups only
   minMtfConfluencePct: 75,   // Raised for strong multi-timeframe alignment
-  minAutoConfidencePct: 80,  // Raised for higher AI conviction
+  // Temporarily dropped to 65% for Phase 4 to allow signals to flow to frontend
+  minAutoConfidencePct: 65,
   brokeragePerOrderInr: 20,
   slippageBps: 5,
   confidenceThresholdByRegimeJson: '{"TRENDING_UP":70,"TRENDING_DOWN":70,"RANGING":74,"VOLATILE":78,"UNKNOWN":72}',

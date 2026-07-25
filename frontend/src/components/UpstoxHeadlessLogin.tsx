@@ -66,6 +66,19 @@ export function UpstoxHeadlessLogin({ type, onSuccess }: Props) {
           hasSucceeded.current = true;
           onSuccess();
         } else if (res.status === "awaiting_pin") {
+          const savedPinVal = savePin ? getDecryptedPin() : "";
+          if (savedPinVal) {
+            try {
+              const pinRes = await api.headlessAuth.submitPin(savedPinVal);
+              if (pinRes.status === "success") {
+                hasSucceeded.current = true;
+                onSuccess();
+                return;
+              }
+            } catch {
+              // Fallback to manual entry on failure
+            }
+          }
           setStep("pin");
         } else if (res.status === "awaiting_otp") {
           setStep("otp");
@@ -117,6 +130,19 @@ export function UpstoxHeadlessLogin({ type, onSuccess }: Props) {
     try {
       const res = await api.headlessAuth.submitOtp(otp);
       if (res.status === "awaiting_pin") {
+        const savedPinVal = savePin ? getDecryptedPin() : "";
+        if (savedPinVal) {
+          try {
+            const pinRes = await api.headlessAuth.submitPin(savedPinVal);
+            if (pinRes.status === "success") {
+              hasSucceeded.current = true;
+              onSuccess();
+              return;
+            }
+          } catch {
+            // Fallback to manual entry
+          }
+        }
         setStep("pin");
       }
     } catch (err: unknown) {

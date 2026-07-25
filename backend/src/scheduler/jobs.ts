@@ -563,10 +563,10 @@ export function startScheduler(): void {
     }
   });
 
-  // ── Every 5 min during market hours: continuous intraday suggestion generation ──
+  // ── Every 15 min during market hours: continuous intraday suggestion generation ──
   // Uses multi-timeframe analysis to catch intraday setups as they develop
   // Continuously generates suggestions throughout the day, not just at open
-  scheduleJob("intraday-generation", "*/5 9-15 * * 1-5", async () => {
+  scheduleJob("intraday-generation", "*/15 9-15 * * 1-5", async () => {
     if (isMarketOpen()) {
       logger.info(
         "Intraday: generating suggestions from continuous market analysis",

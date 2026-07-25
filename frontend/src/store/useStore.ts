@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import type { ScanProgress } from "@/types/api";
+import type { ScanProgress, ModelDecayTelemetry } from "@/types/api";
 
 // crypto.randomUUID requires a secure context — undefined when the dashboard
 // is opened over plain http:// on a LAN IP. IDs here only key React lists.
@@ -91,6 +91,8 @@ interface AppStore {
   savedPin: string;
   setSavedPin: (pin: string) => void;
   getDecryptedPin: () => string;
+  modelDecayTelemetry: ModelDecayTelemetry | null;
+  setModelDecayTelemetry: (data: ModelDecayTelemetry | null) => void;
 }
 
 export const useStore = create<AppStore>()(
@@ -121,6 +123,8 @@ export const useStore = create<AppStore>()(
       // If true security is needed here, the backend must use proper sessions.
       setSavedPin: (pin) => set({ savedPin: pin || "" }),
       getDecryptedPin: () => get().savedPin,
+      modelDecayTelemetry: null,
+      setModelDecayTelemetry: (data) => set({ modelDecayTelemetry: data }),
       scanState: { scanning: false, current: 0, total: 0, phase: "idle" },
   setScanState: (partial) =>
     set((state) => ({

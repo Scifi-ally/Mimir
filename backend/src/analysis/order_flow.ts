@@ -1,0 +1,86 @@
+import { tickDistribution } from "../market_data/tick_distribution";
+import { logger } from "../lib/logger";
+
+export interface OrderFlowImbalance {
+  buyVolume: number;
+  sellVolume: number;
+  ofi: number; // buyVolume - sellVolume
+  ofiRatio: number; // ofi / totalVolume (-1 to 1)
+  ofiEma: number; // Exponential Moving Average of OFI Ratio
+  ticksEvaluated: number;
+}
+
+const OFI_EMA_ALPHA = 0.1; // Smoothing factor for OFI EMA
+
+export function computeOFI(symbol: string): OrderFlowImbalance {
+  const defaultOFI: OrderFlowImbalance = {
+    buyVolume: 0,
+    sellVolume: 0,
+    ofi: 0,
+    ofiRatio: 0,
+    ofiEma: 0,
+    ticksEvaluated: 0
+  };
+
+  try {
+    const history = tickDistribution.getTickHistory(symbol);
+    if (!history || history.length < 2) return defaultOFI;
+
+    let buyVolume = 0;
+    let sellVolume = 0;
+    let lastDirection = 0; // 1 for buy, -1 for sell
+    let currentEma = 0;
+
+    for (let i = 1; i < history.length; i++) {
+      const prev = history[i - 1];
+      const curr = history[i];
+
+      const volDiff = curr.volume - prev.volume;
+      if (volDiff <= 0) continue; // No new volume or reset
+
+      if (curr.ltp > prev.ltp) {
+        buyVolume += volDiff;
+        lastDirection = 1;
+      } else if (curr.ltp < prev.ltp) {
+        sellVolume += volDiff;
+        lastDirection = -1;
+      } else {
+        // Price unchanged, use previous direction
+        if (lastDirection === 1) buyVolume += volDiff;
+        else if (lastDirection === -1) sellVolume += volDiff;
+      }
+
+      // Calculate instantaneous OFI ratio and update EMA
+      const instTotal = buyVolume + sellVolume;
+      const instOfiRatio = instTotal > 0 ? (buyVolume - sellVolume) / instTotal : 0;
+      currentEma = (instOfiRatio * OFI_EMA_ALPHA) + (currentEma * (1 - OFI_EMA_ALPHA));
+    }
+
+    const total = buyVolume + sellVolume;
+    const ofi = buyVolume - sellVolume;
+    const ofiRatio = total > 0 ? ofi / total : 0;
+
+    return {
+      buyVolume,
+      sellVolume,
+      ofi,
+      ofiRatio,
+      ofiEma: currentEma,
+      ticksEvaluated: history.length
+    };
+  } catch (err) {
+    logger.error({ err, symbol }, "Failed to compute OFI");
+    return defaultOFI;
+  }
+}
+
+export function getOrderFlowScore(symbol: string): number {
+  const ofi = computeOFI(symbol);
+  if (ofi.ticksEvaluated < 50) return 0; // Not enough data for a reliable score
+
+  // Scale EMA from [-1, 1] to [-100, 100]
+  // Usually OFI EMA fluctuates tightly around 0, so we amplify it.
+  const AMPLIFIER = 150; 
+  let score = ofi.ofiEma * AMPLIFIER;
+  return Math.max(-100, Math.min(100, score));
+}

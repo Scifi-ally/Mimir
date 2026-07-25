@@ -66,10 +66,44 @@ export function SuggestionsSlider({ isOpen, onClose, onSelectSymbol, activeSugge
   }, [isOpen, onClose]);
 
   const historySuggestions = suggestionsData?.data || [];
-  const activeTrades = (activeSuggestions || []).filter(s => s.status === 'ACTIVE' || s.status === 'PENDING');
-  const expiredTrades = historySuggestions.filter((s: import("@/types/api").Suggestion) => s.status === 'EXPIRED' || s.status === 'MISSED');
-  // Allow-list of terminal traded outcomes — REJECTED (dismissed, never traded) must not appear in any bucket
-  const completedTrades = historySuggestions.filter((s: import("@/types/api").Suggestion) => s.status === 'TARGET_1_HIT' || s.status === 'TARGET_2_HIT' || s.status === 'STOP_HIT' || s.status === 'CLOSED');
+  
+  const allSuggestions = new Map<string, import("@/types/api").Suggestion>();
+  
+  // Add history first
+  (historySuggestions || []).forEach((s: import("@/types/api").Suggestion) => {
+    if (s.status !== 'REJECTED') {
+      allSuggestions.set(s.id, s);
+    }
+  });
+
+  // Override with active (which are more up-to-date)
+  (activeSuggestions || []).forEach((s: import("@/types/api").Suggestion) => {
+    if (s.status !== 'REJECTED') {
+      allSuggestions.set(s.id, s);
+    }
+  });
+
+  const mergedList = Array.from(allSuggestions.values())
+    .sort((a, b) => new Date(b.generatedAt).getTime() - new Date(a.generatedAt).getTime());
+
+  const groupedSuggestions = mergedList.reduce((acc, s) => {
+      const d = new Date(s.generatedAt);
+      const today = new Date();
+      const yesterday = new Date(today);
+      yesterday.setDate(today.getDate() - 1);
+      
+      let key = d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+      if (d.toDateString() === today.toDateString()) key = "Today";
+      else if (d.toDateString() === yesterday.toDateString()) key = "Yesterday";
+      
+      const lastGroup = acc[acc.length - 1];
+      if (lastGroup && lastGroup.title === key) {
+        lastGroup.items.push(s);
+      } else {
+        acc.push({ title: key, items: [s] });
+      }
+      return acc;
+    }, [] as { title: string, items: import("@/types/api").Suggestion[] }[]);
 
   return (
     <AnimatePresence>
@@ -157,60 +191,27 @@ export function SuggestionsSlider({ isOpen, onClose, onSelectSymbol, activeSugge
                 <div className="flex-1 flex items-center justify-center py-20 text-destructive text-sm font-normal">
                   {error instanceof Error ? error.message : "Failed to load signals"}
                 </div>
-              ) : activeTrades.length === 0 && completedTrades.length === 0 && expiredTrades.length === 0 ? (
+              ) : groupedSuggestions.length === 0 ? (
                 <div className="flex flex-col items-center justify-center p-12 text-center text-muted-foreground">
                   <p className="text-sm font-normal text-foreground">No signals generated yet</p>
                 </div>
               ) : (
-                <>
-                  {activeTrades.length === 0 && (
-                    <div className="flex flex-col items-center justify-center p-8 text-center">
-                      <p className="text-sm font-normal text-foreground">No active signals — scanner monitoring</p>
-                    </div>
-                  )}
-                  {activeTrades.length > 0 && (
-                    <div className="flex flex-col gap-6 relative">
-                      <div className="flex flex-col gap-6 pl-2">
-                        <div className="flex flex-col gap-3">
-                          <h3 className="text-[10px] font-normal tracking-[0.08em] uppercase text-bull flex items-center gap-2">
-                            Active Trades ({activeTrades.length})
-                          </h3>
-                          <div className="grid pl-4 ml-1">
-                            {activeTrades.map((s: import("@/types/api").Suggestion) => (
-                              <SuggestionCard key={s.id} s={s} onSelectSymbol={onSelectSymbol} onClose={onClose} />
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                  {completedTrades.length > 0 && (
-                    <div className="flex flex-col gap-3 pl-2">
-                      <h3 className="text-[10px] font-normal tracking-[0.08em] uppercase text-muted-foreground flex items-center gap-2">
-                        Completed ({completedTrades.length})
-                      </h3>
+                <div className="flex flex-col gap-8 pl-2">
+                  {groupedSuggestions.map((group) => (
+                    <div key={group.title} className="flex flex-col gap-4">
+                      <h4 className="text-[11px] font-mono tracking-wider uppercase text-muted-foreground/80 pl-4 border-b border-border/10 pb-1">
+                        {group.title}
+                      </h4>
                       <div className="grid pl-4 ml-1">
-                        {completedTrades.map((s: import("@/types/api").Suggestion) => (
+                        {group.items.map((s: import("@/types/api").Suggestion) => (
                           <SuggestionCard key={s.id} s={s} onSelectSymbol={onSelectSymbol} onClose={onClose} />
                         ))}
                       </div>
                     </div>
-                  )}
-                  {expiredTrades.length > 0 && (
-                    <div className="flex flex-col gap-3 pl-2">
-                      <h3 className="text-[10px] font-normal tracking-[0.08em] uppercase text-muted-foreground/60 flex items-center gap-2">
-                        Expired ({expiredTrades.length})
-                      </h3>
-                      <div className="grid pl-4 ml-1">
-                        {expiredTrades.map((s: import("@/types/api").Suggestion) => (
-                          <SuggestionCard key={s.id} s={s} onSelectSymbol={onSelectSymbol} onClose={onClose} />
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </>
-            )}
-          </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </motion.div>
         </>
       )}
@@ -307,6 +308,15 @@ function SuggestionCard({ s, onSelectSymbol, onClose }: {
               s.direction === 'BUY' ? "bg-bull/10 text-bull" : "bg-bear/10 text-bear"
             )}>
               {s.direction}
+            </span>
+            <span className={cn(
+              "text-[10px] font-normal px-1.5 py-0.5 rounded uppercase tracking-wider ml-1",
+              isActive ? "bg-primary/10 text-primary" : 
+              isWin ? "bg-bull/10 text-bull" : 
+              isLoss ? "bg-bear/10 text-bear" : 
+              "bg-muted-foreground/10 text-muted-foreground"
+            )}>
+              {s.status.replace(/_/g, ' ')}
             </span>
             <span className="font-normal text-base tracking-tight">{s.symbol}</span>
             <span className="text-[10px] text-muted-foreground/60 font-mono hidden sm:inline-block">#{s.id.slice(-4)}</span>

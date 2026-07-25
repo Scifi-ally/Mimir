@@ -25,6 +25,9 @@ const circuitLimitTracker = new Map<string, {
   firstDetectedAt: number;
 }>();
 
+// HIGH FIX: Prevent race conditions when multiple ticks for the same symbol arrive concurrently
+const processingLocks = new Map<string, Promise<void>>();
+
 function getStartingBalance(): string {
   return getConfig().tradingCapital.toFixed(2);
 }
@@ -188,14 +191,15 @@ export async function initPaperEngine() {
         const p = cal.winRate;
         const b = suggestion.riskReward;
         const kellyFraction = p - (1 - p) / b;
-        const quarterKellyPct = Math.max(0, kellyFraction) * 100 * 0.25;
+        // Optimized via Phase 5 walk-forward grid search
+        const optimizedKellyPct = Math.max(0, kellyFraction) * 100 * 0.20;
         // Blend toward the empirical size as evidence accumulates (full weight at 100 samples)
         const w = Math.min(cal.samples, 100) / 100;
-        riskPct = riskPct * (1 - w) + Math.min(quarterKellyPct, maxRiskCap) * w;
+        riskPct = riskPct * (1 - w) + Math.min(optimizedKellyPct, maxRiskCap) * w;
       }
 
       // Ensure within bounds
-      riskPct = Math.min(Math.max(riskPct, 0.25), maxRiskCap);
+      riskPct = Math.min(Math.max(riskPct, 0.20), maxRiskCap);
       const riskAmount = balance.mul(riskPct).div(100);
       
       logger.info({ 
@@ -215,24 +219,48 @@ export async function initPaperEngine() {
       // paper P&L was systematically off per-symbol. Capped at 0.5% so one
       // junk quote can't model an absurd fill.
       let observedHalfSpreadFrac: number | null = null;
+      let currentLtp: number | null = null;
       const ticks = await stateStore.getTicks(suggestion.symbol);
       if (ticks.length > 0) {
         const latestTick = ticks[ticks.length - 1];
-        if (latestTick && latestTick.bid != null && latestTick.ask != null && latestTick.price > 0) {
-          const spread = (latestTick.ask - latestTick.bid) / latestTick.price;
-          if (spread > 0.02) { // Increased tolerance to 2%
-             logger.warn({ symbol: suggestion.symbol, spread: (spread * 100).toFixed(2) }, "PaperEngine: Aborted entry due to bid-ask spread blowout > 2%");
-             return;
+        if (latestTick) {
+          currentLtp = latestTick.price;
+          if (latestTick.bid != null && latestTick.ask != null && latestTick.price > 0) {
+            const spread = (latestTick.ask - latestTick.bid) / latestTick.price;
+            if (spread > 0.02) { // Increased tolerance to 2%
+               logger.warn({ symbol: suggestion.symbol, spread: (spread * 100).toFixed(2) }, "PaperEngine: Aborted entry due to bid-ask spread blowout > 2%");
+               return;
+            }
+            if (spread >= 0) observedHalfSpreadFrac = Math.min(spread / 2, 0.005);
           }
-          if (spread >= 0) observedHalfSpreadFrac = Math.min(spread / 2, 0.005);
         }
       }
 
       const isBuy = suggestion.direction === "BUY";
       // Entry slippage: observed half-spread when a real quote exists, else flat 0.05%
       const entrySlipFrac = observedHalfSpreadFrac ?? 0.0005;
-      const rawEntry = new Decimal(suggestion.entry);
-      const entry = isBuy ? rawEntry.mul(1 + entrySlipFrac) : rawEntry.mul(1 - entrySlipFrac);
+      
+      const originalEntryPrice = new Decimal(suggestion.entry);
+      
+      // Use the current LTP as the true execution price, falling back to theoretical entry if tick is missing
+      const trueBasePrice = currentLtp !== null && currentLtp > 0 ? new Decimal(currentLtp) : originalEntryPrice;
+
+      // Point-in-time missed fill guard: if trueBasePrice moved > 0.5% away from original theoretical entry in the wrong direction
+      const priceSlipPct = isBuy 
+          ? trueBasePrice.minus(originalEntryPrice).div(originalEntryPrice).mul(100) 
+          : originalEntryPrice.minus(trueBasePrice).div(originalEntryPrice).mul(100);
+          
+      if (priceSlipPct.gt(0.5)) {
+          logger.warn({ 
+            symbol: suggestion.symbol, 
+            priceSlipPct: priceSlipPct.toNumber(), 
+            originalEntry: originalEntryPrice.toNumber(), 
+            currentLtp: trueBasePrice.toNumber() 
+          }, "PaperEngine: Aborted entry due to point-in-time missed fill guard (price moved > 0.5% away)");
+          return;
+      }
+
+      const entry = isBuy ? trueBasePrice.mul(1 + entrySlipFrac) : trueBasePrice.mul(1 - entrySlipFrac);
       const stopLoss = new Decimal(suggestion.stopLoss);
       
       // CRITICAL FIX (Issue #1): Check for zero/invalid stop distance BEFORE using it
@@ -397,17 +425,21 @@ export async function initPaperEngine() {
   });
 
   intelligenceBus.subscribe("marketTick", async (tick: MarketTickEvent) => {
-    try {
-      const config = getConfig();
-      if (!config.paperTradingEnabled && config.tradingMode !== "LIVE") return;
+    const symbol = tick.symbol;
+    const lock = processingLocks.get(symbol) || Promise.resolve();
+    
+    const nextLock = lock.then(async () => {
+      try {
+        const config = getConfig();
+        if (!config.paperTradingEnabled && config.tradingMode !== "LIVE") return;
 
-      const positionsForSymbol = await db.select().from(paperPositionsTable)
-        .where(and(
-          eq(paperPositionsTable.status, 'OPEN'),
-          eq(paperPositionsTable.symbol, tick.symbol)
-        ));
+        const positionsForSymbol = await db.select().from(paperPositionsTable)
+          .where(and(
+            eq(paperPositionsTable.status, 'OPEN'),
+            eq(paperPositionsTable.symbol, symbol)
+          ));
 
-      if (positionsForSymbol.length === 0) return;
+        if (positionsForSymbol.length === 0) return;
 
       // We need the suggestion details to know the target and stopLoss
       // For simplicity, we can fetch them or assume position_tracker updates them
@@ -723,10 +755,19 @@ export async function initPaperEngine() {
               .where(eq(paperPositionsTable.id, pos.id));
           }
         }
+        }
+      } catch (err) {
+        logger.error({ err }, "PaperEngine: Failed to process tick");
       }
-    } catch (err) {
-      logger.error({ err }, "PaperEngine: Failed to process tick");
-    }
+    }).catch(err => {
+      logger.error({ err }, "PaperEngine: Unhandled error in processing lock chain");
+    }).finally(() => {
+      if (processingLocks.get(symbol) === nextLock) {
+        processingLocks.delete(symbol);
+      }
+    });
+    
+    processingLocks.set(symbol, nextLock);
   });
 
   logger.info("PaperTrading Engine Initialized");
