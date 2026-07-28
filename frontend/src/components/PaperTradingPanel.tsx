@@ -357,7 +357,7 @@ export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClo
 
             /* Account Metrics — Hero Row */
             <motion.div variants={staggerContainer} initial="hidden" animate="show" className="px-6 sm:px-8 py-5 shrink-0">
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 sm:gap-6">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 sm:gap-6">
                 {/* Equity — Hero metric */}
                 <motion.div variants={staggerItem} className="flex flex-col gap-1 min-w-0 overflow-hidden" title={`₹${fmtNum(equity, 2)}`}>
                   <span className="text-[10px] font-normal text-foreground/50 tracking-[0.08em] uppercase truncate">Equity</span>
@@ -404,8 +404,6 @@ export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClo
                   <span className="text-[10px] font-normal text-foreground/50 tracking-[0.08em] uppercase truncate">Unrealized</span>
                   <span className={cn("text-xl sm:text-2xl font-mono tabular-nums font-normal tracking-tight flex items-center gap-1.5 truncate", isProfit ? "text-bull" : isLoss ? "text-bear" : "text-foreground/40")}>
                     {isProfit ? <TrendingUp className="w-4 h-4 shrink-0" /> : isLoss ? <TrendingDown className="w-4 h-4 shrink-0" /> : null}
-                    {/* A loss must read as negative even in monochrome/screenshot/color-blind
-                        contexts — never strip the minus sign. Matches the LIVE Day PnL above. */}
                     <span className="truncate">{isProfit ? '+' : isLoss ? '-' : ''}₹{fmtNum(Math.abs(livePnl), 2)}</span>
                   </span>
                 </motion.div>
@@ -421,6 +419,17 @@ export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClo
                       {stats.wins}W / {stats.losses}L
                     </span>
                   )}
+                </motion.div>
+
+                {/* Total Stocks / Qty Bought */}
+                <motion.div variants={staggerItem} className="flex flex-col gap-1 min-w-0 overflow-hidden">
+                  <span className="text-[10px] font-normal text-foreground/50 tracking-[0.08em] uppercase truncate">Total Qty</span>
+                  <span className="text-xl sm:text-2xl font-mono tabular-nums font-semibold tracking-tight text-[#00f2fe] truncate">
+                    {positions.reduce((acc, p) => acc + Math.abs(p.quantity), 0)} <span className="text-xs font-normal text-foreground/40">shares</span>
+                  </span>
+                  <span className="text-[10px] font-mono tabular-nums text-foreground/30 truncate">
+                    {positions.length} active position{positions.length === 1 ? '' : 's'}
+                  </span>
                 </motion.div>
               </div>
             </motion.div>
