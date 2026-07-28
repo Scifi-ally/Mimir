@@ -32,7 +32,7 @@ const EMPTY_POSITIONS: PaperPosition[] = [];
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const EMPTY_HISTORY: any[] = [];
 
-export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClose?: () => void }) {
+export function PaperTradingPanel({ isOpen, onClose, onSelectSymbol }: { isOpen?: boolean; onClose?: () => void; onSelectSymbol?: (symbol: string) => void }) {
   const showIsland = useStore((s) => s.showIsland);
   const queryClient = useQueryClient();
 
@@ -509,8 +509,8 @@ export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClo
                               </h3>
                             </div>
                             {group.items.map(x => (
-                              x.type === "open" ? <PositionRow key={`open-${x.item.id}`} pos={x.item} />
-                              : <HistoryRow key={`hist-${x.item.id}`} hist={x.item} />
+                              x.type === "open" ? <PositionRow key={`open-${x.item.id}`} pos={x.item} onSelectSymbol={onSelectSymbol} onClose={onClose} />
+                              : <HistoryRow key={`hist-${x.item.id}`} hist={x.item} onSelectSymbol={onSelectSymbol} onClose={onClose} />
                             ))}
                           </div>
                         ))
@@ -641,7 +641,7 @@ function LiveOrderRow({ order }: { order: { id: string; symbol: string; directio
 }
 
 
-function PositionRow({ pos }: { pos: PaperPosition }) {
+function PositionRow({ pos, onSelectSymbol, onClose }: { pos: PaperPosition; onSelectSymbol?: (symbol: string) => void; onClose?: () => void }) {
   const pnl = Number(pos.unrealizedPnl);
   const entry = Number(pos.avgEntryPrice);
   const pnlPct = entry > 0 ? (pnl / (entry * pos.quantity)) * 100 : 0;
@@ -651,9 +651,13 @@ function PositionRow({ pos }: { pos: PaperPosition }) {
   return (
     <motion.div
       variants={staggerItem}
-      // No active:scale press feedback: the row isn't clickable, and implying a
-      // tap target that does nothing reads as a broken button.
-      className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-foreground/[0.03] hover:bg-foreground/[0.06] transition-all duration-300 rounded-xl group"
+      onClick={() => {
+        if (onSelectSymbol) {
+          onSelectSymbol(pos.symbol);
+          onClose?.();
+        }
+      }}
+      className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-foreground/[0.03] hover:bg-foreground/[0.06] active:scale-[0.998] cursor-pointer transition-all duration-150 rounded-xl group"
     >
       <div className="flex flex-col gap-2 min-w-0">
         <div className="flex items-center gap-3">
@@ -700,7 +704,7 @@ function PositionRow({ pos }: { pos: PaperPosition }) {
   );
 }
 
-function HistoryRow({ hist }: { hist: PaperPosition }) {
+function HistoryRow({ hist, onSelectSymbol, onClose }: { hist: PaperPosition; onSelectSymbol?: (symbol: string) => void; onClose?: () => void }) {
   const pnl = Number(hist.realizedPnl);
   const entry = Number(hist.avgEntryPrice);
   const pnlPct = entry > 0 ? (pnl / (entry * hist.quantity)) * 100 : 0;
@@ -718,7 +722,13 @@ function HistoryRow({ hist }: { hist: PaperPosition }) {
   return (
     <motion.div 
       variants={staggerItem} 
-      className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-secondary/10 hover:bg-secondary/20 transition-all duration-300 rounded-xl group"
+      onClick={() => {
+        if (onSelectSymbol) {
+          onSelectSymbol(hist.symbol);
+          onClose?.();
+        }
+      }}
+      className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-secondary/10 hover:bg-secondary/20 active:scale-[0.998] cursor-pointer transition-all duration-150 rounded-xl group"
     >
       <div className="flex flex-col gap-2 min-w-0">
         <div className="flex items-center gap-3">

@@ -697,16 +697,9 @@ export const PriceChart = memo(function PriceChart({ symbol, chartMode, onChartM
       if (c.low < candleMin) candleMin = c.low;
       if (c.high > candleMax) candleMax = c.high;
     }
-    const lastClose = candles[candles.length - 1].close;
-    const candleRange = candleMax - candleMin;
-    const margin = Math.max(candleRange * 0.5, candleMax * 0.15);
-    const rangeMin = candleMin - margin;
-    const rangeMax = candleMax + margin;
+    const lastClose = candles[candles.length - 1]?.close || 0;
     const isInRange = (price: number) => {
-      if (!Number.isFinite(price) || price <= 0 || !lastClose) return false;
-      // Strict sanity check against active stock close price: must be between 40% and 250% of lastClose
-      if (price < lastClose * 0.4 || price > lastClose * 2.5) return false;
-      return price >= rangeMin && price <= rangeMax;
+      return Number.isFinite(price) && price > 0;
     };
 
     const isMatchingSymbol = (targetSym?: string) => {
@@ -720,31 +713,31 @@ export const PriceChart = memo(function PriceChart({ symbol, chartMode, onChartM
       if (isInRange(suggestion.entryPrice)) {
         entryLineRef.current = candleRef.current.createPriceLine({
           price: suggestion.entryPrice,
-          color: '#3b82f6',
+          color: '#00e676',
           lineWidth: 1,
           lineStyle: 2,
           axisLabelVisible: true,
-          title: 'ENTRY',
+          title: `ENTRY (₹${suggestion.entryPrice})`,
         });
       }
       if (isInRange(suggestion.stopLoss)) {
         stopLineRef.current = candleRef.current.createPriceLine({
           price: suggestion.stopLoss,
-          color: '#ef4444',
+          color: '#ff6b00',
           lineWidth: 1,
           lineStyle: 2,
           axisLabelVisible: true,
-          title: 'STOP',
+          title: `STOP (₹${suggestion.stopLoss})`,
         });
       }
       if (isInRange(suggestion.target1)) {
         targetLineRef.current = candleRef.current.createPriceLine({
           price: suggestion.target1,
-          color: '#22c55e',
+          color: '#00f2fe',
           lineWidth: 1,
           lineStyle: 2,
           axisLabelVisible: true,
-          title: 'TARGET',
+          title: `TARGET (₹${suggestion.target1})`,
         });
       }
     }
@@ -757,31 +750,31 @@ export const PriceChart = memo(function PriceChart({ symbol, chartMode, onChartM
       if (isInRange(posEntry)) {
         posEntryLineRef.current = candleRef.current.createPriceLine({
           price: posEntry,
-          color: position.direction === 'BUY' ? '#3b82f6' : '#f59e0b',
+          color: position.direction === 'BUY' ? '#00e676' : '#ff1744',
           lineWidth: 2,
           lineStyle: 0,
           axisLabelVisible: true,
-          title: `POS ${position.direction}`,
+          title: `ENTRY (${position.direction} ₹${fmtNum(posEntry, 2)})`,
         });
       }
       if (isInRange(posSL)) {
         posStopLineRef.current = candleRef.current.createPriceLine({
           price: posSL,
-          color: '#ef4444',
+          color: '#ff6b00',
           lineWidth: 2,
           lineStyle: 2,
           axisLabelVisible: true,
-          title: 'POS SL',
+          title: `SL (₹${fmtNum(posSL, 2)})`,
         });
       }
       if (isInRange(posTgt)) {
         posTargetLineRef.current = candleRef.current.createPriceLine({
           price: posTgt,
-          color: '#22c55e',
+          color: '#00f2fe',
           lineWidth: 2,
           lineStyle: 2,
           axisLabelVisible: true,
-          title: 'POS TGT',
+          title: `TGT (₹${fmtNum(posTgt, 2)})`,
         });
       }
     }

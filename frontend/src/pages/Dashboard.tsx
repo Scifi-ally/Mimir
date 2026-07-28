@@ -72,6 +72,7 @@ export default function Dashboard() {
   });
   const suggestionsQuery = useQuery<Suggestion[]>({ queryKey: ["suggestions"], queryFn: () => api.activeSuggestions(), refetchInterval: 15000, staleTime: 10000, placeholderData: (prev) => prev });
   const positionsQuery = useQuery({ queryKey: ["paperTrading", "positions"], queryFn: () => api.paper.positions(), refetchInterval: 10000, staleTime: 5000, placeholderData: (prev) => prev });
+  const paperHistoryQuery = useQuery({ queryKey: ["paperTrading", "history"], queryFn: () => api.paper.history(), refetchInterval: 15000, staleTime: 10000, placeholderData: (prev) => prev });
   const indicesQuery = useQuery({ queryKey: ["indices"], queryFn: api.dashboardIndices, refetchInterval: 15000, staleTime: 10000, placeholderData: (prev) => prev });
   const regimeQuery = useQuery({ queryKey: ["regime"], queryFn: api.marketRegime, refetchInterval: 30000, staleTime: 20000, placeholderData: (prev) => prev });
   const monitoringQuery = useQuery({ queryKey: ["monitoring"], queryFn: api.intradayMonitoring, refetchInterval: 15000, staleTime: 10000, placeholderData: (prev) => prev });
@@ -229,6 +230,14 @@ export default function Dashboard() {
   const indianContext = indianContextQuery.data ?? { fiiDii: null, niftyOptionChain: null };
 
   const activeSymbol = selectedSymbol || watchlistItems[0]?.symbol || "NIFTY 50";
+
+  const selectedPosition = useMemo(() => {
+    const openPos = positions.find((p: import("@/types/api").PaperPosition) => p.symbol === activeSymbol && (p.status === "OPEN" || p.quantity !== 0));
+    if (openPos) return openPos;
+    const histPos = (paperHistoryQuery.data ?? []).find((p: import("@/types/api").PaperPosition) => p.symbol === activeSymbol);
+    if (histPos) return histPos;
+    return undefined;
+  }, [positions, paperHistoryQuery.data, activeSymbol]);
 
   useEffect(() => {
     if (!selectedSymbol && watchlistItems.length > 0) {
@@ -538,7 +547,7 @@ export default function Dashboard() {
                           onChartModeChange={setChartMode} 
                           isMarketOpen={session?.isMarketOpen} 
                           suggestion={suggestions.find(s => s.symbol === activeSymbol)} 
-                          position={positions.find((p: import("@/types/api").PaperPosition) => p.symbol === activeSymbol && p.status === "OPEN")}
+                          position={selectedPosition}
                           isAuthenticated={status?.upstoxAuthenticated}
                         />
                       </motion.div>
@@ -630,7 +639,7 @@ export default function Dashboard() {
                       onChartModeChange={setChartMode} 
                       isMarketOpen={session?.isMarketOpen} 
                       suggestion={suggestions.find(s => s.symbol === activeSymbol)} 
-                      position={positions.find((p: import("@/types/api").PaperPosition) => p.symbol === activeSymbol && p.status === "OPEN")}
+                      position={selectedPosition}
                       isAuthenticated={status?.upstoxAuthenticated} 
                     />
                   </motion.div>
@@ -671,7 +680,7 @@ export default function Dashboard() {
       
       <Suspense fallback={<div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm"><Loader2 className="h-6 w-6 animate-spin text-foreground/50" /></div>}>
         <SuggestionsSlider isOpen={isSuggestionsOpen} onClose={() => setIsSuggestionsOpen(false)} onSelectSymbol={(s) => setSelectedSymbol(s)} activeSuggestions={suggestions} />
-        <PaperTradingPanel isOpen={isPaperTradingOpen} onClose={() => setIsPaperTradingOpen(false)} />
+        <PaperTradingPanel isOpen={isPaperTradingOpen} onClose={() => setIsPaperTradingOpen(false)} onSelectSymbol={(s) => setSelectedSymbol(s)} />
         <ReportsLibrary isOpen={isReportsOpen} onClose={() => setIsReportsOpen(false)} />
         <SettingsDialog isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
       </Suspense>
