@@ -764,7 +764,7 @@ function buildMonitorFeatureVector(
     optionsOiChangeRate: 0,
     fiiDiiNetFlowLag: 0,
 
-    rankerIncomplete: true,
+    rankerIncomplete: !Number.isFinite(snap.rsi14) || snap.rsi14 <= 0,
   };
 }
 
