@@ -35,7 +35,7 @@
     "express": "^5",
     "ioredis": "^5.11.1",
     "msgpackr": "^2.0.4",
-    "node-cron": "^4.2.1",
+    "node-cron": "^4.6.0",
     "pg": "^8.20.0",
     "pino": "^9",
     "pino-http": "^10",
