@@ -82,6 +82,7 @@ export const PriceChart = memo(function PriceChart({ symbol, chartMode, onChartM
   const [showEma, setShowEma] = useState(true);
   const [showVwap, setShowVwap] = useState(true);
   const legendRef = useRef<HTMLDivElement>(null);
+  const animFrameRef = useRef<number | null>(null);
   const chartId = useId();
 
   const activeTf = chartMode === "forecast" ? PROJECTION_LOOKBACK : timeframe;
@@ -557,6 +558,7 @@ export const PriceChart = memo(function PriceChart({ symbol, chartMode, onChartM
         close,
         high: Math.max(open, close, rawHigh, rawLow),
         low: Math.min(open, close, rawHigh, rawLow),
+        volume: c.volume ?? 0,
       };
     });
     
@@ -570,68 +572,97 @@ export const PriceChart = memo(function PriceChart({ symbol, chartMode, onChartM
       value: c.close,
     }));
 
-    // Set candle data first so time scale is established before overlays (#7)
+    const volumes = formatted.map((c) => ({
+      time: c.time,
+      value: Number.isFinite(c.volume) ? c.volume! : 0,
+      color: c.close >= c.open ? "rgba(0, 230, 118, 0.3)" : "rgba(255, 23, 68, 0.3)",
+    }));
+
+    // Set candle data with smooth left-to-right bar-by-bar progressive animation
     const loadedChartKey = `${symbol}-${activeTf.label}-${chartMode}`;
-    candleRef.current.setData(formatted);
 
-    if (showEma && chartMode === "actual") {
-      emaRef.current.setData(calcEma(closes, 20));
+    if (animFrameRef.current) {
+      cancelAnimationFrame(animFrameRef.current);
+      animFrameRef.current = null;
     }
 
-    if (showVwap && chartMode === "actual" && uniqueLiveCandles.length > 0) {
-      const vwapInput = liveBarRef.current && (liveBarRef.current.time as number) > lastTime
-        ? [...uniqueLiveCandles, {
-            ts: new Date((liveBarRef.current.time as number) * 1000).toISOString(),
-            open: liveBarRef.current.open,
-            high: liveBarRef.current.high,
-            low: liveBarRef.current.low,
-            close: liveBarRef.current.close,
-            volume: liveBarRef.current.volume,
-            vwapTurnover: liveBarRef.current.vwapTurnover
-          }]
-        : uniqueLiveCandles;
-      vwapRef.current.setData(calcVwap(vwapInput));
-    }
-
-    const volumes = uniqueLiveCandles.map((c) => {
-      return {
-        time: c.parsedTime,
-        value: Number.isFinite(c.volume) ? c.volume : 0,
-        // Use close >= open (body color) convention consistently (#8)
-        color:
-          c.close >= c.open
-            ? "rgba(34, 197, 94, 0.3)"
-            : "rgba(239, 68, 68, 0.3)",
-      };
-    });
-    
-    if (liveBarRef.current && (liveBarRef.current.time as number) > lastTime) {
-      volumes.push({
-        time: liveBarRef.current.time,
-        value: 1,
-        color: liveBarRef.current.close >= liveBarRef.current.open ? "rgba(34, 197, 94, 0.3)" : "rgba(239, 68, 68, 0.3)",
-      });
-    }
-
-    volumeRef.current.setData(volumes);
-
-    // Clean initial chart zoom when switching symbols or timeframes
     const containerReady = (containerRef.current?.clientHeight ?? 0) > 20;
-    if (lastFitKey.current !== loadedChartKey && loadedChartKey === currentChartKey && formatted.length > 0 && containerReady) {
-      const timeScale = chartRef.current?.timeScale();
-      if (timeScale) {
-        const totalBars = formatted.length;
-        if (activeTf.label === "1D") {
-          const visibleBars = Math.min(totalBars, 150);
-          timeScale.setVisibleLogicalRange({
-            from: Math.max(0, totalBars - visibleBars),
-            to: totalBars + 2,
-          });
-        } else {
-          timeScale.fitContent();
+    const isNewChart = lastFitKey.current !== loadedChartKey && loadedChartKey === currentChartKey && formatted.length > 0 && containerReady;
+
+    if (isNewChart) {
+      const totalBars = formatted.length;
+      const step = Math.max(4, Math.ceil(totalBars / 14));
+      let count = Math.min(step, totalBars);
+
+      const renderFrame = () => {
+        if (!candleRef.current) return;
+        const slice = formatted.slice(0, count);
+        candleRef.current.setData(slice);
+
+        if (showEma && chartMode === "actual" && emaRef.current) {
+          emaRef.current.setData(calcEma(closes.slice(0, count), 20));
         }
+
+        if (volumeRef.current) {
+          volumeRef.current.setData(volumes.slice(0, count));
+        }
+
+        const timeScale = chartRef.current?.timeScale();
+        if (timeScale) {
+          timeScale.setVisibleLogicalRange({
+            from: 0,
+            to: count + 2,
+          });
+        }
+
+        if (count < totalBars) {
+          count = Math.min(count + step, totalBars);
+          animFrameRef.current = requestAnimationFrame(renderFrame);
+        } else {
+          lastFitKey.current = currentChartKey;
+          if (timeScale) {
+            if (activeTf.label === "1D") {
+              const visibleBars = Math.min(totalBars, 150);
+              timeScale.setVisibleLogicalRange({
+                from: Math.max(0, totalBars - visibleBars),
+                to: totalBars + 2,
+              });
+            } else {
+              timeScale.fitContent();
+            }
+          }
+          if (showVwap && chartMode === "actual" && uniqueLiveCandles.length > 0 && vwapRef.current) {
+            vwapRef.current.setData(calcVwap(uniqueLiveCandles));
+          }
+        }
+      };
+
+      animFrameRef.current = requestAnimationFrame(renderFrame);
+    } else {
+      candleRef.current.setData(formatted);
+
+      if (showEma && chartMode === "actual" && emaRef.current) {
+        emaRef.current.setData(calcEma(closes, 20));
       }
-      lastFitKey.current = currentChartKey;
+
+      if (showVwap && chartMode === "actual" && uniqueLiveCandles.length > 0 && vwapRef.current) {
+        const vwapInput = liveBarRef.current && (liveBarRef.current.time as number) > lastTime
+          ? [...uniqueLiveCandles, {
+              ts: new Date((liveBarRef.current.time as number) * 1000).toISOString(),
+              open: liveBarRef.current.open,
+              high: liveBarRef.current.high,
+              low: liveBarRef.current.low,
+              close: liveBarRef.current.close,
+              volume: liveBarRef.current.volume,
+              vwapTurnover: liveBarRef.current.vwapTurnover
+            }]
+          : uniqueLiveCandles;
+        vwapRef.current.setData(calcVwap(vwapInput));
+      }
+
+      if (volumeRef.current) {
+        volumeRef.current.setData(volumes);
+      }
     }
   }, [candles, chartMode, showEma, showVwap, symbol, activeTf.label, currentChartKey]);
 
@@ -1102,8 +1133,7 @@ export const PriceChart = memo(function PriceChart({ symbol, chartMode, onChartM
             </div>
           </motion.div>
         )}
-        
-        {loading && <AnimatedChartLoader symbol={symbol} />}
+
 
         {!loading && candles.length === 0 && (
           <div className="absolute inset-0 flex flex-col items-center justify-center z-10 p-6 text-center gap-3 bg-background/80 backdrop-blur-md">
@@ -1237,98 +1267,6 @@ function buildForecastProjection(candles: Candle[], forecast: SymbolForecast | n
   };
 }
 
-function AnimatedChartLoader({ symbol }: { symbol: string }) {
-  const bars = [
-    { open: 35, close: 65, high: 75, low: 25, bull: true },
-    { open: 60, close: 45, high: 68, low: 38, bull: false },
-    { open: 48, close: 80, high: 85, low: 42, bull: true },
-    { open: 75, close: 55, high: 82, low: 50, bull: false },
-    { open: 58, close: 90, high: 95, low: 52, bull: true },
-    { open: 85, close: 70, high: 90, low: 65, bull: false },
-    { open: 72, close: 105, high: 110, low: 68, bull: true },
-    { open: 100, close: 85, high: 104, low: 80, bull: false },
-    { open: 88, close: 120, high: 125, low: 82, bull: true },
-    { open: 115, close: 95, high: 118, low: 90, bull: false },
-    { open: 98, close: 135, high: 140, low: 92, bull: true },
-    { open: 130, close: 112, high: 135, low: 108, bull: false },
-  ];
 
-  return (
-    <motion.div
-      className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center overflow-hidden bg-background/40 backdrop-blur-[2px] z-20"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.08 }}
-    >
-      {/* Clean Subtle Grid */}
-      <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.015)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.015)_1px,transparent_1px)] bg-[size:32px_32px]" />
-
-      {/* Candlestick Bar Wave Animation */}
-      <div className="w-full max-w-sm h-28 px-4 flex items-center justify-between relative z-10">
-        {bars.map((bar, idx) => {
-          const color = bar.bull ? "#00e676" : "#ff1744";
-          return (
-            <motion.div
-              key={idx}
-              className="flex flex-col items-center justify-center h-full relative w-2.5"
-              initial={{ scaleY: 0.4, opacity: 0.3 }}
-              animate={{
-                scaleY: [0.5, 1.15, 0.65, 1, 0.5],
-                opacity: [0.4, 1, 0.75, 1, 0.4],
-              }}
-              transition={{
-                duration: 0.75,
-                repeat: Infinity,
-                repeatType: "reverse",
-                delay: idx * 0.05,
-                ease: "easeInOut",
-              }}
-            >
-              {/* Wick */}
-              <div
-                className="w-[1.5px] rounded-full opacity-60"
-                style={{
-                  height: `${bar.high - bar.low}px`,
-                  backgroundColor: color,
-                }}
-              />
-              {/* Candle Body */}
-              <div
-                className="absolute w-2 rounded-[1.5px] shadow-[0_0_6px_rgba(0,0,0,0.6)]"
-                style={{
-                  height: `${Math.max(6, Math.abs(bar.close - bar.open))}px`,
-                  backgroundColor: color,
-                  top: `calc(50% - ${(bar.high - bar.low) / 2}px + ${Math.min(bar.open, bar.close) - bar.low}px)`,
-                }}
-              />
-            </motion.div>
-          );
-        })}
-
-        {/* Laser Scanner Beam */}
-        <motion.div
-          className="absolute top-0 bottom-0 w-16 bg-gradient-to-r from-transparent via-[#00f2fe]/20 to-transparent border-r border-[#00f2fe]/40"
-          initial={{ left: "-15%" }}
-          animate={{ left: "115%" }}
-          transition={{ duration: 0.85, repeat: Infinity, ease: "linear" }}
-        />
-      </div>
-
-      {/* Super Clean HUD Badge */}
-      <motion.div 
-        className="mt-2 flex items-center gap-2 px-3 py-1 rounded-full bg-background/90 border border-foreground/10 backdrop-blur-md shadow-lg"
-        initial={{ y: 4, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        transition={{ duration: 0.08 }}
-      >
-        <span className="w-1.5 h-1.5 rounded-full bg-[#00e676] animate-pulse" />
-        <span className="text-[10px] font-mono font-medium uppercase tracking-widest text-foreground/80">
-          BUILDING CHART <span className="text-[#00f2fe] font-bold">{symbol}</span>
-        </span>
-      </motion.div>
-    </motion.div>
-  );
-}
 
 
