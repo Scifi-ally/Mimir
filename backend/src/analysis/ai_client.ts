@@ -75,6 +75,11 @@ function getAiServiceUrl(): string {
   return process.env.AI_SERVICE_URL || "http://localhost:8001";
 }
 
+function getAiServiceHeaders(): Record<string, string> {
+  const token = process.env.AI_SERVICE_TOKEN?.trim();
+  return token ? { "X-AI-Service-Token": token } : {};
+}
+
 // Lightweight Circuit Breaker (Resolves Finding 1B & 2A)
 class CircuitBreaker {
   private failures = 0;
@@ -232,7 +237,7 @@ export async function batchInference(
         { url, candidates: enrichedCandidates.length, timeoutMs: inferenceTimeoutMs },
         "Calling Python AI service for batch inference",
       );
-      const response = await axios.post<BatchResponse>(url, { candidates: enrichedCandidates }, { timeout: inferenceTimeoutMs });
+      const response = await axios.post<BatchResponse>(url, { candidates: enrichedCandidates }, { headers: getAiServiceHeaders(), timeout: inferenceTimeoutMs });
       
       if (response.data && Array.isArray(response.data.results)) {
         aiCircuitBreaker.recordSuccess();
@@ -554,7 +559,7 @@ export async function getRLPrediction(symbol: string, candles: OHLCV[]): Promise
     const response = await axios.post(
       `${getAiServiceUrl()}/api/v1/predict_rl`,
       { symbol, ohlcv, vix, pcr, fii_dii_net: fiiNet },
-      { headers: { "Content-Type": "application/json" }, timeout: 5000 }
+      { headers: { "Content-Type": "application/json", ...getAiServiceHeaders() }, timeout: 5000 }
     );
     return response.data as RLPrediction;
   } catch (err) {
@@ -569,7 +574,7 @@ export async function triggerRLTraining(): Promise<boolean> {
     const response = await axios.post(
       `${getAiServiceUrl()}/api/v1/rl_train`,
       {},
-      { timeout: 5000 }
+      { headers: getAiServiceHeaders(), timeout: 5000 }
     );
     return response.status === 200;
   } catch (err) {
@@ -584,7 +589,7 @@ export async function triggerRankerTraining(): Promise<boolean> {
     const response = await axios.post(
       `${getAiServiceUrl()}/api/v1/ranker_train`,
       {},
-      { timeout: 5000 }
+      { headers: getAiServiceHeaders(), timeout: 5000 }
     );
     return response.status === 200;
   } catch (err) {
@@ -605,7 +610,7 @@ export async function getRLStatus(): Promise<RLStatusResponse | null> {
   try {
     const response = await axios.get(
       `${getAiServiceUrl()}/api/v1/rl_status`,
-      { timeout: 5000 }
+      { headers: getAiServiceHeaders(), timeout: 5000 }
     );
     return response.data;
   } catch (err) {
@@ -621,7 +626,7 @@ export async function getConfluenceScore(
   if (!process.env.AI_SERVICE_URL) return { score: 50.0, fallback: true };
   try {
     const url = `${getAiServiceUrl()}/confluence_score`;
-    const response = await axios.post(url, { regime, features }, { timeout: 3000 });
+    const response = await axios.post(url, { regime, features }, { headers: getAiServiceHeaders(), timeout: 3000 });
     if (response.status === 200 && response.data) {
       return {
         score: response.data.score,
@@ -639,7 +644,7 @@ export async function triggerConfluenceTraining(): Promise<boolean> {
     const response = await axios.post(
       `${getAiServiceUrl()}/api/v1/confluence_train`,
       {},
-      { timeout: 5000 }
+      { headers: getAiServiceHeaders(), timeout: 5000 }
     );
     return response.status === 200;
   } catch (err) {

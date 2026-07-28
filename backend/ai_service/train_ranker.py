@@ -29,6 +29,8 @@ Run:
 from __future__ import annotations
 
 import argparse
+import bisect
+import datetime as dt
 import json
 import math
 import os
@@ -43,17 +45,21 @@ except ImportError:
     run_harness = None
 
 # Keep the feature key list in sync with feature_engine.ts RANKER_FEATURE_KEYS.
-# The extractor already emits features in this exact order; this list is stored
-# in the meta purely so predictions are self-describing and importances are named.
-FEATURE_KEYS = [
-    "rsi14", "atr14", "atrPct", "adx14", "volumeRatio", "vwapDistance",
-    "ema20Dist", "ema50Dist", "ema200Dist", "emaAlignment", "trendConsistency",
-    "rsVsNifty60d", "rsVsSector60d", "pocDistancePct", "bbWidthPct",
-    "vcpContraction", "momentumScore", "trendScore", "volatilityScore",
-    "riskRewardScore", "priceRoc5", "priceRoc10", "priceRoc20",
-    "bodyRatio", "upperWickRatio", "lowerWickRatio", "closeLocation",
-    "realizedVol5", "realizedVol20", "volOfVol", "cprWidthPct",
-]
+MANIFEST_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "config", "ranker_features_manifest.json"))
+if os.path.exists(MANIFEST_PATH):
+    with open(MANIFEST_PATH, "r", encoding="utf-8") as _mfh:
+        FEATURE_KEYS = json.load(_mfh)
+else:
+    FEATURE_KEYS = [
+        "rsi14", "atr14", "atrPct", "adx14", "volumeRatio", "vwapDistance",
+        "ema20Dist", "ema50Dist", "ema200Dist", "emaAlignment", "trendConsistency",
+        "rsVsNifty60d", "rsVsSector60d", "pocDistancePct", "bbWidthPct",
+        "vcpContraction", "momentumScore", "trendScore", "volatilityScore",
+        "riskRewardScore", "priceRoc5", "priceRoc10", "priceRoc20",
+        "bodyRatio", "upperWickRatio", "lowerWickRatio", "closeLocation",
+        "realizedVol5", "realizedVol20", "volOfVol", "cprWidthPct",
+        "fiiDiiNetFlowLag",
+    ]
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(HERE, "ranker_model.txt")
@@ -90,6 +96,86 @@ def to_matrix(rows: List[Dict[str, Any]]) -> Tuple[np.ndarray, np.ndarray, np.nd
         y[i] = int(r.get("label", 0))
         ret[i] = float(r.get("retPct", 0.0))
     return X, y, ret
+
+
+def _timestamp_ms(value: Any, field: str) -> int:
+    """Parse a persisted ISO timestamp without depending on the host timezone.
+
+    Training rows are point-in-time records. Treating an invalid timestamp as a
+    sortable string would silently put a label in the wrong evaluation window,
+    so malformed rows are rejected rather than guessed.
+    """
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"Missing {field} timestamp")
+    try:
+        parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"Invalid {field} timestamp: {value!r}") from exc
+    if parsed.tzinfo is None:
+        raise ValueError(f"{field} timestamp must include a timezone: {value!r}")
+    return int(parsed.timestamp() * 1000)
+
+
+def purged_chronological_split(
+    rows: List[Dict[str, Any]],
+    train_frac: float,
+    calib_frac: float,
+    embargo_hours: float,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any]]:
+    """Create train/calibration/test windows without outcome-window leakage.
+
+    A signal belongs to a window by its *entry* timestamp, but it may not be
+    used in train or calibration if its `resolutionTs` reaches into the next
+    window. This purges overlapping trades at both boundaries. Boundaries are
+    advanced to complete timestamp groups so two signals generated in the same
+    market instant cannot land on opposite sides of a split.
+    """
+    if not 0 < train_frac < 1 or not 0 < calib_frac < 1 or train_frac + calib_frac >= 1:
+        raise ValueError("train-frac and calib-frac must be positive and sum to less than 1")
+    if embargo_hours < 0:
+        raise ValueError("embargo-hours must be non-negative")
+    if not rows:
+        return [], [], [], {"purged_train": 0, "purged_calib": 0}
+
+    entry_times = [_timestamp_ms(row.get("ts"), "ts") for row in rows]
+    if entry_times != sorted(entry_times):
+        raise ValueError("Training rows must be sorted by ts before splitting")
+
+    # Never split rows with the same as-of timestamp. bisect_right moves each
+    # nominal fraction to the end of that complete timestamp group.
+    train_end = bisect.bisect_right(entry_times, entry_times[max(0, int(len(rows) * train_frac) - 1)])
+    calib_nominal = max(train_end, int(len(rows) * (train_frac + calib_frac)) - 1)
+    calib_end = bisect.bisect_right(entry_times, entry_times[min(len(rows) - 1, calib_nominal)])
+    if train_end == 0 or calib_end <= train_end or calib_end >= len(rows):
+        raise ValueError("Not enough distinct timestamp groups for train/calibration/test windows")
+
+    train_candidates = rows[:train_end]
+    calib_candidates = rows[train_end:calib_end]
+    test_rows = rows[calib_end:]
+    calib_start_ms = entry_times[train_end]
+    test_start_ms = entry_times[calib_end]
+    embargo_ms = int(embargo_hours * 60 * 60 * 1000)
+
+    def purge(candidates: List[Dict[str, Any]], next_start_ms: int) -> List[Dict[str, Any]]:
+        cutoff_ms = next_start_ms - embargo_ms
+        return [
+            row for row in candidates
+            if _timestamp_ms(row.get("resolutionTs"), "resolutionTs") < cutoff_ms
+        ]
+
+    train_rows = purge(train_candidates, calib_start_ms)
+    calib_rows = purge(calib_candidates, test_start_ms)
+    metadata = {
+        "train_boundary": rows[train_end]["ts"],
+        "test_boundary": rows[calib_end]["ts"],
+        "embargo_hours": embargo_hours,
+        "raw_train_rows": len(train_candidates),
+        "raw_calib_rows": len(calib_candidates),
+        "test_rows": len(test_rows),
+        "purged_train": len(train_candidates) - len(train_rows),
+        "purged_calib": len(calib_candidates) - len(calib_rows),
+    }
+    return train_rows, calib_rows, test_rows, metadata
 
 
 def fit_isotonic(scores: np.ndarray, labels: np.ndarray) -> Tuple[List[float], List[float]]:
@@ -173,6 +259,8 @@ def main() -> int:
     ap.add_argument("--min-rows", type=int, default=300)
     ap.add_argument("--train-frac", type=float, default=0.6)
     ap.add_argument("--calib-frac", type=float, default=0.2)
+    ap.add_argument("--embargo-hours", type=float, default=24.0,
+                    help="Additional gap after each train/calibration window; overlapping trade outcomes are always purged.")
     ap.add_argument("--threshold", default="auto",
                     help="'auto' picks the prob threshold maximising TEST expectancy, or a float")
     ap.add_argument("--force", action="store_true",
@@ -200,16 +288,23 @@ def main() -> int:
         print(f"ERROR: only {len(rows)} rows (< min-rows {args.min_rows}). Need more history/scans.")
         return 2
 
-    X, y, ret = to_matrix(rows)
-    n = len(rows)
-    i_train = int(n * args.train_frac)
-    i_calib = int(n * (args.train_frac + args.calib_frac))
+    try:
+        train_rows, calib_rows, test_rows, split_meta = purged_chronological_split(
+            rows, args.train_frac, args.calib_frac, args.embargo_hours,
+        )
+    except ValueError as exc:
+        print(f"ERROR: unsafe chronological split: {exc}")
+        return 2
 
-    X_tr, y_tr = X[:i_train], y[:i_train]
-    X_ca, y_ca, ret_ca = X[i_train:i_calib], y[i_train:i_calib], ret[i_train:i_calib]
-    X_te, y_te, ret_te = X[i_calib:], y[i_calib:], ret[i_calib:]
+    X_tr, y_tr, _ = to_matrix(train_rows)
+    X_ca, y_ca, ret_ca = to_matrix(calib_rows)
+    X_te, y_te, ret_te = to_matrix(test_rows)
 
-    print(f"Rows: {n}  train={len(X_tr)}  calib={len(X_ca)}  test={len(X_te)}")
+    print(
+        f"Rows: {len(rows)}  train={len(X_tr)}  calib={len(X_ca)}  test={len(X_te)} "
+        f"(purged train={split_meta['purged_train']}, calib={split_meta['purged_calib']}, "
+        f"embargo={args.embargo_hours:g}h)"
+    )
     print(f"Base win rate — train {y_tr.mean():.3f} | calib {y_ca.mean():.3f} | test {y_te.mean():.3f}")
     if len(X_ca) < 30 or len(X_te) < 30:
         print("ERROR: calib/test slice too small for a trustworthy evaluation.")
@@ -304,7 +399,13 @@ def main() -> int:
     take_all_exp = float(ret_te.mean())
     best_exp, best_taken = expectancy_at_threshold(cal_te, ret_te, best_thr)
 
-    print("\n── Out-of-sample (TEST) ─────────────────────────────")
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+
+    print("\n--- Out-of-sample (TEST) -----------------------------")
     print(f"AUC:               {test_auc:.4f}   (0.5 = no skill)")
     print(f"Brier:             {test_brier:.4f}  (lower = better calibrated)")
     print(f"Threshold p>={best_thr:.3f} chosen on CALIB (exp {sel_exp:+.4f}%, n={sel_taken})"
@@ -370,6 +471,7 @@ def main() -> int:
             "test_n": len(X_te),
         },
         "feature_importance": importances,
+        "split": split_meta,
         "trained_at": _utc_now(),
     }
     with open(META_PATH, "w", encoding="utf-8") as fh:

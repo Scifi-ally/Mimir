@@ -62,14 +62,16 @@ def load_model() -> None:
     with _lock:
         if _loaded or not _LGB_AVAILABLE:
             return
-        if not os.path.exists(_MODEL_PATH) or not os.path.exists(_META_PATH):
+        model_path = os.getenv("RANKER_MODEL_PATH", _MODEL_PATH)
+        meta_path = os.getenv("RANKER_META_PATH", _META_PATH)
+        if not os.path.exists(model_path) or not os.path.exists(meta_path):
             _load_error = "no trained ranker artifacts on disk"
             return
         try:
             import lightgbm as lgb
 
-            booster = lgb.Booster(model_file=_MODEL_PATH)
-            with open(_META_PATH, "r", encoding="utf-8") as fh:
+            booster = lgb.Booster(model_file=model_path)
+            with open(meta_path, "r", encoding="utf-8") as fh:
                 meta = json.load(fh)
 
             iso = meta.get("isotonic") or {}

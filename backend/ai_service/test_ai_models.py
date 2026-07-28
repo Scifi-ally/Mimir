@@ -80,14 +80,18 @@ def test_chronos_infer_batch_handles_invalid_series():
     assert len(results[1].median_forecast) == 3
 
 
-def test_ranker_graceful_degradation():
+def test_ranker_graceful_degradation(monkeypatch):
     # The hard guarantee: with no trained artifacts (and/or no lightgbm) the
     # ranker must NOT be loaded and predict_batch must return one None per row
     # so callers cleanly fall back to the composite score. The zero-dependency
     # install depends on this never raising.
     from models import ranker_service
 
-    ranker_service.load_model()  # no artifacts in the repo — must stay unloaded
+    monkeypatch.setenv("RANKER_MODEL_PATH", "/nonexistent/ranker_model.txt")
+    monkeypatch.setenv("RANKER_META_PATH", "/nonexistent/ranker_meta.json")
+    ranker_service._loaded = False
+    ranker_service._booster = None
+    ranker_service.load_model()  # non-existent artifacts — must stay unloaded
     assert ranker_service.is_loaded() is False
 
     status = ranker_service.get_status()
