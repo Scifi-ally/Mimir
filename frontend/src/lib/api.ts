@@ -263,4 +263,15 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
+  screener: {
+    list: () => apiFetch<Array<Record<string, unknown>>>("/api/screener"),
+    create: (body: unknown) => apiFetch<Record<string, unknown>>("/api/screener", { method: "POST", body: JSON.stringify(body) }),
+    update: (id: number, body: unknown) => apiFetch<Record<string, unknown>>(`/api/screener/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+    delete: (id: number) => apiFetch<{ success: boolean }>(`/api/screener/${id}`, { method: "DELETE" }),
+    targets: () => apiFetch<Array<Record<string, unknown>>>("/api/screener/targets"),
+    addTarget: (body: unknown) => apiFetch<Record<string, unknown>>("/api/screener/targets", { method: "POST", body: JSON.stringify(body) }),
+    deleteTarget: (id: number) => apiFetch<{ success: boolean }>(`/api/screener/targets/${id}`, { method: "DELETE" }),
+    matches: () => apiFetch<Array<Record<string, unknown>>>("/api/screener/matches"),
+    run: (screenerId?: number) => apiFetch<{ success: boolean; message: string }>("/api/screener/run", { method: "POST", body: JSON.stringify(screenerId ? { screenerId } : {}) }),
+  },
 };

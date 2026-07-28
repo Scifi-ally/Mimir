@@ -42,7 +42,10 @@ class MarketDataStore {
   private telemetrySubscribers = new Set<() => void>();
 
   private key(symbol: string): string {
-    return symbol.trim().toUpperCase();
+    let rawSym = symbol.trim();
+    if (rawSym.includes("|")) rawSym = rawSym.split("|").pop() || rawSym;
+    if (rawSym.includes(":")) rawSym = rawSym.split(":").pop() || rawSym;
+    return rawSym.replace(/-EQ$/i, "").replace(/\.(NS|BO)$/i, "").toUpperCase();
   }
   
   private telemetry: MarketTelemetry = {

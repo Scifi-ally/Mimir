@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useStore } from "@/store/useStore";
+import { api } from "@/lib/api";
 
 export type RuleNode = {
   type: "CONDITION" | "AND" | "OR";
@@ -49,37 +50,21 @@ export function useScreener() {
 
   const targetsQuery = useQuery<ScreenerTarget[]>({
     queryKey: ["screener_targets"],
-    queryFn: async () => {
-      const res = await fetch("/api/screener/targets");
-      if (!res.ok) throw new Error("Failed to fetch targets");
-      return res.json();
-    },
+    queryFn: () => api.screener.targets() as Promise<ScreenerTarget[]>,
   });
 
   const screenersQuery = useQuery<ScreenerRule[]>({
     queryKey: ["screener_rules"],
-    queryFn: async () => {
-      const res = await fetch("/api/screener");
-      if (!res.ok) throw new Error("Failed to fetch screeners");
-      return res.json();
-    },
+    queryFn: () => api.screener.list() as Promise<ScreenerRule[]>,
   });
 
   const matchesQuery = useQuery<ScreenerMatch[]>({
     queryKey: ["screener_matches"],
-    queryFn: async () => {
-      const res = await fetch("/api/screener/matches");
-      if (!res.ok) throw new Error("Failed to fetch screener matches");
-      return res.json();
-    },
+    queryFn: () => api.screener.matches() as Promise<ScreenerMatch[]>,
   });
 
   const deleteTargetMutation = useMutation({
-    mutationFn: async (id: number) => {
-      const res = await fetch(`/api/screener/targets/${id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error("Failed to delete target");
-      return res.json();
-    },
+    mutationFn: (id: number) => api.screener.deleteTarget(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["screener_targets"] });
       queryClient.invalidateQueries({ queryKey: ["screener_matches"] });
@@ -87,11 +72,7 @@ export function useScreener() {
   });
 
   const deleteWatchlistMutation = useMutation({
-    mutationFn: async (id: number) => {
-      const res = await fetch(`/api/screener/${id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error("Failed to delete watchlist");
-      return res.json();
-    },
+    mutationFn: (id: number) => api.screener.delete(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["screener_rules"] });
       queryClient.invalidateQueries({ queryKey: ["screener_targets"] });
@@ -101,16 +82,7 @@ export function useScreener() {
   });
 
   const runScreenerMutation = useMutation({
-    mutationFn: async (screenerId?: number) => {
-      const res = await fetch("/api/screener/run", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(screenerId ? { screenerId } : {}),
-      });
-      const body = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(body?.error || body?.message || "Failed to run screener");
-      return body as { activeScreeners: number; newMatches: number; newTargets: number; totalMatches: number; totalTargets: number; runAt: string; message?: string; success: boolean };
-    },
+    mutationFn: (screenerId?: number) => api.screener.run(screenerId) as Promise<{ activeScreeners: number; newMatches: number; newTargets: number; totalMatches: number; totalTargets: number; runAt: string; message?: string; success: boolean }>,
     onSuccess: async (summary) => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["screener_targets"] }),

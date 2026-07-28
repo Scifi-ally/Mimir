@@ -6,6 +6,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/format";
 import { useStore } from "@/store/useStore";
 import { FADE_FAST, SPRING_SNAPPY } from "@/lib/motion";
+import { api } from "@/lib/api";
 
 type Operator = ">" | "<" | ">=" | "<=" | "==" | "!=" | "CROSSES_ABOVE" | "CROSSES_BELOW";
 type ScheduleMode = "MARKET_OPEN" | "MARKET_CLOSE" | "EVERY_MINUTE" | "TIME" | "ON_DEMAND" | "EVERY_CANDLE";
@@ -302,25 +303,17 @@ export function AdvancedRuleBuilder({ onComplete, initialRule }: { onComplete: (
   }, [conditionCount]);
 
   const createRuleMutation = useMutation({
-    mutationFn: async () => {
-      const url = initialRule?.id ? `/api/screener/${initialRule.id}` : "/api/screener";
-      const method = initialRule?.id ? "PUT" : "POST";
-      const response = await fetch(url, {
-        method,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          symbol: "ALL",
-          targetType,
-          outputName: targetType === "CUSTOM" ? outputName.trim() : undefined,
-          timeframe,
-          conditions,
-          scheduleMode,
-          scheduleTime: scheduleMode === "TIME" ? scheduleTime : undefined,
-        }),
-      });
-      const body = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(body?.error?.message || body?.message || "Failed to save screener");
-      return body;
+    mutationFn: () => {
+      const payload = {
+        symbol: "ALL",
+        targetType,
+        outputName: targetType === "CUSTOM" ? outputName.trim() : undefined,
+        timeframe,
+        conditions,
+        scheduleMode,
+        scheduleTime: scheduleMode === "TIME" ? scheduleTime : undefined,
+      };
+      return initialRule?.id ? api.screener.update(initialRule.id, payload) : api.screener.create(payload);
     },
     onSuccess: async () => {
       await Promise.all([

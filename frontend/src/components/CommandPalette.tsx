@@ -63,11 +63,7 @@ export function CommandPalette({ onClose, onWidthChange }: { onClose: () => void
 
   const { data: screeners = [] } = useQuery<ScreenerRule[]>({
     queryKey: ["screener_rules"],
-    queryFn: async () => {
-      const res = await fetch("/api/screener");
-      if (!res.ok) throw new Error("Failed to fetch screeners");
-      return res.json();
-    }
+    queryFn: () => api.screener.list() as Promise<ScreenerRule[]>,
   });
   const customWatchlists = screeners.filter((s) => s.targetType === 'CUSTOM');
   const editRule = useMemo(() => {
@@ -88,15 +84,8 @@ export function CommandPalette({ onClose, onWidthChange }: { onClose: () => void
   }, [search, targetWatchlist]);
 
   const createTargetMutation = useMutation({
-    mutationFn: async ({ symbol, screenerId }: { symbol: string, screenerId?: number }) => {
-      const res = await fetch("/api/screener/targets", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbol, screenerId })
-      });
-      if (!res.ok) throw new Error("Failed to add target");
-      return res.json();
-    },
+    mutationFn: ({ symbol, screenerId }: { symbol: string, screenerId?: number }) =>
+      api.screener.addTarget({ symbol, screenerId }),
     onSuccess: (_data, vars) => {
       queryClient.invalidateQueries({ queryKey: ["screener_targets"] });
       queryClient.invalidateQueries({ queryKey: ["screener_matches"] });
@@ -111,19 +100,8 @@ export function CommandPalette({ onClose, onWidthChange }: { onClose: () => void
   });
 
   const createTargetsMutation = useMutation({
-    mutationFn: async ({ symbols, screenerId }: { symbols: string[], screenerId: number }) => {
-      return Promise.all(
-        symbols.map(async (symbol) => {
-          const res = await fetch("/api/screener/targets", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ symbol, screenerId })
-          });
-          if (!res.ok) throw new Error(`Failed to add ${symbol}`);
-          return res.json();
-        })
-      );
-    },
+    mutationFn: ({ symbols, screenerId }: { symbols: string[], screenerId: number }) =>
+      Promise.all(symbols.map((symbol) => api.screener.addTarget({ symbol, screenerId }))),
     onSuccess: (_data, vars) => {
       queryClient.invalidateQueries({ queryKey: ["screener_targets"] });
       queryClient.invalidateQueries({ queryKey: ["screener_matches"] });
