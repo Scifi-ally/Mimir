@@ -25,20 +25,20 @@
 ## Dashboard Preview
 
 <div align="center">
-  <img src="docs/dashboard.png" alt="Mimir Real-Time Trading Dashboard" width="100%" style="border-radius: 8px; box-shadow: 0 8px 30px rgba(0,0,0,0.5);" />
+  <img src="smooth.gif" alt="Mimir Real-Time Trading Dashboard" width="100%" style="border-radius: 8px; box-shadow: 0 8px 30px rgba(0,0,0,0.5);" />
 </div>
 
 ---
 
 ## Overview
 
-Mimir is a self-hosted platform for quantitative analysis and monitoring of the Indian stock market. The platform focuses on ultra-low latency data processing and real-time algorithmic execution, offering capabilities usually restricted to institutional platforms.
+Mimir is an advanced algorithmic trading terminal and market intelligence scanner built for the NSE/BSE markets. It ingests real-time market ticks, performs technical and machine-learning-based analysis, and executes algorithmic paper/live trades while broadcasting opportunities to the frontend via WebSockets.
 
 Key service capabilities include:
 
-1. **WebSocket Telemetry**: Live streaming of NSE/BSE tick distributions and market depth.
-2. **AI Intelligence Engine**: A Python FastAPI microservice evaluating multi-timeframe momentum, Reinforcement Learning (PPO) action predictions, LLM-based sentiment analysis (FinBERT), and a dedicated Ranker Service for portfolio selection.
-3. **Self-Hosted Security**: API keys, trading strategies, and order logs remain strictly on local infrastructure.
+1. **WebSocket Telemetry**: Ultra-low latency streaming of tick distributions, market depth, and real-time PnL.
+2. **AI Intelligence Engine**: A Python FastAPI microservice integrating time-series forecasting (Chronos-Bolt-Small), news sentiment analysis (FinBERT), and a learned ranker model for setup scoring.
+3. **Event-Driven Microarchitecture**: Decoupled Node.js/TypeScript backend utilizing `worker_threads` for non-blocking analysis, coupled with PostgreSQL + Redis state persistence.
 
 ---
 
@@ -55,185 +55,138 @@ Key service capabilities include:
 
 ### Custom Screener & Rule Engine
 * **Interactive Rule Builder**: Construct conditional scanning rules across price action and technical indicators.
-* **Background Scanning**: Background worker pool continuously evaluates active symbols against custom screener conditions.
+* **Background Scanning**: Thread worker pools continuously evaluate active symbols against screener conditions.
 
 ### Risk Management
-* **Paper Trading Engine**: Test quantitative strategies in live market conditions with order fill simulation.
-* **Automated Risk Guardrails**: Built-in automated stop-loss trailing and daily loss thresholds.
-
-### Recent Enhancements
-* **AI Reinforcement Learning & Ranker**: Nightly retrained PPO RL agent and a new Ranker Service to intelligently filter and score opportunities.
-* **Dynamic Island UI**: Seamless status updates, toast notifications, and event streams decoupled from the primary charting interface.
-* **Adaptive Layout Modes**: Flexible and customizable UI layouts to focus purely on signals, charting, or complete terminal views.
-* **Pure Digital Scanner**: A visually stunning digital display during overnight scan jobs, removing clutter and showing an elegant count.
-* **Custom Watchlists**: Seamless command-palette integration for dynamic on-the-fly manual symbol monitoring.
-* **Rate-Limit Resilient Architecture**: Smarter WebSocket debouncing and targeted live-price fetching prevents upstream API exhaustion during intense real-time scans.
-* **Brutal Codebase Optimizations**: Major backend architectural cleanup resulting in streamlined workflows, zero circular dependencies, and a leaner system.
-
----
-
-## Backtesting Reality & Live Gating
-
-Our extensive historical backtests proved a critical reality: **raw technical setups (Breakouts, Mean Reversions, Momentum) have a negative mathematical expectancy after slippage and costs.** 
-
-To counteract this drift, Mimir strictly disables poor-performing setups and forces surviving signals (e.g., Momentum Continuation) through a brutal live gate. A signal is only traded if it passes strict volume expansion thresholds, positive Relative Strength (RS), and tight ATR-based risk profiling. The system trades rarely by design, prioritizing capital preservation over raw signal volume.
+* **Paper & Live Trading Engines**: Test quantitative strategies in live market conditions with point-in-time fill simulation and live broker execution.
+* **Automated Risk Guardrails**: Built-in automated stop-loss trailing, slippage guards, and daily loss thresholds.
 
 ---
 
 ## System Architecture
 
-Mimir is a decoupled, event-driven system: a Node/TypeScript backend that owns the market-data feed and trading engines, a Python FastAPI microservice for model inference, PostgreSQL + Redis for persistence and hot state, and a React dashboard fed over binary WebSockets. Everything below is documented from the code.
+Mimir is a decoupled, event-driven system: a Node/TypeScript backend that owns the market-data feed and trading engines, a Python FastAPI microservice for model inference, PostgreSQL + Redis for persistence and hot state, and a React dashboard fed over binary WebSockets.
+
+### High-Level System Architecture
+
+* **Backend**: Node.js, TypeScript, `node:events`, `worker_threads`, Redis, PostgreSQL (Drizzle ORM).
+* **AI Service**: Python, FastAPI, HuggingFace Transformers, PyTorch, XGBoost / LightGBM.
+* **Frontend Data**: WebSockets for real-time updates, Redis for fast hydration.
 
 ```mermaid
 graph TD
-    subgraph External
-        U[Upstox WS Feed<br/>protobuf, 100-key batches] --> CM
-        N[NSE Free Data<br/>FII/DII, delivery %, F&O ban,<br/>bulk deals, option chain] --> B
-        Y[Yahoo Finance<br/>gap risk, earnings] --> B
+    subgraph Data Ingestion
+        A[Upstox WebSocket] -->|Raw Ticks| B(Tick Distribution Server)
+        B -->|UI Batch Stream| C(WebSocket Broadcaster)
+        B -->|processedTick| D(Tick Engine)
     end
 
-    subgraph Backend :5000
-        CM[Connection Manager<br/>single WS owner + HTTP fallback] -->|marketTick| BUS((Event Bus))
-        BUS --> TF[Tick Feeder]
-        TF --> TD[Tick Distribution<br/>10ms UI flush]
-        TD -->|processedTick| ORCH[Intelligence Orchestrator]
-        ORCH --> WP[Worker Pools ×4<br/>candidate / technical / AI / history]
-        WP --> AI
-        ORCH --> SG[Suggestion Pipeline<br/>gates → calibration → DB]
-        B[Express API + Scheduler] --- BUS
-        PE[Paper Engine + Live Broker Orders] --- BUS
+    subgraph Orchestration & Event Bus
+        D -->|marketTick / candleClosed| E{Intelligence Bus}
+        E --> F[Scanner Orchestrator]
     end
 
-    subgraph AI Service :8001
-        AI[FastAPI<br/>Pattern Engine · Chronos · FinBERT · PPO RL]
+    subgraph Signal Generation Pipeline
+        F -->|Evaluate| G[Signal Generator]
+        G -->|Assemble| H[Feature Engine]
+        G <-->|Offload| I[Worker Pools]
     end
 
-    B <--> P[(PostgreSQL<br/>26 tables)]
-    B <--> R[(Redis<br/>ticks · cache · pub/sub)]
-    TD -->|msgpack WS /ws/market-data| FE[React Dashboard :3000]
-    B -->|WS /ws/intelligence + REST| FE
+    subgraph Intelligence/ML Layer (FastAPI)
+        H --> J[Chronos-Bolt-Small]
+        H --> K[FinBERT Sentiment]
+        H --> L[XGBoost / LightGBM Ranker]
+    end
+
+    subgraph Execution
+        G -->|suggestionTriggered| M[Paper / Live Engine]
+        M --> N[(PostgreSQL)]
+    end
 ```
 
-### 1. Real-time data pipeline
+### 1. Data Ingestion & Distribution
 
-The hot path from exchange to pixel:
+The entry point for all real-time market data is the **Tick Distribution Server** (`tick_distribution.ts`) and the **Tick Engine** (`tick_engine.ts`).
 
-**Connection Manager** (`intelligence/connection_manager.ts`) is the single owner of the Upstox WebSocket. It authorizes via `/v3/feed/market-data-feed/authorize`, decodes the protobuf `FeedResponse` stream, and publishes normalized `marketTick` events on the in-process event bus. Subscriptions go out in batches of 100 instrument keys — indices in `ltpc` mode, equities in `full` mode (bid/ask + OHLC + volume). Resilience: circuit breaker (5 failures → 5-min cooldown), exponential reconnect with jitter, and an HTTP fallback poller (every 2s) that publishes the same `marketTick` events via REST LTP when the socket is silent, so the UI never distinguishes between sources.
+* **Tick Distribution (`tick_distribution.ts`):** 
+    * Acts as a decoupler between raw WebSocket ingestion and UI streaming.
+    * Maintains an O(1) in-memory cache of normalized ticks.
+    * Drops out-of-sequence ticks and normalizes prices, volume, and OI.
+    * **UI Streaming:** Buffers ticks and flushes them to connected WebSocket clients in millisecond-scale batches (e.g., 30-60 FPS) to avoid overwhelming the browser.
+    * **Analysis Dispatch:** Publishes `processedTick` events to the Intelligence Bus asynchronously without blocking the event loop.
+* **Tick Engine (`tick_engine.ts`):**
+    * Listens to `processedTick`.
+    * Maintains real-time state for indicators (LTP, VWAP, Day High/Low).
+    * Generates OHLCV candles dynamically.
+    * Fires `marketTick` and `candleClosed` events to trigger downstream analysis.
 
-**Tick Feeder** (`market_data/tick_feeder.ts`) consumes `marketTick`: drops stale (>2s) and unchanged ticks, maintains per-symbol tick history and session OHLC, updates sector rotation, broadcasts index prices (NIFTY 50 / SENSEX / BANKNIFTY / FINNIFTY / VIX) to the dashboard, and batches ticks to Redis every 1s. A 60s REST poller backfills real volume for equities (the WS index mode has none).
+---
 
-**Tick Distribution** (`market_data/tick_distribution.ts`) decouples ingestion from consumers: an O(1) tick cache plus a 5-minute rolling history per symbol. Every **10ms** it flushes dirty symbols to the frontend as compact msgpack arrays (`[symbol, ltp, volume, bid, ask, ts, changePct]`), and re-publishes each tick as `processedTick` for the analysis layer — two event names (`marketTick` vs `processedTick`) deliberately prevent a feedback loop.
+### 2. Orchestration & Event Bus
 
-**Symbol subscription control** (`market_data/monitored_symbols.ts`) decides what's on the feed: manual UI-requested symbols (never evicted) → overnight watchlist → active suggestions, capped at `FEED_MAX_STOCKS` (default 500). When a dashboard client selects or watches a symbol, the WS server dynamically joins it to the Upstox feed and fetches an instant REST quote so the UI paints before the first tick.
+Mimir relies on a central `EventEmitter`-based bus (`intelligenceBus` in `event_bus.ts`) to loosely couple its subsystems.
 
-**Load Balancer** (`intelligence/load_balancer.ts`) arbitrates API quota: during an off-hours scan the tick feed is fully paused (scans get 100% of the 10 req/s Upstox budget); during market-hours scans it throttles instead.
+* **Scanner Orchestrator (`orchestrator.ts`):** The brain of the application. It listens to `marketTick` events and orchestrates the analytical pipeline.
+    * **Scheduled Scans:** Runs exhaustive full-market scans on a 5-minute cron.
+    * **Real-time Scans:** Debounces fast-moving ticks (e.g., every 2 seconds) to evaluate real-time signals alongside scheduled scans.
+* **Concurrency & Backpressure:** The `EventEmitter` bus does not natively handle backpressure. To prevent CPU lockup, heavy technical analysis and AI batch preparation are delegated to **Thread Worker Pools** (`worker_pool.ts`). These pools have strict queue limits (e.g., 2000). If the limit is breached, new tasks are immediately rejected (Dynamic Backpressure), ensuring the main Node thread remains responsive.
 
-### 2. Live intelligence engine
+---
 
-The orchestrator (`intelligence/orchestrator.ts`) runs a four-stage funnel over the live feed, each stage in its own `worker_threads` pool so analysis never blocks the tick path:
+### 3. Signal Generation Pipeline
 
-1. **Candidate detection** (2 workers, throttled to once per 2s per symbol) — stateless scoring of live session state: relative volume ≥1.15×, range expansion, proximity to day high, momentum, ≥₹1cr turnover.
-2. **Technical analysis** (2 workers) — indicator snapshot from the last 80 one-minute candles (built in-process by the candle builder, no API calls), EMA9/EMA20 alignment + ADX gates, ATR-based stop, 2R target.
-3. **AI ranking** (1 worker, debounced 2s) — batches qualified opportunities to the Python AI service, blends `0.4·technical + 0.6·AI`, applies regime-aware penalties and RL agent agree/disagree adjustments, deterministic fallback if the service is down.
-4. **Suggestion generation** — top 5 ranked opportunities pass through the full gate stack (below) and persist to the DB.
+The `signal_generator.ts` is the central hub where technical setups meet AI ranking.
 
-A breadth engine reclassifies market internals every 1s from all live ticks (advancers/decliners → Risk-On/Bullish/Ranging/Bearish/Risk-Off), and a 5s frontend timer pushes top-20 movers + active suggestions to the dashboard.
+1. **Technical Screening:** The orchestrator identifies technical candidate setups (e.g., breakouts, mean reversions).
+2. **Feature Assembly (`feature_engine.ts`):** For each candidate, a `FeatureVector` is computed. This includes:
+    * Price momentum, RSI, MACD.
+    * Real-time F&O data (Bid-Ask Imbalance, Options OI Change Rate).
+    * Macro regime indicators and FII/DII flow lag.
+3. **Fail-Loud Data Policy:** If real-time features (like F&O data) are missing or stale (older than 60 seconds), the system sets a `rankerIncomplete` flag. This intentionally aborts signal generation to prevent the AI from generating predictions based on garbage or default data.
+4. **AI Offloading:** Complete feature vectors are sent to the Python AI service for scoring.
 
-### 3. Scanning system
+---
 
-Scheduled scanners feed the overnight watchlist that seeds the next session's feed:
+### 4. Intelligence & AI Layer
 
-| Scanner | When | What |
-|---|---|---|
-| Post-market full scan | 15:31 IST daily | Entire NSE universe (~2000 stocks), unrushed, builds tomorrow's watchlist |
-| Overnight scanner | 15:45 IST | Qualified setups with category + priority |
-| Gap scanner | 09:12 IST | Pre-market gap candidates |
-| Intraday scanner | market hours | 1h/4h developing setups, not just pre-market picks |
-| Mean-reversion / range scanners | regime-gated | Only active in SIDEWAYS_RANGE / LOW_VOLATILITY_SQUEEZE regimes |
-| Custom screener | user-scheduled | User-built AND/OR rule trees from the dashboard |
-
-The **Scanner Activation Engine** enables/disables scanner types per regime, so the system only hunts setups that make sense in the current market environment. Scans run through a `scan_runs` persistence table for idempotent restarts, and a workflow coordinator mutex guarantees only one scan workflow at a time.
-
-**Setup detectors** (`analysis/technical.ts`, also used by the scan worker pool): BREAKOUT, PULLBACK, MOMENTUM_CONTINUATION, EMA9_RECLAIM/REJECTION, BREAKDOWN, BEAR_MOMENTUM, MACD_CROSSOVER, BOLLINGER_SQUEEZE_BREAKOUT, LIQUIDITY_SWEEP, mean-reversion and range setups — each scored 0–10 with swing/ATR/SuperTrend hybrid stops and 2R–4R targets. Setups with backtest-proven negative expectancy (documented in the code with their measured win rates) are still detected for monitoring but **never become trade suggestions**.
-
-### 4. Signal → suggestion pipeline (the gate stack)
-
-Every candidate signal must survive, in order (`suggestions/generator.ts`):
-
-1. **Walk-forward demotion** — setups whose rolling 90-day realized expectancy is negative are auto-demoted (and auto-restored when it recovers).
-2. **F&O ban list** — hard reject (NSE free data).
-3. **Corporate-action blackout** — no positions into results/dividends/splits within 3 days.
-4. **Market internals** — VIX spike halt (>+8%/hour), breadth and sector-relative-strength gates.
-5. **Delivery % gate** — momentum BUYs need ≥25% delivery (fake-breakout filter).
-6. **Live price sanity** — reject chased entries (price already past entry) and recompute live risk:reward, minimum 1.3.
-7. **Overnight gap risk** — no new swings into HIGH implied-gap nights (GIFT Nifty / ES=F / USDINR).
-8. **One open suggestion per symbol per day.**
-
-Survivors get:
-- **Empirical confidence calibration** (`analysis/calibration_engine.ts`) — model confidence blended with the setup's realized win rate over 120 days; empirical weight scales `min(n,50)/50`, pass-through below 10 samples.
-- **Attainability timing** (`suggestions/timing.ts`) — expected hold time blends the setup's realized median time-to-target (60%) with an ATR-distance heuristic (40%); expiry is session-aware (IST market close, weekend skip; swings capped at 10 trading days per backtest evidence).
-- **Honest fill model** — inserted as `PENDING` unless price is already at entry; the accuracy tracker promotes to `ACTIVE` only when entry actually touches, so win-rate stats never count fills that never happened.
-
-**Outcome tracking** (`suggestions/accuracy_tracker.ts`) checks every active suggestion against live prices each minute: stop checked before target (pessimistic on ambiguity), P&L net of transaction costs (0.05%/side), MFE/MAE watermarks recorded atomically for calibration. Results feed back into the **learning engine** (nightly at 16:00 IST): sector/regime/confidence-bucket analysis, adaptive component weights for the confidence formula, risk auto-tuning (win rate <35% → capital preservation mode, >65% → aggressive), and RL retraining triggers.
-
-### 5. Risk & trading engines
-
-**Risk Engine** (`analysis/risk_engine.ts`) always overrides AI — position sizing from fixed-% risk tiered by confidence (0.5%–1.5% of capital), daily/weekly loss limits with automatic suggestion pausing, drawdown circuit breaker (3% daily → halt).
-
-**Paper Engine** (`trading/paper_engine.ts`) is the source-of-truth book in both modes: event-driven fills with 0.05% slippage, 2% spread guard, MIS 5× leverage margin math in Decimal.js, atomic `SELECT FOR UPDATE` transactions, R-multiple ratcheting trailing stops, and circuit-limit detection (zero-liquidity ticks defer exit, then force at 0.5% slippage). In LIVE mode every paper fill mirrors to Upstox via `trading/broker_orders.ts` — market orders only, with a `live_orders` audit row written *before* the HTTP call so a crash leaves a reconcilable orphan rather than an untracked order. Arming LIVE requires typing a confirmation phrase in the dashboard.
-
-**Position Tracker** (`trading/position_tracker.ts`) maintains per-suggestion stop state with three modes: FIXED, TRAILING (ATR ratchet), BREAKEVEN (stop → entry at 1R, then trails).
-
-### 6. AI microservice (`backend/ai_service`, FastAPI :8001)
-
-Loads models once in a background thread (the port binds immediately; health reports "degraded" until ready) and degrades to rule-based fallbacks on any load failure:
+The Python AI service (FastAPI) provides the predictive edge:
 
 | Model | Role |
 |---|---|
-| Technical Pattern Engine | OHLCV → bullish probability + detected patterns |
-| Chronos-Bolt-Tiny | Time-series forecast (median + quantile fan, drives the chart's forecast mode) |
-| FinBERT | News sentiment from 7 RSS feeds with 6h-half-life recency decay and geopolitical amplification |
-| PPO RL Agent | Action prediction (BUY/SELL/HOLD) blended into ranking; retrained nightly from actual trade outcomes |
-| Ranker Service | Evaluates all active signals and intelligently ranks the top opportunities for the portfolio |
+| **Chronos-Bolt-Small** (`amazon/chronos-bolt-small`) | A lightweight time-series forecasting model predicting probabilistic price trajectory based on closing price sequences. |
+| **FinBERT Sentiment** (`ProsusAI/finbert`) | Evaluates news headlines and macroeconomic keywords to produce a sentiment score (-1.0 to 1.0) under a `_pipeline_call_lock`. |
+| **Learned Ranker** | A machine-learning model trained on historical setups. Consumes the `FeatureVector` to predict target hit probability before stop-loss. |
+| **Rule-Based Regime Detection** | Determines the overarching market environment (e.g., Bullish, Volatile, Bearish) using technical breadth and stochastic heuristics. |
 
-Composite score: `bullish_prob×50 + sigmoid(forecast_return×3)×30 + confidence×15 + sentiment×5`, dynamically adjusted by the Ranker Service and RL agent agree/disagree multipliers, clamped 0–100. Batch endpoint handles 200 candidates with per-candidate error isolation. Auth via constant-time `X-AI-Service-Token` check.
+---
 
-### 7. Scheduler
+### 5. Execution: Paper & Live Trading
 
-~30 cron jobs (all `Asia/Kolkata`, mutex-protected, market-open takes a Redis distributed lock). The trading day: 07:00 FII/DII → 07:30 corporate actions → 07:45 NSE free data → 08:00 daily reset → 08:30 gap risk → 09:12 gap scan → **09:15 market open** (feed init, 300ms monitoring loop) → every 5 min suggestion generation + macro refresh, every 1 min outcome checks and loss-limit tally → **15:30 close** → 15:31 full scan → 15:45 overnight scan → 16:00 learning pipeline → 16:05 calibration refresh → 16:15 daily report → midnight cleanup. Weekly: setup demotion check (Fri), alpha-score IC monitor (Sat).
+When a signal exceeds the required AI confidence thresholds, a `suggestionTriggered` event is fired and intercepted by `paper_engine.ts`.
 
-### 8. Frontend (React 19 + Vite :3000)
+* **Point-in-Time Execution:** The engine executes entries using the *current* Last Traded Price (LTP) pulled synchronously from `stateStore`. It applies a **missed fill guard**: if the market price has slipped >0.5% away from the original theoretical entry, the trade is rejected.
+* **Dynamic Position Sizing:** Risk is dynamically scaled based on AI confidence and empirical win rates (Quarter-Kelly criterion), hard-capped at 2% risk per trade.
+* **Margin & Concurrency:** Postgres row-level locking (`FOR UPDATE`) prevents race conditions when multiple signals attempt to allocate margin simultaneously.
+* **Circuit Limit Detection:** Detects prolonged zero-volume or absent bid/ask scenarios to prevent forced exits at absurd slippage during feed degradation.
+* **Live Mode:** Every fill in live mode is mirrored via API calls to the actual broker (`broker_orders.ts`).
 
-Three distinct state planes, chosen per data velocity:
+---
 
-- **Prices** never touch React state managers: a module-singleton `MarketDataStore` consumed via `useSyncExternalStore` with per-symbol subscriber sets — a tick re-renders only the atoms (`LivePrice`, `LiveChangePct`, sparklines) watching that symbol. Source priority: WebSocket > REST > cache.
-- **App state** (scan progress, alerts, Dynamic Island, event feed, selected symbol) lives in a Zustand store.
-- **Server data** (watchlist, suggestions, regime, paper account) lives in React Query with long polling intervals — WS events invalidate or directly patch the cache, so polling is a fallback, not the freshness mechanism.
+### 6. Frontend Integration & Telemetry
 
-WS handling is off-thread: both sockets (`/ws/intelligence`, `/ws/market-data`) forward raw frames to a Web Worker that decodes msgpack and coalesces ticks into 150ms batches; the main thread applies them under `requestAnimationFrame`. The chart (lightweight-charts v5) builds its live candle by aligning ticks to the historical candle grid with spike rejection and gap backfill; forecast mode plots the Chronos quantile fan on future business days. The watchlist virtualizes horizontally (TanStack Virtual) over columns of three cards.
+* **Suggestions Cache:** Active trade suggestions are cached in Redis. When a user opens the frontend, it instantly hydrates from Redis.
+* **WebSocket Broadcasts:** The backend flushes a `marketIntelligenceUpdate` payload containing live PnL, active suggestions, and market breadth to the React frontend.
+* **Diagnostic Telemetry:** Internal system health (feed latency, dropped ticks, batch queue size) is continuously tracked and monitored.
 
-WebSocket protocol: zod-validated events, msgpack binary encoding, per-client symbol filtering (each client receives only ticks for symbols it subscribed), channel routing (tick traffic isolated to `/ws/market-data`), token auth with per-IP rate limiting and timing-safe comparison.
-
-### 9. Persistence
-
-**PostgreSQL** (Drizzle ORM, 26 tables): suggestions lifecycle + outcomes, paper accounts/orders/positions, live order audit trail, candle cache, market regimes/metrics time series, learning analytics + per-symbol×regime metrics, calibration inputs (signal outcomes, alpha-score IC history), custom screener rules/runs/matches, institutional flows, encrypted Upstox tokens, singleton trading config.
-
-**Redis** (three distinct roles): per-symbol tick persistence (1s batched, seeds feed state on restart), TTL'd intelligence snapshots (universe / frontend / breadth / suggestions), and a pub/sub channel bridging backend alerts to dashboard WebSocket clients. Every consumer degrades gracefully when Redis is down.
-
-### 10. Auth & security
-
-- **Dual Upstox API keys**: trading key drives the WS feed + orders; a second data key (optional, `useDualApiKeys`) carries scanner/historical REST traffic — two separate rate-limit budgets. Tokens encrypted at rest (AES-256-GCM), auto-fallback if one key lacks a valid token.
-- **Admin boundary**: localhost is trusted; remote HTTP/WS requires `UPSTOXBOT_ADMIN_TOKEN` (timing-safe compare, per-IP attempt limiting with bans).
-- **Rate limiting**: Redis sliding-window (10/min auth paths, 100/min default).
-- **Live-trading arming**: typed confirmation phrase, PAPER is the default mode, all live orders audited to `live_orders`.
+---
 
 ### Ports
 
 | Port | Service |
 |---|---|
-| 3000 | Frontend (vite preview / nginx in Docker) |
+| 3000 | Frontend (React / Vite preview) |
 | 5000 | Backend API + trading engine + WebSockets |
-| 5433 | PostgreSQL (portable `bot.bat` install; Docker uses 5432) |
+| 5433 | PostgreSQL (portable install; Docker uses 5432) |
 | 6379 | Redis |
 | 8001 | AI microservice (localhost-bound) |
 
