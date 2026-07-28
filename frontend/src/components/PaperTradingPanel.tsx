@@ -173,7 +173,7 @@ export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClo
 
     for (const x of items) {
       const ds = x.date.toDateString();
-      let label = ds;
+      let label: string;
       if (ds === todayStr) label = "Today";
       else if (ds === yesterdayStr) label = "Yesterday";
       else label = x.date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
@@ -205,7 +205,7 @@ export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClo
 
     for (const x of items) {
       const ds = x.date.toDateString();
-      let label = ds;
+      let label: string;
       if (ds === todayStr) label = "Today";
       else if (ds === yesterdayStr) label = "Yesterday";
       else label = x.date.toLocaleDateString(undefined, { month: "short", day: "numeric" });

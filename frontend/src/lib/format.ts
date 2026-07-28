@@ -18,7 +18,8 @@ export function toNumber(value: unknown, fallback = 0): number {
  * Safely formats a number to fixed decimals, preventing NaN
  */
 export function toFixed(value: unknown, decimals = 2): string {
-  const num = toNumber(value, 0);
+  const num = toNumber(value, NaN);
+  if (Number.isNaN(num)) return "—";
   return num.toFixed(decimals);
 }
 
@@ -26,7 +27,8 @@ export function toFixed(value: unknown, decimals = 2): string {
  * Safely formats a percentage with sign
  */
 export function toFixedPct(value: unknown, decimals = 2): string {
-  const num = toNumber(value, 0);
+  const num = toNumber(value, NaN);
+  if (Number.isNaN(num)) return "—";
   const sign = num >= 0 ? '+' : '';
   return `${sign}${num.toFixed(decimals)}%`;
 }
@@ -48,6 +50,11 @@ export function fmtPct(value: unknown, decimals: number = 1) {
   }
   const actualDecimals = (decimals === 1 && Math.abs(num) < 0.1) ? 2 : decimals;
   return `${num > 0 ? "+" : ""}${num.toFixed(actualDecimals)}%`;
+}
+
+/** Calendar-date key in IST (Asia/Kolkata) — for grouping trades/suggestions by market day */
+export function istDateKey(d: Date): string {
+  return d.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" });
 }
 
 export function calcPnLPct(current: unknown, entry: unknown): number | null {

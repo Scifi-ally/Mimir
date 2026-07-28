@@ -12,7 +12,7 @@ import { FADE_SLOW } from "@/lib/motion";
 // resolved. Both matter: if the chunk arrives mid-descent, Suspense renders an
 // empty pill that snaps to full size when the code lands — which reads as a
 // completely different first animation.
-let CommandPaletteComponent: any = null;
+let CommandPaletteComponent: React.ElementType | null = null;
 let paletteLoaded = false;
 const palettePromise = import("./CommandPalette").then((m) => {
   CommandPaletteComponent = m.CommandPalette;
