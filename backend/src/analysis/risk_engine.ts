@@ -154,9 +154,12 @@ export async function syncRiskEngineState(): Promise<void> {
     let pnl = 0;
     let lossCount = 0;
     for (const c of closedToday) {
-      pnl += parseFloat(c.realizedPnl);
-      if (parseFloat(c.realizedPnl) < 0) {
-        lossCount++;
+      // A row with null/garbage realizedPnl must not poison the daily total —
+      // NaN here silently disables the daily-loss circuit breaker below.
+      const v = parseFloat(c.realizedPnl);
+      if (Number.isFinite(v)) {
+        pnl += v;
+        if (v < 0) lossCount++;
       }
     }
 
@@ -198,6 +201,8 @@ export function fractionalKellyRiskPct(
   return Math.min(maxRiskPct, optimizedKellyFraction * 100);
 }
 
+import Decimal from "decimal.js";
+
 function computePositionSize(
   capital: number,
   maxRiskPct: number,
@@ -206,9 +211,10 @@ function computePositionSize(
   direction: "BUY" | "SELL",
   kelly?: { winProbability: number; payoffRatio: number },
 ): { quantity: number; maxRiskInr: number; investmentAmount: number; riskPct: number } {
-  const riskPerShare = direction === "BUY"
-    ? entryPrice - stopLoss
-    : stopLoss - entryPrice;
+  const dEntry = new Decimal(entryPrice);
+  const dStop = new Decimal(stopLoss);
+  const dRiskPerShare = direction === "BUY" ? dEntry.minus(dStop) : dStop.minus(dEntry);
+  const riskPerShare = dRiskPerShare.toNumber();
 
   if (riskPerShare <= 0) {
     return { quantity: 0, maxRiskInr: 0, investmentAmount: 0, riskPct: 0 };
@@ -225,23 +231,26 @@ function computePositionSize(
     return { quantity: 0, maxRiskInr: 0, investmentAmount: 0, riskPct: 0 };
   }
 
-  const maxRiskInr = capital * (effectiveRiskPct / 100);
-  let quantity = Math.floor(maxRiskInr / riskPerShare);
+  const dCapital = new Decimal(capital);
+  const maxRiskInr = dCapital.times(effectiveRiskPct).dividedBy(100).toNumber();
+  let quantity = new Decimal(maxRiskInr).dividedBy(dRiskPerShare).floor().toNumber();
 
   // Cap position to 20% of capital
-  const maxPositionValue = capital * 0.20;
-  const positionValue = quantity * entryPrice;
+  const maxPositionValue = dCapital.times(0.20).toNumber();
+  const positionValue = new Decimal(quantity).times(dEntry).toNumber();
   if (positionValue > maxPositionValue) {
-    quantity = Math.floor(maxPositionValue / entryPrice);
+    quantity = new Decimal(maxPositionValue).dividedBy(dEntry).floor().toNumber();
   }
 
-  if (quantity < 1) {
+  // Fail closed: NaN (e.g. from a malformed auto-tuned risk param) must size to
+  // zero — `NaN < 1` is false, so the naive guard would let NaN through.
+  if (!(quantity >= 1)) {
     return { quantity: 0, maxRiskInr: 0, investmentAmount: 0, riskPct: 0 };
   }
 
-  const actualRiskInr = quantity * riskPerShare;
-  const investmentAmount = quantity * entryPrice;
-  const riskPct = capital > 0 ? (actualRiskInr / capital) * 100 : 0;
+  const actualRiskInr = new Decimal(quantity).times(dRiskPerShare).toNumber();
+  const investmentAmount = new Decimal(quantity).times(dEntry).toNumber();
+  const riskPct = capital > 0 ? new Decimal(actualRiskInr).times(100).dividedBy(dCapital).toNumber() : 0;
 
   return {
     quantity,

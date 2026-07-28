@@ -54,6 +54,10 @@ setInterval(() => {
   }
 }, 60000).unref();
 
+// Cap the per-client batch/watchlist subscription set — an unbounded set is a
+// memory leak and forces the tick filter to scan huge sets on every broadcast.
+const MAX_SUBSCRIBED_SYMBOLS_PER_CLIENT = 200;
+
 // Single normalization point for all subscribe/unsubscribe symbol paths —
 // mismatched casing here corrupts cross-client eviction decisions.
 function normalizeSymbol(sym: unknown): string {
@@ -120,8 +124,11 @@ export function initWebSocketServer(server: Server): void {
       // Always use constant-time comparison regardless of length to prevent timing attacks
       const normalizedIp = (ipStr || "").replace(/^::ffff:/, "");
       const isLocal = isPrivateOrLocalIp(normalizedIp);
-      const isTokenConfigured = Boolean(process.env.UPSTOXBOT_ADMIN_TOKEN?.trim());
-      const isRemoteAuthDisabled = process.env.DISABLE_REMOTE_API_AUTH === "1" || process.env.DISABLE_REMOTE_API_AUTH === "true" || !isTokenConfigured;
+      // Fail closed like requireAdmin (src/lib/security.ts): when no admin token
+      // is configured, remote connections stay unauthenticated (auth attempts get
+      // 4003 "Remote access disabled", the 5s timeout closes idle sockets) instead
+      // of being silently granted full access.
+      const isRemoteAuthDisabled = process.env.DISABLE_REMOTE_API_AUTH === "1" || process.env.DISABLE_REMOTE_API_AUTH === "true";
 
       // CRITICAL FIX (Issue #6): Store timeout ID and clear it after successful auth
       let authTimeoutId: NodeJS.Timeout | null = null;
@@ -327,13 +334,24 @@ export function initWebSocketServer(server: Server): void {
           } else if (clientEvent.event === "subscribe_symbols" || clientEvent.event === "subscribe_watchlist") {
             const symbols = Array.isArray(clientEvent.data.symbols) ? clientEvent.data.symbols : [];
             const normalized = symbols.map((sym: unknown) => normalizeSymbol(sym)).filter((sym: string) => sym.length > 0);
-            normalized.forEach((sym: string) => tc.subscribedSymbols.add(sym));
+            const accepted: string[] = [];
+            for (const sym of normalized) {
+              if (!tc.subscribedSymbols.has(sym) && tc.subscribedSymbols.size >= MAX_SUBSCRIBED_SYMBOLS_PER_CLIENT) {
+                logger.warn(
+                  { channel: tc.channelName, dropped: normalized.length - accepted.length, cap: MAX_SUBSCRIBED_SYMBOLS_PER_CLIENT },
+                  "Client subscription set at cap — dropping extra symbols",
+                );
+                break;
+              }
+              tc.subscribedSymbols.add(sym);
+              accepted.push(sym);
+            }
             tc.topics.add("ticks");
-            logger.debug({ count: normalized.length, channel: tc.channelName }, "Client subscribed to symbol batch/watchlist");
+            logger.debug({ count: accepted.length, channel: tc.channelName }, "Client subscribed to symbol batch/watchlist");
 
-            if (normalized.length > 0) {
+            if (accepted.length > 0) {
               import("../market_data/monitored_symbols").then(({ addManualMonitoredSymbols }) => {
-                void addManualMonitoredSymbols(normalized).catch(() => {});
+                void addManualMonitoredSymbols(accepted).catch(() => {});
               }).catch(() => {});
             }
           }

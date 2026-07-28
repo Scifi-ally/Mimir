@@ -536,6 +536,7 @@ async function resolveTechnicalSnapshot(
   snap: TechnicalSnapshot;
   source: "live_scan" | "tick_derived";
   rsVsNifty: number | null;
+  scanFeatures: FeatureVector | null;
 }> {
   try {
     const stock = await findStockBySymbol(symbol);
@@ -558,6 +559,9 @@ async function resolveTechnicalSnapshot(
           snap,
           source: "live_scan",
           rsVsNifty: scanResult.rs60,
+          // ScanResult deliberately carries only the normalized snapshot/candles
+          // contract. Build the monitor feature vector from that snapshot below.
+          scanFeatures: null,
         };
       }
     }
@@ -568,6 +572,7 @@ async function resolveTechnicalSnapshot(
     snap: buildTickDerivedSnapshot(symbol, currentPrice, monitored),
     source: "tick_derived",
     rsVsNifty: null,
+    scanFeatures: null,
   };
 }
 
@@ -693,7 +698,16 @@ function buildMonitorFeatureVector(
   snap: TechnicalSnapshot,
   riskReward: number,
   rsVsNifty: number | null,
+  scanFeatures?: FeatureVector | null,
 ): FeatureVector {
+  if (scanFeatures) {
+    return {
+      ...scanFeatures,
+      timestamp: new Date().toISOString(),
+      rankerIncomplete: false,
+    };
+  }
+
   const regimeOutput = getLastRegimeOutput();
   const pctFrom = (base: number): number =>
     base > 0 ? Number((((snap.close - base) / base) * 100).toFixed(2)) : 0;
@@ -741,8 +755,6 @@ function buildMonitorFeatureVector(
     lowerWickRatio: 0,
     closeLocation: 0.5,
 
-    // Candle-history volatility features: the tick path has no daily series,
-    // so these stay neutral (same convention as the ROC/candlestick fields).
     realizedVol5: 0,
     realizedVol20: 0,
     volOfVol: 0,
@@ -752,12 +764,6 @@ function buildMonitorFeatureVector(
     optionsOiChangeRate: 0,
     fiiDiiNetFlowLag: 0,
 
-    // Tick-derived vector: ~15 of the ranker's candle-history features above are
-    // neutral placeholders (trendConsistency/momentum/trend/volatility scores,
-    // ROC, candlestick, realized-vol). Feeding this to the learned ranker would
-    // be train/serve skew, so it is explicitly marked incomplete. This path runs
-    // in Rule Mode and never calls the ranker; the marker makes toRankerFeatureArray
-    // throw loudly if that ever changes, rather than silently scoring placeholders.
     rankerIncomplete: true,
   };
 }
@@ -813,14 +819,14 @@ async function generateIntraDaySuggestion(
       confluence: [monitored.watchlistEntry.category],
     };
 
-    const { snap, source: indicatorSource, rsVsNifty } = await resolveTechnicalSnapshot(
+    const { snap, source: indicatorSource, rsVsNifty, scanFeatures } = await resolveTechnicalSnapshot(
       symbol,
       currentPrice,
       monitored,
     );
 
     const sector = STOCK_SECTOR_MAP[symbol] ?? "Other";
-    const featureVector = buildMonitorFeatureVector(symbol, snap, setup.riskReward, rsVsNifty);
+    const featureVector = buildMonitorFeatureVector(symbol, snap, setup.riskReward, rsVsNifty, scanFeatures);
     const riskAssessment = await assessRisk(setup, snap, sector, featureVector);
 
     if (!riskAssessment.passed) {

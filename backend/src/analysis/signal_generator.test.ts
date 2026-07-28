@@ -75,7 +75,7 @@ vi.mock('../../db/src', () => ({
 describe('runIntelligencePipeline', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(aiClient.checkAIHealth).mockResolvedValue({ status: 'healthy', version: '1', rankerLoaded: true });
+    vi.mocked(aiClient.checkAIHealth).mockResolvedValue({ status: 'healthy', ai_mode: 'full', ranking_provider: 'ai', uptime_seconds: 1, models: {}, hardware: {}, diagnostics: {} });
     vi.mocked(aiClient.getConfluenceScore).mockResolvedValue({ score: 75, fallback: false });
   });
 
@@ -101,7 +101,7 @@ describe('runIntelligencePipeline', () => {
     candles: [{ open: 1990, high: 2010, low: 1980, close: 2000, volume: 1000, timestamp: 123456 }],
     snapshot: { close: 2000, ema9: 1950, ema50: 1900 }
     // ... minimal valid fields
-  } as any;
+  } as unknown as ScanResult;
 
   it('should accept signal with healthy AI and python_confluence', async () => {
     const aiResults = new Map();
@@ -151,7 +151,7 @@ describe('runIntelligencePipeline', () => {
   });
 
   it('should fallback to native_math_fallback when AI is unhealthy', async () => {
-    vi.mocked(aiClient.checkAIHealth).mockResolvedValue({ status: 'unavailable', version: '', rankerLoaded: false });
+    vi.mocked(aiClient.checkAIHealth).mockResolvedValue({ status: 'unavailable', ai_mode: 'off', ranking_provider: 'fallback', uptime_seconds: 0, models: {}, hardware: {}, diagnostics: {} });
     vi.mocked(aiClient.batchInference).mockResolvedValue(new Map());
 
     const result = await runIntelligencePipeline([mockScanResult]);

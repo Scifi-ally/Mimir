@@ -44,15 +44,18 @@ router.get("/paper/account", async (_req, res) => {
     const openPositions = await db.select().from(paperPositionsTable)
       .where(eq(paperPositionsTable.status, "OPEN"));
     
-    let totalUnrealized = 0;
+    let totalUnrealizedCents = 0;
     openPositions.forEach(p => {
-      totalUnrealized += parseFloat(p.unrealizedPnl);
+      totalUnrealizedCents += Math.round(parseFloat(p.unrealizedPnl) * 100);
     });
+
+    const balanceCents = Math.round(parseFloat(account.balance) * 100);
+    const equityCents = balanceCents + totalUnrealizedCents;
 
     res.json({
       ...account,
-      livePnl: totalUnrealized.toFixed(2),
-      equity: (parseFloat(account.balance) + totalUnrealized).toFixed(2)
+      livePnl: (totalUnrealizedCents / 100).toFixed(2),
+      equity: (equityCents / 100).toFixed(2)
     });
   } catch (error) {
     logger.error({ error }, "Failed to fetch paper account");

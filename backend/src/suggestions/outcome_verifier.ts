@@ -31,8 +31,10 @@ interface Candle {
  * Replay 1-minute candles over [notBefore, expiresAt] and return which exit
  * level was touched FIRST. Within a single candle the stop is assumed hit
  * before the target — the same pessimistic convention the live tracker uses
- * when one print crosses both. Returns null when no level was touched in the
- * window (the trade genuinely expired open).
+ * when one print crosses both. T1 is checked before T2 for the same reason:
+ * when one candle spans both targets the order is ambiguous, and assuming T1
+ * first is the conservative label. Returns null when no level was touched in
+ * the window (the trade genuinely expired open).
  */
 function firstTouchFromCandles(
   direction: string,
@@ -44,12 +46,12 @@ function firstTouchFromCandles(
   for (const c of candles) {
     if (direction === "BUY") {
       if (c.low <= stop) return { level: "STOP", price: stop };
-      if (t2 != null && c.high >= t2) return { level: "T2", price: t2 };
       if (c.high >= t1) return { level: "T1", price: t1 };
+      if (t2 != null && c.high >= t2) return { level: "T2", price: t2 };
     } else {
       if (c.high >= stop) return { level: "STOP", price: stop };
-      if (t2 != null && c.low <= t2) return { level: "T2", price: t2 };
       if (c.low <= t1) return { level: "T1", price: t1 };
+      if (t2 != null && c.low <= t2) return { level: "T2", price: t2 };
     }
   }
   return null;
@@ -119,9 +121,11 @@ export async function verifyExpiredOutcomes(limit = 50): Promise<number> {
         continue;
       }
 
-      const generatedAtMs = new Date(row.generatedAt).getTime();
+      // Evaluate from the fill moment when the entry was promoted after
+      // generation — candles before the fill can't decide a real outcome.
+      const startMs = new Date(row.activatedAt ?? row.generatedAt).getTime();
       const expiresAtMs = row.expiresAt ? new Date(row.expiresAt).getTime() : Date.now();
-      const fromDate = getISTDateStr(new Date(generatedAtMs));
+      const fromDate = getISTDateStr(new Date(startMs));
       const toDate = getISTDateStr(new Date(expiresAtMs));
 
       const raw = await verifierClient.fetchHistoricalCandles(
@@ -132,7 +136,7 @@ export async function verifyExpiredOutcomes(limit = 50): Promise<number> {
         token,
       );
       const candles = toCandles(Array.isArray(raw) ? raw : []).filter(
-        (c) => c.ts >= generatedAtMs && c.ts <= expiresAtMs,
+        (c) => c.ts >= startMs && c.ts <= expiresAtMs,
       );
 
       if (candles.length === 0) {
@@ -186,7 +190,15 @@ export async function verifyExpiredOutcomes(limit = 50): Promise<number> {
           outcomeVerifiedAt: new Date(),
           closedAt: row.closedAt ?? new Date(expiresAtMs),
         })
-        .where(eq(suggestionsTable.id, row.id));
+        .where(
+          and(
+            eq(suggestionsTable.id, row.id),
+            // Guard on the expected prior state so a concurrent pass that
+            // already verified (or re-labeled) this row is never overwritten.
+            inArray(suggestionsTable.status, ["EXPIRED", "CLOSED"]),
+            isNull(suggestionsTable.outcomeVerifiedAt),
+          ),
+        );
 
       broadcast(
         createServerEvent.suggestionUpdated({

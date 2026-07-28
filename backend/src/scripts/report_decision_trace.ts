@@ -1,5 +1,5 @@
 import { db, suggestionsTable, rejectedCandidatesTable } from "../../db/src";
-import { gte, desc } from "drizzle-orm";
+import { gte } from "drizzle-orm";
 
 async function run() {
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000); // last 24h
@@ -23,18 +23,18 @@ async function run() {
 
   for (const s of suggestions) {
     if (s.decisionTrace && typeof s.decisionTrace === 'object') {
-      const path = (s.decisionTrace as any).confidencePath || "unknown";
+      const path = (s.decisionTrace as Record<string, unknown>).confidencePath as string || "unknown";
       paths[path] = (paths[path] || 0) + 1;
     }
   }
 
   for (const r of rejections) {
     if (r.decisionTrace && typeof r.decisionTrace === 'object') {
-      const trace = r.decisionTrace as any;
-      const gate = trace.rejectionGate || "unknown";
+      const trace = r.decisionTrace as Record<string, unknown>;
+      const gate = (trace.rejectionGate as string) || "unknown";
       gates[gate] = (gates[gate] || 0) + 1;
       
-      const path = trace.confidencePath || "unknown";
+      const path = (trace.confidencePath as string) || "unknown";
       paths[path] = (paths[path] || 0) + 1;
     }
   }

@@ -330,7 +330,7 @@ export type UnsubscribeSymbolEvent = z.infer<typeof UnsubscribeSymbolEventSchema
 export const SubscribeSymbolsEventSchema = z.object({
   event: z.literal("subscribe_symbols"),
   data: z.object({
-    symbols: z.array(z.string()),
+    symbols: z.array(z.string()).max(200),
   }),
 });
 export type SubscribeSymbolsEvent = z.infer<typeof SubscribeSymbolsEventSchema>;
@@ -338,7 +338,7 @@ export type SubscribeSymbolsEvent = z.infer<typeof SubscribeSymbolsEventSchema>;
 export const SubscribeWatchlistEventSchema = z.object({
   event: z.literal("subscribe_watchlist"),
   data: z.object({
-    symbols: z.array(z.string()),
+    symbols: z.array(z.string()).max(200),
   }),
 });
 export type SubscribeWatchlistEvent = z.infer<typeof SubscribeWatchlistEventSchema>;

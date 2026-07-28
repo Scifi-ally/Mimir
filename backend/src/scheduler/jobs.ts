@@ -45,6 +45,7 @@ import {
   getMonitoringStatus,
 } from "../analysis/intraday_monitor";
 import { stopTickFeeder } from "../market_data/tick_feeder";
+import { archiveDailyTicks } from "../market_data/tick_archiver";
 import {
   getMonitoredSubscriptionStocks,
   syncMonitoredSubscriptions,
@@ -54,7 +55,7 @@ import { marketIntelligence } from "../intelligence/orchestrator";
 import { db } from "../../db/src";
 import { suggestionsTable } from "../../db/src";
 
-import { and, eq, gte } from "drizzle-orm";
+import { gte } from "drizzle-orm";
 import { getConfig } from "../config";
 import { broadcast } from "../ws/websocket_server";
 import {
@@ -324,15 +325,13 @@ function scheduleJob(
 
 async function updateDailyLoss(): Promise<void> {
   try {
+    // Sum negative pnl over ALL rows closed today (mirrors the weekly query
+    // below) — filtering to STOP_HIT let TRAILING/manual-closed losses escape
+    // the daily circuit breaker entirely.
     const rows = await db
       .select({ pnlInr: suggestionsTable.pnlInr })
       .from(suggestionsTable)
-      .where(
-        and(
-          gte(suggestionsTable.closedAt, todayStartUTC()),
-          eq(suggestionsTable.status, "STOP_HIT"),
-        ),
-      );
+      .where(gte(suggestionsTable.closedAt, todayStartUTC()));
 
     const dailyLoss = rows.reduce((sum, r) => {
       const v = r.pnlInr != null ? parseFloat(r.pnlInr) : 0;
@@ -596,6 +595,15 @@ export function startScheduler(): void {
     }
   });
 
+  // ── Every 3 min during market hours: incremental tick archive flush ──────
+  // tickDistribution only holds ~5 min of history, so the archive must be
+  // flushed continuously — a single nightly run would capture almost nothing.
+  scheduleJob("tick-archive-flush", "*/3 9-15 * * 1-5", async () => {
+    if (isMarketOpen()) {
+      await archiveDailyTicks();
+    }
+  });
+
   // Every 15 minutes during market hours: degrade guard for full automation
   scheduleJob("automation-health-monitor", "*/15 9-15 * * 1-5", async () => {
     if (isMarketOpen()) {
@@ -604,9 +612,12 @@ export function startScheduler(): void {
   });
 
   // ── Custom Screener Scheduled Runs ───────────────────────────────────────
+  // Every minute during market hours; the evaluator self-checks each active
+  // screener's scheduleMode (MARKET_OPEN/MARKET_CLOSE/EVERY_MINUTE/TIME/
+  // EVERY_CANDLE) against the current IST time and runs only what's due.
   scheduleJob("custom-screener-engine", "* 9-15 * * 1-5", async () => {
-    // Legacy scheduled screener runs have been deprecated in favor of a daily idempotent run
-    logger.debug("Legacy evaluateCustomScreenerSchedules hook removed");
+    const { evaluateCustomScreenerSchedules } = await import("./custom_screener_scheduler");
+    await evaluateCustomScreenerSchedules();
   });
 
   // ── 07:00 IST (01:30 UTC) Mon–Fri — FII/DII data for the day ─────────────

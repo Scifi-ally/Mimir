@@ -74,13 +74,3 @@ export function computeOFI(symbol: string): OrderFlowImbalance {
   }
 }
 
-export function getOrderFlowScore(symbol: string): number {
-  const ofi = computeOFI(symbol);
-  if (ofi.ticksEvaluated < 50) return 0; // Not enough data for a reliable score
-
-  // Scale EMA from [-1, 1] to [-100, 100]
-  // Usually OFI EMA fluctuates tightly around 0, so we amplify it.
-  const AMPLIFIER = 150; 
-  let score = ofi.ofiEma * AMPLIFIER;
-  return Math.max(-100, Math.min(100, score));
-}

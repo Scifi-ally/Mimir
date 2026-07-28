@@ -2,7 +2,7 @@ import { Router } from "express";
 import { logger } from "../lib/logger";
 import { db } from "../../db/src";
 import { customScreenerTable, customScreenerMatchesTable, customScreenerTargetsTable, customScreenerRunsTable } from "../../db/src/schema/custom_screener";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, count, desc, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 
 const router = Router();
@@ -91,8 +91,16 @@ router.put("/screener/:id", async (req, res, next) => {
     if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
     
     const data = createScreenerSchema.parse(req.body);
+    // Only update fields the client actually sent — parse() fills create-time
+    // defaults (symbol/targetType/scheduleMode), which would silently wipe
+    // stored values for any omitted field.
+    const updates = Object.fromEntries(
+      Object.entries(data).filter(([key]) => key in req.body),
+    ) as Partial<typeof customScreenerTable.$inferInsert>;
+    if (Object.keys(updates).length === 0) return res.status(400).json({ error: "No fields to update" });
+
     const [updated] = await db.update(customScreenerTable)
-      .set(data)
+      .set(updates)
       .where(eq(customScreenerTable.id, id))
       .returning();
       
@@ -196,38 +204,50 @@ router.post("/screener/run", async (req, res, next) => {
     
     const targetSession = getTargetTradingSessionDate();
     
-    // 1. Mark existing active scan for this session as inactive
-    await db.update(customScreenerRunsTable)
-      .set({ isActive: false })
-      .where(and(
-        eq(customScreenerRunsTable.tradingSessionDate, targetSession),
-        eq(customScreenerRunsTable.isActive, true)
-      ));
-      
-    // 2. Create new MANUAL run
-    const [newRun] = await db.insert(customScreenerRunsTable).values({
-      tradingSessionDate: targetSession,
-      status: "RUNNING",
-      triggerType: "MANUAL",
-      isActive: true,
-    }).returning({ id: customScreenerRunsTable.id });
+    // Deactivate + insert atomically — the partial unique index (one active run
+    // per session) makes the non-transactional two-step 409 under concurrency.
+    const [newRun] = await db.transaction(async (tx) => {
+      // 1. Mark existing active scan for this session as inactive
+      await tx.update(customScreenerRunsTable)
+        .set({ isActive: false })
+        .where(and(
+          eq(customScreenerRunsTable.tradingSessionDate, targetSession),
+          eq(customScreenerRunsTable.isActive, true)
+        ));
+
+      // 2. Create new MANUAL run
+      return tx.insert(customScreenerRunsTable).values({
+        tradingSessionDate: targetSession,
+        status: "RUNNING",
+        triggerType: "MANUAL",
+        isActive: true,
+      }).returning({ id: customScreenerRunsTable.id });
+    });
     
     // Run asynchronously to avoid blocking the HTTP request
-    runCustomScreener({ 
+    runCustomScreener({
       screenerIds: screenerId ? [screenerId] : undefined,
-      runId: newRun.id 
+      runId: newRun.id
     }).catch((err) => {
       logger.error({ err }, "Error running custom screener asynchronously");
     });
 
+    // The run is asynchronous, so newMatches/newTargets are legitimately 0 at
+    // response time — but totals must reflect the actual DB state, not zeros.
+    const [[matchCount], [targetCount]] = await Promise.all([
+      db.select({ count: count() }).from(customScreenerMatchesTable),
+      db.select({ count: count() }).from(customScreenerTargetsTable),
+    ]);
+
     return res.json({
       success: true,
       message: "Manual screener started. This replaces any previous scan for the current trading session.",
+      runId: newRun.id,
       activeScreeners: activeScreeners.length,
       newMatches: 0,
       newTargets: 0,
-      totalMatches: 0,
-      totalTargets: 0,
+      totalMatches: matchCount?.count ?? 0,
+      totalTargets: targetCount?.count ?? 0,
       runAt: new Date().toISOString(),
     });
   } catch (err) {

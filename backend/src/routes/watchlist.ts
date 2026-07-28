@@ -77,9 +77,12 @@ router.get("/watchlist/custom", async (req, res) => {
 // POST /api/watchlist/custom — add a symbol
 router.post("/watchlist/custom", async (req, res) => {
   try {
-    const symbol = req.body.symbol?.trim();
+    const symbol = String(req.body.symbol ?? "").trim().toUpperCase();
     if (!symbol) {
       return res.status(400).json({ error: "Symbol is required" });
+    }
+    if (!/^[A-Z0-9&-]{1,20}$/.test(symbol)) {
+      return res.status(400).json({ error: "Invalid symbol format" });
     }
     
     // Check if it already exists to avoid throwing on unique constraint
@@ -98,7 +101,7 @@ router.post("/watchlist/custom", async (req, res) => {
 // DELETE /api/watchlist/custom/:symbol — remove a symbol
 router.delete("/watchlist/custom/:symbol", async (req, res) => {
   try {
-    const symbol = req.params.symbol?.trim();
+    const symbol = req.params.symbol?.trim().toUpperCase();
     if (!symbol) {
       return res.status(400).json({ error: "Symbol is required" });
     }

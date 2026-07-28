@@ -25,29 +25,28 @@ function normalizeIp(value: string | undefined): string {
   return (value ?? "").replace(/^::ffff:/, "");
 }
 
+export function isLoopbackIp(ip: string): boolean {
+  return ip === "::1" || ip === "127.0.0.1" || ip.startsWith("127.");
+}
+
 export function isPrivateOrLocalIp(ip: string): boolean {
-  // Loopback and directly-attached LAN ranges only. Deliberately EXCLUDES
-  // 172.16/12: that's the Docker bridge range — a dockerized reverse proxy
-  // makes ALL internet traffic arrive from a 172.x gateway address, which
-  // would silently grant remote clients local-admin access. Docker/remote
-  // deployments must authenticate (UPSTOXBOT_ADMIN_TOKEN) or opt in via
-  // ALLOW_REMOTE_ADMIN=true.
-  return (
-    ip === "::1" ||
-    ip === "127.0.0.1" ||
-    ip.startsWith("127.") ||
-    /^10\./.test(ip) ||
-    /^192\.168\./.test(ip)
-  );
+  if (isLoopbackIp(ip)) return true;
+  if (process.env.ALLOW_PRIVATE_SUBNET_ADMIN === "true") {
+    return /^10\./.test(ip) || /^192\.168\./.test(ip) || /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(ip);
+  }
+  return false;
 }
 
 export function isLocalRequest(req: Request): boolean {
-  if (
-    process.env.ALLOW_ALL_ORIGINS === "true" ||
-    process.env.ALLOW_REMOTE_ADMIN === "true" ||
-    process.env.ALLOW_TUNNELS === "true"
-  ) {
-    return true;
+  // Env bypass flags are strictly disabled in production builds for security.
+  if (process.env.NODE_ENV !== "production") {
+    if (
+      process.env.ALLOW_ALL_ORIGINS === "true" ||
+      process.env.ALLOW_REMOTE_ADMIN === "true" ||
+      process.env.ALLOW_TUNNELS === "true"
+    ) {
+      return true;
+    }
   }
   
   // If request has Cloudflare headers, it's NOT local.
@@ -71,7 +70,7 @@ export function isLocalRequest(req: Request): boolean {
 export function isAllowedOrigin(origin: string | undefined): boolean {
   if (
     process.env.NODE_ENV === "test" ||
-    process.env.ALLOW_ALL_ORIGINS === "true"
+    (process.env.NODE_ENV !== "production" && process.env.ALLOW_ALL_ORIGINS === "true")
   ) {
     return true;
   }
@@ -184,6 +183,10 @@ export async function apiRateLimit(req: Request, res: Response, next: NextFuncti
   try {
     if (redisClient.status !== "ready") {
       if (redisClient.status === "wait") redisClient.connect().catch(() => {});
+      if (process.env["RATE_LIMIT_FAIL_CLOSED"] === "true") {
+        res.status(503).json({ error: "Service Unavailable (Rate Limiter offline)" });
+        return;
+      }
       if (!applyInMemoryFallback()) return;
       next();
       return;
@@ -212,6 +215,10 @@ export async function apiRateLimit(req: Request, res: Response, next: NextFuncti
     }
   } catch (err) {
     logger.warn({ err }, "Redis rate limiter error, degrading to in-memory fallback");
+    if (process.env["RATE_LIMIT_FAIL_CLOSED"] === "true") {
+      res.status(503).json({ error: "Service Unavailable (Rate Limiter error)" });
+      return;
+    }
     if (!applyInMemoryFallback()) return;
   }
 

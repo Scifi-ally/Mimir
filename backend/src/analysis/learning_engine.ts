@@ -405,8 +405,14 @@ async function analyzeRiskAutotuning(closed: any[]): Promise<void> {
   const recent = closed.sort((a, b) => (b.closedAt?.getTime() || 0) - (a.closedAt?.getTime() || 0)).slice(0, 20);
   if (recent.length < 10) return;
 
-  const wins = recent.filter(t => t.status.includes("TARGET")).length;
-  const winRate = wins / recent.length;
+  // Win rate over DECIDED trades only (target/stop). EXPIRED scratches are not
+  // losses — counting them made routine end-of-day expiries look like a
+  // performance collapse and wrongly forced CAPITAL_PRESERVATION (same fix as
+  // confidence_engine's decided-only denominator).
+  const decided = recent.filter(t => t.status.includes("TARGET") || t.status === "STOP_HIT");
+  if (decided.length < 5) return;
+  const wins = decided.filter(t => t.status.includes("TARGET")).length;
+  const winRate = wins / decided.length;
 
   let mode = "DEFAULT";
   let maxRiskPerTradePct = 1.0;
@@ -459,9 +465,22 @@ export async function getAutoTunedRiskParams(): Promise<AutoTunedRiskParams> {
       .limit(1);
 
     if (row && row.insights) {
-      riskParamsCache = JSON.parse(row.insights);
-      lastRiskParamsFetch = Date.now();
-      return riskParamsCache!;
+      const parsed = JSON.parse(row.insights);
+      // Validate shape — a malformed row must not feed NaN into position sizing.
+      if (
+        parsed &&
+        Number.isFinite(parsed.maxRiskPerTradePct) &&
+        Number.isFinite(parsed.minRiskReward)
+      ) {
+        riskParamsCache = {
+          mode: parsed.mode === "CAPITAL_PRESERVATION" || parsed.mode === "AGGRESSIVE" ? parsed.mode : "DEFAULT",
+          maxRiskPerTradePct: parsed.maxRiskPerTradePct,
+          minRiskReward: parsed.minRiskReward,
+        };
+        lastRiskParamsFetch = Date.now();
+        return riskParamsCache;
+      }
+      logger.warn({ insights: row.insights }, "Malformed AUTO_TUNE_RISK row — using defaults");
     }
   } catch (err) {
     logger.warn({ err }, "Failed to fetch auto-tuned risk params, using defaults");

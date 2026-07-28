@@ -163,7 +163,7 @@ export interface DecisionTrace {
   rankerBlendApplied: boolean;
   rejectionGate?: string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  rejectionValue?: any;
+  rejectionValue?: number | string | boolean | string[] | null;
   threshold?: number;
   shap_values?: Record<string, number>;
 }
@@ -413,8 +413,13 @@ export async function runIntelligencePipeline(
         // Project the feature vector onto the shared ranker contract so the AI
         // service's LightGBM ranker sees exactly the features it trained on, in
         // the same order. Sent alongside the full feature dict the composite
-        // path already consumes.
-        features: { ...c.features, ranker_features: toRankerFeatureArray(c.features) },
+        // path already consumes. Incomplete vectors (stale realtime data) skip
+        // ranker projection — toRankerFeatureArray throws on them, and one bad
+        // symbol must not kill the whole batch.
+        features: {
+          ...c.features,
+          ranker_features: c.features.rankerIncomplete ? null : toRankerFeatureArray(c.features),
+        },
       })),
     );
     logger.info(
@@ -468,6 +473,9 @@ export async function runIntelligencePipeline(
 
     // Compute final confidence using the Regime-Gated Confluence Model
     let confidence = 50;
+    // True only when getConfluenceScore actually produced the number — the
+    // decision trace must record which formula ran, not which was attempted.
+    let usedConfluence = false;
     if (aiContributing) {
       const rsNormalized = Math.max(0, Math.min(100, ((features.rsVsNifty60d - 0.8) / 0.4) * 100));
       const sectorNormalized = Math.max(0, Math.min(100, ((sectorStrength + 2) / 4) * 100));
@@ -483,6 +491,7 @@ export async function runIntelligencePipeline(
       
       if (!confRes.fallback) {
         confidence = confRes.score;
+        usedConfluence = true;
       } else {
         confidence = computeFinalConfidence(
           technicalScore,
@@ -522,7 +531,7 @@ export async function runIntelligencePipeline(
       }
     }
 
-    const buildRejectedSignal = (gate: string, value: any, thresholdVal?: number): IntelligenceSignal => {
+    const buildRejectedSignal = (gate: string, value: number | string | boolean | string[] | null, thresholdVal?: number): IntelligenceSignal => {
       const trace: DecisionTrace = {
         regime: regime.regime,
         regimeStrength: regime.confidence,
@@ -530,7 +539,7 @@ export async function runIntelligencePipeline(
         sentiment_score: sentimentScore,
         win_probability: aiResult?.win_probability,
         bullish_probability: aiResult?.technicalRanking?.bullish_probability,
-        confidencePath: aiContributing ? (aiResult?.isFallback ? "native_math_fallback" : "python_confluence") : "native_math_fallback",
+        confidencePath: usedConfluence ? "python_confluence" : "native_math_fallback",
         rankerBlendApplied: !!(aiResult?.ranker_loaded && typeof aiResult?.win_probability === "number"),
         rejectionGate: gate,
         rejectionValue: value,
@@ -856,7 +865,7 @@ export async function runIntelligencePipeline(
         sentiment_score: sentimentScore,
         win_probability: aiResult?.win_probability,
         bullish_probability: aiResult?.technicalRanking?.bullish_probability,
-        confidencePath: aiContributing ? (aiResult?.isFallback ? "native_math_fallback" : "python_confluence") : "native_math_fallback",
+        confidencePath: usedConfluence ? "python_confluence" : "native_math_fallback",
         rankerBlendApplied: !!(aiResult?.ranker_loaded && typeof aiResult?.win_probability === "number"),
         shap_values: aiResult?.shap_values
       }

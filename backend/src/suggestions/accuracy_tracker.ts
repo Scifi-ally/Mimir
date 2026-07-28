@@ -29,9 +29,11 @@ function netPnl(entry: number, exit: number, qty: number, gross: number): number
 const TICK_LOOKBACK_MS = 75_000;
 
 // Fill moment of suggestions promoted PENDING→ACTIVE by this process. The DB
-// has no activatedAt column, and without this floor the tick scan on the very
-// next sweep can read PRE-FILL ticks — a print that touched the stop before
-// the entry ever filled would mislabel the trade STOP_HIT.
+// also persists activatedAt (survives restarts); this map covers the gap
+// between the promotion UPDATE and the next row re-read. Without this floor
+// the tick scan on the very next sweep can read PRE-FILL ticks — a print that
+// touched the stop before the entry ever filled would mislabel the trade
+// STOP_HIT.
 const promotedAtMs = new Map<string, number>();
 
 /**
@@ -71,15 +73,18 @@ function firstTouchFromTicks(
       // The entry-touch tick itself can also touch a level — fall through.
     }
     // Within a single tick the stop is checked first — same pessimistic
-    // convention as the price-based path when one print crosses both.
+    // convention as the price-based path when one print crosses both. T1 is
+    // checked before T2 for the same reason: when one print covers both
+    // targets the order is ambiguous, and a resting exit at T1 fills no later
+    // than T2 — conservative labeling assumes T1 first.
     if (direction === "BUY") {
       if (p <= stop) return { level: "STOP", price: p };
-      if (t2 != null && p >= t2) return { level: "T2", price: t2 };
       if (p >= t1) return { level: "T1", price: t1 };
+      if (t2 != null && p >= t2) return { level: "T2", price: t2 };
     } else {
       if (p >= stop) return { level: "STOP", price: p };
-      if (t2 != null && p <= t2) return { level: "T2", price: t2 };
       if (p <= t1) return { level: "T1", price: t1 };
+      if (t2 != null && p <= t2) return { level: "T2", price: t2 };
     }
   }
   return null;
@@ -192,10 +197,12 @@ export async function checkSuggestionOutcomes(prices: PriceMap): Promise<void> {
     // gap can sweep both stop and target, and labeling by current price alone
     // both mislabels those trades and biases win-rate stats (and everything
     // trained on them) pessimistically low in fast markets.
-    // Floor the tick window at the fill moment when this process promoted the
-    // row PENDING→ACTIVE, so pre-fill prints can't decide the outcome.
+    // Floor the tick window at the fill moment: persisted activatedAt when the
+    // promotion happened (possibly in a previous process), the in-memory map
+    // for a promotion this sweep hasn't re-read yet.
     const generatedAtMs = suggestion.generatedAt ? new Date(suggestion.generatedAt).getTime() : 0;
-    const notBeforeMs = Math.max(generatedAtMs, promotedAtMs.get(suggestion.id) ?? 0);
+    const activatedAtMs = suggestion.activatedAt ? new Date(suggestion.activatedAt).getTime() : 0;
+    const notBeforeMs = Math.max(generatedAtMs, activatedAtMs, promotedAtMs.get(suggestion.id) ?? 0);
     const firstTouch = firstTouchFromTicks(suggestion.direction, suggestion.symbol, notBeforeMs, stop, t1, t2);
 
     if (firstTouch) {
@@ -220,13 +227,11 @@ export async function checkSuggestionOutcomes(prices: PriceMap): Promise<void> {
       }
     } else if (suggestion.direction === "BUY") {
       // No usable tick history (e.g. REST-fallback polling) — fall back to the
-      // polled price. Stop checked before targets: pessimistic label wins.
+      // polled price. Stop checked before targets, T1 before T2: pessimistic
+      // label wins when the poll gap makes the touch order ambiguous.
       if (price <= stop) {
         outcome = "STOP_HIT";
         pnl = netPnl(entry, price, qty, (price - entry) * qty);
-      } else if (t2 && price >= t2) {
-        outcome = "TARGET_2_HIT";
-        pnl = netPnl(entry, t2, qty, (t2 - entry) * qty);
       } else if (price >= t1) {
         outcome = "TARGET_1_HIT";
         pnl = netPnl(entry, t1, qty, (t1 - entry) * qty);
@@ -235,9 +240,6 @@ export async function checkSuggestionOutcomes(prices: PriceMap): Promise<void> {
       if (price >= stop) {
         outcome = "STOP_HIT";
         pnl = netPnl(entry, price, qty, (entry - price) * qty);
-      } else if (t2 && price <= t2) {
-        outcome = "TARGET_2_HIT";
-        pnl = netPnl(entry, t2, qty, (entry - t2) * qty);
       } else if (price <= t1) {
         outcome = "TARGET_1_HIT";
         pnl = netPnl(entry, t1, qty, (entry - t1) * qty);
@@ -262,10 +264,14 @@ export async function checkSuggestionOutcomes(prices: PriceMap): Promise<void> {
         // planned entry at insert, and on a gapped fill the stale seed would
         // record an adverse excursion the market never traded.
         const fill = promo.fillPrice.toFixed(2);
-        await db
+        // Guarded on status so a concurrent checker/expiry pass that already
+        // moved this row out of PENDING cannot be overwritten back to ACTIVE.
+        const promoted = await db
           .update(suggestionsTable)
-          .set({ status: "ACTIVE", entryPrice: fill, highestPrice: fill, lowestPrice: fill })
-          .where(eq(suggestionsTable.id, promo.id));
+          .set({ status: "ACTIVE", activatedAt: new Date(), entryPrice: fill, highestPrice: fill, lowestPrice: fill })
+          .where(and(eq(suggestionsTable.id, promo.id), eq(suggestionsTable.status, "PENDING")))
+          .returning({ id: suggestionsTable.id });
+        if (promoted.length === 0) continue;
         promotedAtMs.set(promo.id, Date.now());
         // Keep UI in sync — clients show PENDING as "awaiting entry"
         broadcast(
@@ -285,7 +291,11 @@ export async function checkSuggestionOutcomes(prices: PriceMap): Promise<void> {
 
   try {
     for (const outcome of outcomes) {
-      await db
+      // Guard on the expected prior status (MISSED closes a PENDING row, the
+      // hit/stop outcomes close an ACTIVE one) so a concurrent verifier or
+      // expiry pass cannot have its terminal status overwritten.
+      const priorStatus = outcome.status === "MISSED" ? "PENDING" : "ACTIVE";
+      const updated = await db
         .update(suggestionsTable)
         .set({
           status: outcome.status,
@@ -293,8 +303,10 @@ export async function checkSuggestionOutcomes(prices: PriceMap): Promise<void> {
           pnlInr: outcome.pnlInr != null ? outcome.pnlInr.toString() : null,
           closedAt: new Date(),
         })
-        .where(eq(suggestionsTable.id, outcome.id));
+        .where(and(eq(suggestionsTable.id, outcome.id), eq(suggestionsTable.status, priorStatus)))
+        .returning({ id: suggestionsTable.id });
       promotedAtMs.delete(outcome.id);
+      if (updated.length === 0) continue;
 
       // Broadcast each outcome update
       broadcast(
@@ -366,21 +378,27 @@ export async function resolveCounterfactuals(prices: PriceMap): Promise<void> {
     const isBuy = cand.direction === "BUY";
 
     const touched = isBuy ? price >= entry : price <= entry;
-    if (!touched) {
-      if (expired) resolved.push({ id: cand.id, cfStatus: "NEVER_TRIGGERED" });
-      continue;
-    }
 
     // Sequence within the tick window, but only count level touches AFTER a
     // tick actually crossed the planned entry — the polled `touched` above
     // could be a later snapshot, and pre-entry stop prints are not losses.
+    // Run this even when the polled price never touched entry: a tick can
+    // trigger AND resolve between polls, and skipping the tick scan there
+    // biases the NEVER_TRIGGERED count high.
     const firstTouch = firstTouchFromTicks(
       cand.direction, cand.symbol, new Date(cand.createdAt).getTime(), stop, t1, null,
       { entry },
     );
     if (firstTouch) {
       resolved.push({ id: cand.id, cfStatus: firstTouch.level === "STOP" ? "WOULD_HAVE_LOST" : "WOULD_HAVE_WON" });
-    } else if (isBuy ? price <= stop : price >= stop) {
+      continue;
+    }
+    if (!touched) {
+      if (expired) resolved.push({ id: cand.id, cfStatus: "NEVER_TRIGGERED" });
+      continue;
+    }
+
+    if (isBuy ? price <= stop : price >= stop) {
       resolved.push({ id: cand.id, cfStatus: "WOULD_HAVE_LOST" });
     } else if (isBuy ? price >= t1 : price <= t1) {
       resolved.push({ id: cand.id, cfStatus: "WOULD_HAVE_WON" });

@@ -187,6 +187,7 @@ export async function exchangeCodeForToken(code: string, type: "trading" | "data
       }),
       {
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        timeout: 15_000,
       }
     );
 

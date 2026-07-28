@@ -10,7 +10,7 @@ import {
   ModifyTargetBody,
 } from "../schemas";
 import { fetchLTPForSymbols } from "../suggestions/generator";
-import { todayStartUTC } from "../lib/ist-time";
+import { todayStartUTC, getISTDayBounds, getISTDateStr } from "../lib/ist-time";
 import { logger } from "../lib/logger";
 import { logApiError, sendFallback } from "../lib/api-errors";
 import { runLearningPipeline } from "../analysis/learning_engine";
@@ -111,13 +111,13 @@ router.get("/suggestions/history", async (req, res) => {
     if (status) conditions.push(eq(suggestionsTable.status, status));
     if (setup_type) conditions.push(eq(suggestionsTable.setupType, setup_type));
     if (direction) conditions.push(eq(suggestionsTable.direction, direction));
+    // Day bounds must be IST trading days — setHours() used server-local time,
+    // shifting the window for any server not running in IST.
     if (from_date) {
-      conditions.push(gte(suggestionsTable.generatedAt, new Date(from_date)));
+      conditions.push(gte(suggestionsTable.generatedAt, getISTDayBounds(getISTDateStr(from_date)).start));
     }
     if (to_date) {
-      const end = new Date(to_date);
-      end.setHours(23, 59, 59, 999);
-      conditions.push(lte(suggestionsTable.generatedAt, end));
+      conditions.push(lte(suggestionsTable.generatedAt, getISTDayBounds(getISTDateStr(to_date)).end));
     }
 
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
@@ -331,14 +331,19 @@ router.post("/suggestions/:id/accept", async (req, res) => {
     const prices = await fetchLTPForSymbols([suggestion.symbol]);
     const ltp = prices[suggestion.symbol];
     const fill = ltp != null && Number.isFinite(ltp) && ltp > 0 ? ltp.toFixed(2) : null;
-    await db
+    const updated = await db
       .update(suggestionsTable)
       .set(
         fill != null
           ? { status: "ACTIVE", entryPrice: fill, highestPrice: fill, lowestPrice: fill }
           : { status: "ACTIVE" },
       )
-      .where(and(eq(suggestionsTable.id, id), eq(suggestionsTable.status, "PENDING")));
+      .where(and(eq(suggestionsTable.id, id), eq(suggestionsTable.status, "PENDING")))
+      .returning({ id: suggestionsTable.id });
+    if (updated.length === 0) {
+      res.status(409).json({ error: "Suggestion status changed concurrently; not accepted" });
+      return;
+    }
     res.json({ success: true });
     broadcast(createServerEvent.suggestionUpdated({ id, status: "ACTIVE" }), "suggestions");
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -409,10 +414,15 @@ router.post("/suggestions/:id/close", async (req, res) => {
     // row was never a trade, so closing it must not record a calibration
     // non-win — only a filled ACTIVE position closes as EXPIRED.
     const nextStatus = suggestion.status === "PENDING" ? "MISSED" : "EXPIRED";
-    await db
+    const updated = await db
       .update(suggestionsTable)
       .set({ status: nextStatus, closedAt: new Date() })
-      .where(and(eq(suggestionsTable.id, id), eq(suggestionsTable.status, suggestion.status)));
+      .where(and(eq(suggestionsTable.id, id), eq(suggestionsTable.status, suggestion.status)))
+      .returning({ id: suggestionsTable.id });
+    if (updated.length === 0) {
+      res.status(409).json({ error: "Suggestion status changed concurrently; not closed" });
+      return;
+    }
     res.json({ success: true, status: nextStatus });
     broadcast(createServerEvent.suggestionUpdated({ id, status: nextStatus }), "suggestions");
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -451,10 +461,24 @@ router.post("/suggestions/:id/modify-stop", async (req, res) => {
     }
 
     const { stopLoss } = parsed.data;
-    await db
+    // Direction sanity: a BUY stop at/above entry (or SELL at/below) would be
+    // instantly triggerable and corrupts risk accounting.
+    const entry = parseFloat(suggestion.entryPrice);
+    if (suggestion.direction === "BUY" ? stopLoss >= entry : stopLoss <= entry) {
+      res.status(400).json({
+        error: `Invalid stopLoss for ${suggestion.direction}: must be ${suggestion.direction === "BUY" ? "below" : "above"} entry price ${entry.toFixed(2)}`,
+      });
+      return;
+    }
+    const updated = await db
       .update(suggestionsTable)
       .set({ stopLoss: stopLoss.toFixed(2) })
-      .where(and(eq(suggestionsTable.id, id), inArray(suggestionsTable.status, ["ACTIVE", "PENDING"])));
+      .where(and(eq(suggestionsTable.id, id), inArray(suggestionsTable.status, ["ACTIVE", "PENDING"])))
+      .returning({ id: suggestionsTable.id });
+    if (updated.length === 0) {
+      res.status(409).json({ error: "Suggestion status changed concurrently; stop loss not modified" });
+      return;
+    }
     res.json({ success: true });
     broadcast(createServerEvent.suggestionUpdated({ id, status: suggestion.status }), "suggestions");
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -493,10 +517,24 @@ router.post("/suggestions/:id/modify-target", async (req, res) => {
     }
 
     const { target1 } = parsed.data;
-    await db
+    // Direction sanity: a BUY target at/below entry (or SELL at/above) would be
+    // instantly "hit" and books a fake win.
+    const entry = parseFloat(suggestion.entryPrice);
+    if (suggestion.direction === "BUY" ? target1 <= entry : target1 >= entry) {
+      res.status(400).json({
+        error: `Invalid target1 for ${suggestion.direction}: must be ${suggestion.direction === "BUY" ? "above" : "below"} entry price ${entry.toFixed(2)}`,
+      });
+      return;
+    }
+    const updated = await db
       .update(suggestionsTable)
       .set({ target1: target1.toFixed(2) })
-      .where(and(eq(suggestionsTable.id, id), inArray(suggestionsTable.status, ["ACTIVE", "PENDING"])));
+      .where(and(eq(suggestionsTable.id, id), inArray(suggestionsTable.status, ["ACTIVE", "PENDING"])))
+      .returning({ id: suggestionsTable.id });
+    if (updated.length === 0) {
+      res.status(409).json({ error: "Suggestion status changed concurrently; target not modified" });
+      return;
+    }
     res.json({ success: true });
     broadcast(createServerEvent.suggestionUpdated({ id, status: suggestion.status }), "suggestions");
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

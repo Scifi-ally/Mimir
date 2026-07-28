@@ -225,7 +225,7 @@ export async function initPaperEngine() {
         const latestTick = ticks[ticks.length - 1];
         if (latestTick) {
           currentLtp = latestTick.price;
-          if (latestTick.bid != null && latestTick.ask != null && latestTick.price > 0) {
+          if (latestTick.bid != null && latestTick.ask != null && latestTick.bid > 0 && latestTick.ask > 0 && latestTick.price > 0) {
             const spread = (latestTick.ask - latestTick.bid) / latestTick.price;
             if (spread > 0.02) { // Increased tolerance to 2%
                logger.warn({ symbol: suggestion.symbol, spread: (spread * 100).toFixed(2) }, "PaperEngine: Aborted entry due to bid-ask spread blowout > 2%");
@@ -652,7 +652,13 @@ export async function initPaperEngine() {
             slippedLtp = ltpAtTrigger.mul(1 + exitSlipFrac);
           }
           
-          const realizedPnl = isBuy ? slippedLtp.minus(entryPrice).mul(qty) : entryPrice.minus(slippedLtp).mul(qty);
+          const grossPnl = isBuy ? slippedLtp.minus(entryPrice).mul(qty) : entryPrice.minus(slippedLtp).mul(qty);
+          const brokeragePerOrder = new Decimal(getConfig().brokeragePerOrderInr ?? 20);
+          const totalBrokerage = brokeragePerOrder.mul(2); // Entry + Exit orders
+          const sellValue = isBuy ? slippedLtp.mul(qty) : entryPrice.mul(qty);
+          const sttTax = sellValue.mul(0.00025); // 0.025% STT on sell leg for intraday equity
+          const totalCharges = totalBrokerage.add(sttTax);
+          const realizedPnl = grossPnl.minus(totalCharges);
 
           const isSwingExit = pos.symbol.includes("-SWING");
           const exitLeverage = isSwingExit ? 1 : 5;

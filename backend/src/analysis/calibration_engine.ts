@@ -92,6 +92,7 @@ export async function refreshCalibration(): Promise<void> {
           tradeType: string;
           wins: number;
           total: number;
+          decided: number;
           pnlSum: number;
           maeOnWinSum: number;
           maeOnWinCount: number;
@@ -110,6 +111,7 @@ export async function refreshCalibration(): Promise<void> {
             tradeType: row.tradeType,
             wins: 0,
             total: 0,
+            decided: 0,
             pnlSum: 0,
             maeOnWinSum: 0,
             maeOnWinCount: 0,
@@ -120,6 +122,11 @@ export async function refreshCalibration(): Promise<void> {
 
         const isWin = WIN_STATUSES.has(row.status);
         b.total += 1;
+        // Decided = target or stop actually hit. EXPIRED/CLOSED scratches must
+        // not dilute the win rate (decided-only denominator, same convention as
+        // confidence_engine) — a setup whose entries often never trigger would
+        // otherwise have its confidence dragged toward the expiry rate.
+        if (isWin || row.status === "STOP_HIT") b.decided += 1;
         if (isWin) {
           b.wins += 1;
           if (row.closedAt) {
@@ -158,7 +165,7 @@ export async function refreshCalibration(): Promise<void> {
           setupType: b.setupType,
           tradeType: b.tradeType,
           samples: b.total,
-          winRate: b.total > 0 ? b.wins / b.total : 0,
+          winRate: b.decided > 0 ? b.wins / b.decided : 0,
           avgPnlInr: b.total > 0 ? b.pnlSum / b.total : 0,
           avgAdverseExcursionPct: b.maeOnWinCount > 0 ? b.maeOnWinSum / b.maeOnWinCount : null,
           avgFavorableOnLossPct: b.mfeOnLossCount > 0 ? b.mfeOnLossSum / b.mfeOnLossCount : null,

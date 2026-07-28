@@ -493,7 +493,7 @@ export const CreateSuggestionBody = zod.object({
   stopLoss: zod.coerce.number().positive(),
   target1: zod.coerce.number().positive(),
   quantity: zod.coerce.number().int().positive(),
-  status: zod.enum(["PENDING", "ACTIVE", "TARGET_1_HIT", "TARGET_2_HIT", "STOP_HIT", "EXPIRED", "MISSED", "CLOSED", "REJECTED"]).default("PENDING").optional(),
+  status: zod.enum(["PENDING", "ACTIVE"]).default("PENDING"),
 }).refine(
   (data) => {
     if (data.direction === "BUY") {

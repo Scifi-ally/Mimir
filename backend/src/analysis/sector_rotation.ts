@@ -1,6 +1,6 @@
 import { logger } from "../lib/logger";
 import { NSE_UNIVERSE, StockSector } from "./stock_scanner";
-import { updateMarketState } from "../market_data/market_state";
+import { updateMarketState, getMarketState } from "../market_data/market_state";
 
 export interface SectorMoneyFlow {
   sector: StockSector;
@@ -141,7 +141,6 @@ export function getSectorMomentumScore(sectorName: string): number {
   const flow = sectorAggregates.get(sectorName as StockSector);
   if (!flow) return 0;
   
-  const { getMarketState } = require("../market_data/market_state");
   const state = getMarketState();
   const niftyChange = state.niftyChangePct ?? 0;
   

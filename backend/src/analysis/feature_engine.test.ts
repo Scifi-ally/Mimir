@@ -1,17 +1,16 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+
+vi.mock('../market_data/market_state', () => ({
+  getMarketState: () => ({ topSectors: [], fiiNetInr: 100.5, diiNetInr: 50.0 })
+}));
+vi.mock('./regime_detector', () => ({
+  getLastRegimeOutput: () => ({ strength: 50 })
+}));
+
 import { computeFeatureVector, toRankerFeatureArray } from './feature_engine';
 import type { OHLCV, TechnicalSnapshot } from './technical';
 
 describe('Feature Engine', () => {
-  beforeEach(() => {
-    vi.mock('../market_data/market_state', () => ({
-      getMarketState: () => ({ topSectors: [], fiiNetInr: 100.5, diiNetInr: 50.0 })
-    }));
-    vi.mock('./regime_detector', () => ({
-      getLastRegimeOutput: () => ({ strength: 50 })
-    }));
-  });
-
   it('computes F&O/microstructure signals correctly', () => {
     const symbol = 'RELIANCE';
     const sector = 'ENERGY';

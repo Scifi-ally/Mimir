@@ -11,7 +11,8 @@ import { logSecurityMode } from "./lib/security";
 import { startMarketIntelligence, marketIntelligence } from "./intelligence/orchestrator";
 import { initPaperEngine } from "./trading/paper_engine";
 import { startBrokerReconciliationLoop } from "./trading/reconciler";
-import { pool } from "../db/src";
+import { db, pool } from "../db/src";
+import { sql } from "drizzle-orm";
 import { redisClient } from "./lib/redis";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -31,6 +32,7 @@ process.on("uncaughtException", (err) => {
 
 dotenvConfig({ path: path.resolve(__dirname, "../.env.local"), override: true });
 dotenvConfig({ path: path.resolve(__dirname, "../.env") });
+logSecurityMode();
 
 const port = Number(process.env["PORT"] ?? 5000);
 
@@ -41,7 +43,12 @@ if (Number.isNaN(port) || port <= 0) {
 const server = http.createServer(app);
 
 initWebSocketServer(server);
-logSecurityMode();
+try {
+  await db.execute(sql`SELECT activated_at FROM suggestions LIMIT 1`);
+} catch (schemaErr) {
+  logger.fatal({ err: schemaErr }, "CRITICAL: Database schema out of sync with Drizzle ORM! Run 'npm run setup:db' to apply missing migrations before starting the server.");
+  process.exit(1);
+}
 
 try {
   await Promise.all([initConfigFromDb(), initAccessTokenFromDb()]);

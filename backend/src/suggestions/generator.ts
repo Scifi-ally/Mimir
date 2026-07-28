@@ -157,6 +157,7 @@ function summarizeRejections(rejectionCounts: Record<string, number>): Record<st
     capacity_gate: 0,
     execution_guard: 0,
     system_error: 0,
+    other: 0,
   };
 
   const add = (key: keyof typeof summary, value: number) => {
@@ -176,11 +177,11 @@ function summarizeRejections(rejectionCounts: Record<string, number>): Record<st
       add("quality_gate", count);
       continue;
     }
-    if (["risk_reward", "position_sizing", "setup_demoted", "delivery_pct", "gap_risk"].includes(reason)) {
+    if (["risk_reward", "position_sizing", "setup_demoted", "setup_regime_demoted", "delivery_pct", "gap_risk"].includes(reason)) {
       add("risk_gate", count);
       continue;
     }
-    if (["sector_cap", "direction_cap_buy", "direction_cap_sell", "already_open", "max_open_positions"].includes(reason)) {
+    if (["sector_cap", "direction_cap_buy", "direction_cap_sell", "already_open", "max_open_positions", "daily_cap"].includes(reason)) {
       add("capacity_gate", count);
       continue;
     }
@@ -192,6 +193,9 @@ function summarizeRejections(rejectionCounts: Record<string, number>): Record<st
       add("system_error", count);
       continue;
     }
+    // Unrecognized reasons (e.g. pipeline rejectionGate strings) must still be
+    // counted — dropping them makes the summary under-report total rejections.
+    add("other", count);
   }
 
   return summary;
@@ -1188,6 +1192,11 @@ export async function ingestSignal(
           : ltp <= signal.entryPrice
         : false;
 
+    // Honest fill price: an immediately-ACTIVE row fills at the observed live
+    // price, not the planned entry — record the ltp so PnL and MFE/MAE
+    // baselines use the price a real order would have gotten.
+    const fillPrice = entryTouched ? ltp : signal.entryPrice;
+
     const [inserted] = await db
       .insert(suggestionsTable)
       .values({
@@ -1197,7 +1206,7 @@ export async function ingestSignal(
         direction: signal.signal,
         tradeType,
         setupType: signal.setupType,
-        entryPrice: signal.entryPrice.toString(),
+        entryPrice: fillPrice.toString(),
         stopLoss: signal.stopLoss.toString(),
         target1: signal.target1.toString(),
         target2: signal.target2 ? signal.target2.toString() : null,
@@ -1219,8 +1228,8 @@ export async function ingestSignal(
         expiresAt: timing.expiresAt,
         status: entryTouched ? "ACTIVE" : "PENDING",
         atr: signal.featureVector?.atr14?.toString() || "0",
-        highestPrice: signal.entryPrice.toString(),
-        lowestPrice: signal.entryPrice.toString(),
+        highestPrice: fillPrice.toString(),
+        lowestPrice: fillPrice.toString(),
         signalFactors: signal.signalFactors,
         // Persist the full feature vector so a model can later be trained on the
         // realized outcome of this exact signal (Phase 1.1). Discarded before now.

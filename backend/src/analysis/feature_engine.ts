@@ -465,10 +465,11 @@ export function computeFeatureVector(
     volumeRatio: snap.volumeRatio,
     vwapDistance: Math.round(vwapDistance * 100) / 100,
 
-    // EMA distances
+    // EMA distances (guard on the DIVISOR — ema=0 from short history would
+    // otherwise put Infinity into the persisted feature vector)
     ema20Dist: snap.distFromEma20Pct,
-    ema50Dist: snap.close > 0 ? Math.round(((snap.close - snap.ema50) / snap.ema50) * 10000) / 100 : 0,
-    ema200Dist: snap.close > 0 ? Math.round(((snap.close - snap.ema200) / snap.ema200) * 10000) / 100 : 0,
+    ema50Dist: snap.ema50 > 0 ? Math.round(((snap.close - snap.ema50) / snap.ema50) * 10000) / 100 : 0,
+    ema200Dist: snap.ema200 > 0 ? Math.round(((snap.close - snap.ema200) / snap.ema200) * 10000) / 100 : 0,
 
     // Trend structure
     emaAlignment,

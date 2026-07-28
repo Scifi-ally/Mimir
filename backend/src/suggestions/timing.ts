@@ -16,6 +16,12 @@ export interface SuggestionTiming {
 }
 
 const MINUTE = 60_000;
+
+/** IST calendar date of `d` (expiry dates must be IST, not UTC — a 02:00 IST
+ *  expiry is the previous day in UTC). */
+function istDateStr(d: Date): string {
+  return new Date(d.getTime() + 330 * MINUTE).toISOString().slice(0, 10);
+}
 const MARKET_CLOSE_MINUTES_IST = 15 * 60 + 15;
 const MARKET_OPEN_MINUTES_IST = 9 * 60 + 15;
 
@@ -26,10 +32,13 @@ function getMinutesInIST(date: Date): number {
 function intradayExpiry(generatedAt: Date, estimatedMinutes: number): Date {
   const nowIST = getMinutesInIST(generatedAt);
   const closeInMinutes = MARKET_CLOSE_MINUTES_IST - nowIST;
+  const istDay = new Date(generatedAt.getTime() + 330 * MINUTE).getUTCDay();
+  const isWeekend = istDay === 0 || istDay === 6;
 
-  if (closeInMinutes <= 5) {
-    // Generated after (or at) close — off-hours scans target the NEXT session.
-    // Previously this clamped to 0 minutes and the suggestion expired instantly.
+  if (closeInMinutes <= 5 || nowIST < MARKET_OPEN_MINUTES_IST || isWeekend) {
+    // Generated outside the live session (after close, pre-open, or weekend) —
+    // off-hours scans target the NEXT session. Previously pre-open/weekend
+    // generation counted non-trading minutes and expired before the open.
     let minutesUntilOpen = (MARKET_OPEN_MINUTES_IST - nowIST + 24 * 60) % (24 * 60);
     // Skip weekend days between now and the next open
     const opensAt = new Date(generatedAt.getTime() + minutesUntilOpen * MINUTE);
@@ -85,7 +94,7 @@ export function calculateSuggestionTiming(input: SuggestionTimingInput): Suggest
     return {
       expectedHoldMinutes,
       expiresAt,
-      validityTill: expiresAt.toISOString().slice(0, 10),
+      validityTill: istDateStr(expiresAt),
     };
   }
 
@@ -105,6 +114,6 @@ export function calculateSuggestionTiming(input: SuggestionTimingInput): Suggest
   return {
     expectedHoldMinutes,
     expiresAt,
-    validityTill: expiresAt.toISOString().slice(0, 10),
+    validityTill: istDateStr(expiresAt),
   };
 }

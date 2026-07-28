@@ -32,7 +32,7 @@ router.get("/oos", async (_req, res) => {
         period1: firstTradeDate,
         period2: new Date(),
         interval: "1d"
-      }) as any[];
+      }) as Array<{ close: number }>;
       if (historicalData.length >= 2) {
         const startPrice = historicalData[0].close;
         const endPrice = historicalData[historicalData.length - 1].close;
