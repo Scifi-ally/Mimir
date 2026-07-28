@@ -593,8 +593,8 @@ function LiveOrderRow({ order }: { order: { id: string; symbol: string; directio
         <div className="flex items-center gap-3">
           <span className="font-normal text-base text-foreground tracking-tight">{order.symbol}</span>
           <span className={cn(
-            "text-[10px] font-normal tracking-[0.08em] uppercase px-1.5 py-0.5 rounded",
-            order.direction === "BUY" ? "text-bull bg-bull/10" : "text-bear bg-bear/10"
+            "text-[10px] font-mono font-bold tracking-[0.08em] uppercase",
+            order.direction === "BUY" ? "text-[#00e676]" : "text-[#ff1744]"
           )}>
             {order.direction}
           </span>
@@ -650,8 +650,8 @@ function PositionRow({ pos }: { pos: PaperPosition }) {
         <div className="flex items-center gap-3">
           <span className="font-normal text-base text-foreground tracking-tight">{pos.symbol}</span>
           <span className={cn(
-            "text-[10px] font-normal tracking-[0.08em] uppercase px-1.5 py-0.5 rounded",
-            pos.direction === "BUY" ? "text-bull bg-bull/10" : "text-bear bg-bear/10"
+            "text-[10px] font-mono font-bold tracking-[0.08em] uppercase",
+            pos.direction === "BUY" ? "text-[#00e676]" : "text-[#ff1744]"
           )}>
             {pos.direction}
           </span>
@@ -715,8 +715,8 @@ function HistoryRow({ hist }: { hist: PaperPosition }) {
         <div className="flex items-center gap-3">
           <span className="font-normal text-base text-foreground tracking-tight">{hist.symbol}</span>
           <span className={cn(
-            "text-[10px] font-normal tracking-[0.08em] uppercase px-1.5 py-0.5 rounded",
-            hist.direction === "BUY" ? "text-bull bg-bull/10" : "text-bear bg-bear/10"
+            "text-[10px] font-mono font-bold tracking-[0.08em] uppercase",
+            hist.direction === "BUY" ? "text-[#00e676]" : "text-[#ff1744]"
           )}>
             {hist.direction}
           </span>

@@ -290,8 +290,8 @@ function SuggestionCard({ s, onSelectSymbol, onClose }: {
         <div className="flex flex-col">
           <div className="flex items-center gap-2 mb-1">
             <span className={cn(
-              "text-[10px] font-mono font-semibold px-2 py-0.5 rounded uppercase tracking-wider border",
-              s.direction === 'BUY' ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30" : "bg-rose-500/20 text-rose-400 border-rose-500/30"
+              "text-[10px] font-mono font-bold uppercase tracking-wider",
+              s.direction === 'BUY' ? "text-[#00e676]" : "text-[#ff1744]"
             )}>
               {s.direction}
             </span>

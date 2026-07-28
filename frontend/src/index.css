@@ -45,8 +45,8 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
 
-  --color-bull: #22c55e;
-  --color-bear: #ef4444;
+  --color-bull: #00e676;
+  --color-bear: #ff1744;
   --color-surface: #0a0a0a;
 
   --radius-sm: calc(var(--radius) - 4px);
