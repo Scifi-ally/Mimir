@@ -1,7 +1,7 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, RefreshCw, Calendar, ChevronDown, ChevronLeft, ChevronRight, Sparkles } from "lucide-react";
+import { X, RefreshCw, Calendar, ChevronLeft, ChevronRight, Sparkles } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api } from "@/lib/api";
@@ -9,7 +9,6 @@ import { FADE_FAST, FADE_SLOW } from "@/lib/motion";
 import { Skeleton } from "@/components/atoms/Skeleton";
 import { Button } from "@/components/mimir/button";
 import { cn } from "@/lib/format";
-import { Expandable, ExpandableCard, ExpandableCardHeader, ExpandableCardContent, ExpandableTrigger } from "@/components/mimir/expandable";
 
 interface ReportsLibraryProps {
   isOpen: boolean;
@@ -85,7 +84,7 @@ const borderlessMarkdownComponents = {
 };
 
 // Apple Calendar Component (matching Apple Dark Theme Calendar)
-function AppleCalendarInline({ 
+function AppleCalendarCard({ 
   selectedDate, 
   onSelectDate, 
   availableDates 
@@ -130,17 +129,17 @@ function AppleCalendarInline({
   };
 
   return (
-    <div className="w-full max-w-sm p-4 rounded-2xl bg-black/40 text-white select-none font-sans border border-white/5">
+    <div className="w-72 p-5 rounded-3xl bg-[#1c1c1e] text-white shadow-2xl border border-white/10 select-none font-sans">
       {/* Month Header */}
-      <div className="flex items-center justify-between mb-3 px-1">
+      <div className="flex items-center justify-between mb-4 px-1">
         <span className="text-xs font-bold tracking-wider text-rose-500 uppercase font-mono">
           {monthName} {year}
         </span>
         <div className="flex items-center gap-1">
-          <button onClick={handlePrevMonth} className="p-1 rounded-full hover:bg-white/10 text-white/70 hover:text-white transition-colors">
+          <button onClick={handlePrevMonth} className="p-1.5 rounded-full hover:bg-white/10 text-white/70 hover:text-white transition-colors">
             <ChevronLeft className="w-4 h-4" />
           </button>
-          <button onClick={handleNextMonth} className="p-1 rounded-full hover:bg-white/10 text-white/70 hover:text-white transition-colors">
+          <button onClick={handleNextMonth} className="p-1.5 rounded-full hover:bg-white/10 text-white/70 hover:text-white transition-colors">
             <ChevronRight className="w-4 h-4" />
           </button>
         </div>
@@ -197,7 +196,8 @@ function AppleCalendarInline({
 export function ReportsLibrary({ isOpen, onClose }: ReportsLibraryProps) {
   const queryClient = useQueryClient();
   const [selectedDate, setSelectedDate] = useState<string>("");
-  const [isCalendarExpanded, setIsCalendarExpanded] = useState(false);
+  const [isCalendarOpen, setIsCalendarOpen] = useState(false);
+  const calendarRef = useRef<HTMLDivElement>(null);
 
   const reportsQuery = useQuery({
     queryKey: ["reports"],
@@ -230,6 +230,19 @@ export function ReportsLibrary({ isOpen, onClose }: ReportsLibraryProps) {
     }
   }, [reports, reportsByDate, selectedDate]);
 
+  // Close calendar popover on outside click
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (calendarRef.current && !calendarRef.current.contains(event.target as Node)) {
+        setIsCalendarOpen(false);
+      }
+    };
+    if (isCalendarOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [isCalendarOpen]);
+
   const activeReport = selectedDate ? reportsByDate.get(selectedDate) : reports[0];
 
   return (
@@ -252,14 +265,49 @@ export function ReportsLibrary({ isOpen, onClose }: ReportsLibraryProps) {
             animate={{ y: 0, x: "-50%" }}
             exit={{ y: "100%", x: "-50%" }}
             transition={FADE_SLOW}
-            className="fixed left-1/2 bottom-0 z-[70] flex flex-col bg-background text-foreground overflow-hidden h-[86vh] w-full max-w-4xl rounded-t-3xl shadow-[0_-8px_40px_rgba(0,0,0,0.08)] dark:shadow-[0_-8px_40px_rgba(0,0,0,0.4)] border border-b-0 border-foreground/5 ring-0 outline-none"
+            className="fixed left-1/2 bottom-0 z-[70] flex flex-col bg-background text-foreground h-[86vh] w-full max-w-4xl rounded-t-3xl shadow-[0_-8px_40px_rgba(0,0,0,0.08)] dark:shadow-[0_-8px_40px_rgba(0,0,0,0.4)] border border-b-0 border-foreground/5 ring-0 outline-none"
           >
+            {/* Side-Docked Apple Calendar (Positioned to the LEFT side of the panel outside the modal) */}
+            <div ref={calendarRef} className="absolute left-0 top-0 h-full">
+              <AnimatePresence>
+                {isCalendarOpen && (
+                  <motion.div
+                    initial={{ opacity: 0, x: 20, scale: 0.94 }}
+                    animate={{ opacity: 1, x: 0, scale: 1 }}
+                    exit={{ opacity: 0, x: 20, scale: 0.94 }}
+                    transition={{ type: "spring", stiffness: 300, damping: 28 }}
+                    className="absolute -left-[304px] top-6 z-[80] hidden lg:block"
+                  >
+                    <AppleCalendarCard
+                      selectedDate={selectedDate}
+                      onSelectDate={(d) => {
+                        setSelectedDate(d);
+                        setIsCalendarOpen(false);
+                      }}
+                      availableDates={availableDates}
+                    />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
             {/* Header */}
             <div className="relative px-8 pt-6 pb-4 flex items-center justify-between shrink-0 border-b border-border/10">
-              <h2 className="text-[10px] font-mono font-normal tracking-[0.08em] uppercase text-muted-foreground flex items-center gap-2">
-                Daily Reports
-                <span className="text-foreground/40 hidden sm:inline ml-2">— Market intelligence log</span>
-              </h2>
+              <div className="flex items-center gap-3">
+                <h2 className="text-[10px] font-mono font-normal tracking-[0.08em] uppercase text-muted-foreground">
+                  Daily Reports
+                </h2>
+
+                {/* Calendar Side-Dock Trigger Button */}
+                <button
+                  onClick={() => setIsCalendarOpen(!isCalendarOpen)}
+                  className="flex items-center gap-2 px-3 py-1 rounded-full bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 text-xs font-mono font-semibold transition-all border border-rose-500/20 active:scale-95"
+                >
+                  <Calendar className="w-3.5 h-3.5 text-rose-500" />
+                  <span>{selectedDate || "Select Date"}</span>
+                  <ChevronLeft className={cn("w-3.5 h-3.5 text-rose-500 transition-transform duration-300", isCalendarOpen ? "rotate-90" : "-rotate-90")} />
+                </button>
+              </div>
 
               <div className="flex items-center gap-3">
                 <Button 
@@ -281,59 +329,29 @@ export function ReportsLibrary({ isOpen, onClose }: ReportsLibraryProps) {
               </div>
             </div>
 
-            {/* Content Area */}
+            {/* Mobile Calendar Popover Fallback (For small screens) */}
+            <AnimatePresence>
+              {isCalendarOpen && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="block lg:hidden border-b border-border/10 bg-[#1c1c1e] p-4 flex justify-center shrink-0"
+                >
+                  <AppleCalendarCard
+                    selectedDate={selectedDate}
+                    onSelectDate={(d) => {
+                      setSelectedDate(d);
+                      setIsCalendarOpen(false);
+                    }}
+                    availableDates={availableDates}
+                  />
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* Report Body: Completely Borderless, Boxless View */}
             <div className="flex-1 overflow-y-auto px-10 py-8 flex flex-col">
-              {/* Cult UI Expandable Calendar Card */}
-              <div className="mb-8">
-                <Expandable expanded={isCalendarExpanded} onExpandedChange={setIsCalendarExpanded}>
-                  <ExpandableCard className="bg-[#1c1c1e] text-white border border-white/10 p-5 shadow-2xl transition-all duration-300">
-                    <ExpandableCardHeader className="flex items-center justify-between">
-                      <div className="flex items-center gap-3.5">
-                        <div className="p-2.5 rounded-2xl bg-rose-500/20 text-rose-500">
-                          <Calendar className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <span className="text-[10px] font-mono uppercase tracking-wider text-white/50 block">Market Report Date</span>
-                          <div className="flex items-center gap-2">
-                            <h3 className="text-base font-mono font-bold text-white tracking-tight">
-                              {selectedDate || "Select Date"}
-                            </h3>
-                            {reports.length > 0 && selectedDate === reports[0]?.date && (
-                              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-400 font-semibold border border-rose-500/30">
-                                LATEST
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-3">
-                        <span className="text-xs font-mono text-white/50 hidden sm:inline">
-                          {isCalendarExpanded ? "Hide Calendar" : "Expand Calendar"}
-                        </span>
-                        <ExpandableTrigger className="p-2 rounded-full hover:bg-white/10 text-white/80 transition-colors">
-                          <ChevronDown className={cn("w-4 h-4 transition-transform duration-300", isCalendarExpanded && "rotate-180")} />
-                        </ExpandableTrigger>
-                      </div>
-                    </ExpandableCardHeader>
-
-                    <ExpandableCardContent className="pt-5 border-t border-white/10 mt-4">
-                      <div className="flex justify-center">
-                        <AppleCalendarInline
-                          selectedDate={selectedDate}
-                          onSelectDate={(d) => {
-                            setSelectedDate(d);
-                            setIsCalendarExpanded(false);
-                          }}
-                          availableDates={availableDates}
-                        />
-                      </div>
-                    </ExpandableCardContent>
-                  </ExpandableCard>
-                </Expandable>
-              </div>
-
-              {/* Report Body: Borderless, Boxless View */}
               {reportsQuery.isPending ? (
                 <div className="flex flex-col gap-4 pt-2">
                   <Skeleton className="h-6 w-48" />
