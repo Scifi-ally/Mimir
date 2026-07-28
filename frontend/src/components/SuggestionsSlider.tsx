@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { X, Copy, Check } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { cn, fmtNum, calcPnLPct, toFixed } from '@/lib/format';
+import { cn, fmtNum, calcPnLPct } from '@/lib/format';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { useSymbolDataSelector } from '@/providers/MarketDataProvider';
@@ -274,13 +274,7 @@ function SuggestionCard({ s, paperTrade, onSelectSymbol, onClose }: {
     ? s.direction === 'BUY' ? pnlRaw : -pnlRaw
     : null;
 
-  let targetTimeStr = "N/A";
-  if (isActive && currentPrice) {
-    // For unfilled signals the relevant distance is to ENTRY, not target
-    const refPrice = isPending ? s.entryPrice : s.target1;
-    const distancePct = (Math.abs(currentPrice - refPrice) / currentPrice) * 100;
-    targetTimeStr = `${toFixed(distancePct, 2)}%`;
-  }
+
 
   const fmtMinutes = (m: number) =>
     m >= 390 ? `~${Math.round(m / 390)}d` : m >= 60 ? `~${Math.floor(m / 60)}h ${m % 60 ? `${m % 60}m` : ""}`.trim() : `~${m}m`;
@@ -358,7 +352,7 @@ function SuggestionCard({ s, paperTrade, onSelectSymbol, onClose }: {
             <span className="text-[10px] text-muted-foreground/60 font-mono hidden sm:inline-block">#{s.id.slice(-4)}</span>
           </div>
           
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+          <div className="flex flex-nowrap items-center gap-x-3 text-xs text-muted-foreground whitespace-nowrap overflow-hidden">
             <span className="flex items-center gap-1">
               <span className="text-foreground/40 text-[10px] uppercase tracking-wider">EN</span>
               <span className="font-mono font-normal text-foreground/80">₹{fmtNum(s.entryPrice)}</span>
@@ -384,15 +378,6 @@ function SuggestionCard({ s, paperTrade, onSelectSymbol, onClose }: {
                 <span className="flex items-center gap-1">
                   <span className="text-foreground/40 text-[10px] uppercase tracking-wider">HOLD</span>
                   <span className="font-mono font-normal text-foreground/80">{expectedHold}</span>
-                </span>
-              </>
-            )}
-            {isActive && (
-              <>
-                <span className="text-border/40">•</span>
-                <span className="flex items-center gap-1" title={isPending ? "Distance from current price to entry" : "Distance from current price to target"}>
-                  <span className="text-foreground/40 text-[10px] uppercase tracking-wider">{isPending ? "TO EN" : "DIST"}</span>
-                  <span className="font-mono font-normal text-foreground/80">{targetTimeStr}</span>
                 </span>
               </>
             )}
