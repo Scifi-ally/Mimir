@@ -258,11 +258,12 @@ function SuggestionCard({ s, paperTrade, onSelectSymbol, onClose }: {
   const isPaperWin = paperTrade && paperTrade.pnl > 0;
   const isWin = s.status.includes('TARGET') || Boolean(isPaperWin);
   const isLoss = s.status === 'STOP_HIT' || Boolean(isPaperLoss);
-  const effectivePnl = s.pnlInr != null ? s.pnlInr : paperTrade ? paperTrade.pnl : null;
+  const effectivePnl = paperTrade && paperTrade.pnl !== 0 ? paperTrade.pnl : s.pnlInr;
   const effectiveOutcome = s.outcomePrice ? s.outcomePrice : paperTrade?.entry ? paperTrade.entry : null;
+  const effectiveStatus = paperTrade ? paperTrade.status : s.status;
 
-  const isPending = s.status === 'PENDING' && !paperTrade; // signal generated, entry not yet touched
-  const isActive = (s.status === 'ACTIVE' || isPending) && !paperTrade;
+  const isPending = effectiveStatus === 'PENDING';
+  const isActive = effectiveStatus === 'ACTIVE' || effectiveStatus === 'OPEN' || isPending;
   
   const ltp = useSymbolDataSelector(s.symbol, d => d.ltp);
   const currentPrice = isActive && ltp ? ltp : (effectiveOutcome || s.currentPrice || s.outcomePrice);
@@ -351,7 +352,7 @@ function SuggestionCard({ s, paperTrade, onSelectSymbol, onClose }: {
               isLoss ? "bg-bear/10 text-bear" : 
               "bg-muted-foreground/10 text-muted-foreground"
             )}>
-              {s.status.replace(/_/g, ' ')}
+              {effectiveStatus.replace(/_/g, ' ')}
             </span>
             <span className="font-normal text-base tracking-tight">{s.symbol}</span>
             <span className="text-[10px] text-muted-foreground/60 font-mono hidden sm:inline-block">#{s.id.slice(-4)}</span>
