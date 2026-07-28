@@ -1,12 +1,9 @@
 import { useEffect, useState } from 'react';
 import { X, Copy, Check } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { cn, fmtNum, calcPnLPct } from '@/lib/format';
+import { cn, fmtNum } from '@/lib/format';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import { useSymbolDataSelector } from '@/providers/MarketDataProvider';
-import { LivePrice } from '@/components/atoms/LivePrice';
-import { AnimatedNumber } from '@/components/atoms/AnimatedNumber';
 import { FADE_STANDARD, SPRING_GENTLE } from "@/lib/motion";
 import { Skeleton } from "@/components/atoms/Skeleton";
 
@@ -54,20 +51,6 @@ export function SuggestionsSlider({ isOpen, onClose, onSelectSymbol, activeSugge
     enabled: isOpen,
   });
 
-  const { data: paperHistory } = useQuery({
-    queryKey: ['paperTrading', 'history'],
-    queryFn: () => api.paperTrading.history(),
-    staleTime: 10_000,
-    enabled: isOpen,
-  });
-
-  const { data: paperPositions } = useQuery({
-    queryKey: ['paperTrading', 'positions'],
-    queryFn: () => api.paperTrading.positions(),
-    staleTime: 5_000,
-    enabled: isOpen,
-  });
-
   useEffect(() => {
     if (!isOpen) return;
     const onKey = (e: KeyboardEvent) => {
@@ -80,17 +63,6 @@ export function SuggestionsSlider({ isOpen, onClose, onSelectSymbol, activeSugge
   const historySuggestions = suggestionsData?.data || [];
   
   const allSuggestions = new Map<string, import("@/types/api").Suggestion>();
-  const paperTradesMap = new Map<string, { pnl: number; status: string; entry?: number }>();
-
-  // Map executed paper trading trades by suggestionId and symbol
-  const allPaperTrades = [...(paperPositions || []), ...(paperHistory || [])];
-  for (const pt of allPaperTrades) {
-    const pnl = Number(pt.realizedPnl || pt.unrealizedPnl || 0);
-    const entry = Number(pt.avgEntryPrice || 0);
-    const info = { pnl, status: pt.status, entry };
-    if (pt.suggestionId) paperTradesMap.set(pt.suggestionId, info);
-    if (pt.symbol) paperTradesMap.set(pt.symbol, info);
-  }
   
   // Add history first
   (historySuggestions || []).forEach((s: import("@/types/api").Suggestion) => {
@@ -230,7 +202,6 @@ export function SuggestionsSlider({ isOpen, onClose, onSelectSymbol, activeSugge
                           <SuggestionCard
                             key={s.id}
                             s={s}
-                            paperTrade={paperTradesMap.get(s.id) || paperTradesMap.get(s.symbol)}
                             onSelectSymbol={onSelectSymbol}
                             onClose={onClose}
                           />
@@ -248,31 +219,16 @@ export function SuggestionsSlider({ isOpen, onClose, onSelectSymbol, activeSugge
   );
 }
 
-function SuggestionCard({ s, paperTrade, onSelectSymbol, onClose }: {
+function SuggestionCard({ s, onSelectSymbol, onClose }: {
   s: import("@/types/api").Suggestion;
-  paperTrade?: { pnl: number; status: string; entry?: number };
   onSelectSymbol?: (symbol: string) => void;
   onClose: () => void;
 }) {
-  const isPaperLoss = paperTrade && paperTrade.pnl < 0;
-  const isPaperWin = paperTrade && paperTrade.pnl > 0;
-  const isWin = s.status.includes('TARGET') || Boolean(isPaperWin);
-  const isLoss = s.status === 'STOP_HIT' || Boolean(isPaperLoss);
-  const effectivePnl = paperTrade && paperTrade.pnl !== 0 ? paperTrade.pnl : s.pnlInr;
-  const effectiveOutcome = s.outcomePrice ? s.outcomePrice : paperTrade?.entry ? paperTrade.entry : null;
-  const effectiveStatus = paperTrade ? paperTrade.status : s.status;
+  const isWin = s.status.includes('TARGET');
+  const isLoss = s.status === 'STOP_HIT';
 
-  const isPending = effectiveStatus === 'PENDING';
-  const isActive = effectiveStatus === 'ACTIVE' || effectiveStatus === 'OPEN' || isPending;
-  
-  const ltp = useSymbolDataSelector(s.symbol, d => d.ltp);
-  const currentPrice = isActive && ltp ? ltp : (effectiveOutcome || s.currentPrice || s.outcomePrice);
-
-  const pnlRaw = calcPnLPct(currentPrice, s.entryPrice);
-  // PENDING = entry never touched — no position exists, so never show a live P&L for it
-  const pnlFromCurrent = !isPending && isActive && pnlRaw != null
-    ? s.direction === 'BUY' ? pnlRaw : -pnlRaw
-    : null;
+  const isPending = s.status === 'PENDING';
+  const isActive = s.status === 'ACTIVE' || s.status === 'OPEN' || isPending;
 
 
 
@@ -346,7 +302,7 @@ function SuggestionCard({ s, paperTrade, onSelectSymbol, onClose }: {
               isLoss ? "bg-bear/10 text-bear" : 
               "bg-muted-foreground/10 text-muted-foreground"
             )}>
-              {effectiveStatus.replace(/_/g, ' ')}
+              {s.status.replace(/_/g, ' ')}
             </span>
             <span className="font-normal text-base tracking-tight">{s.symbol}</span>
             <span className="text-[10px] text-muted-foreground/60 font-mono hidden sm:inline-block">#{s.id.slice(-4)}</span>
@@ -410,51 +366,9 @@ function SuggestionCard({ s, paperTrade, onSelectSymbol, onClose }: {
         </div>
       </div>
 
-      <div className="flex items-center justify-between sm:justify-end gap-6 sm:w-1/3">
-        {/* Current Price / Outcome */}
-        <div className="flex flex-col items-start sm:items-end">
-          <span className="text-[10px] font-normal tracking-[0.08em] uppercase text-muted-foreground mb-1">
-            {isPending ? "Awaiting Entry" : isActive ? "Current" : "Outcome"}
-          </span>
-          <span className="font-mono font-normal text-sm">
-            {isActive ? (
-              <LivePrice symbol={s.symbol} decimals={2} fallback={currentPrice} />
-            ) : (effectiveOutcome || currentPrice) ? (
-              `₹${fmtNum(effectiveOutcome || currentPrice)}`
-            ) : (
-              <span className="text-muted-foreground/50 text-xs font-sans">Unfilled</span>
-            )}
-          </span>
-        </div>
-
-        {/* P&L */}
-        <div className="flex flex-col items-end min-w-[70px]">
-          <span className="text-[10px] font-normal tracking-[0.08em] uppercase text-muted-foreground mb-1">
-            P&L
-          </span>
-          {isWin && effectivePnl != null ? (
-            <span className="font-mono font-normal text-sm text-bull flex items-center gap-0.5">
-              +₹{fmtNum(Math.abs(effectivePnl))}
-            </span>
-          ) : isLoss && effectivePnl != null ? (
-            <span className="font-mono font-normal text-sm text-bear flex items-center gap-0.5">
-              -₹{fmtNum(Math.abs(effectivePnl))}
-            </span>
-          ) : isActive && pnlFromCurrent != null ? (
-            <span className={cn("font-mono font-normal text-sm", pnlFromCurrent > 0 ? "text-bull" : pnlFromCurrent < 0 ? "text-bear" : "text-foreground")}>
-              <AnimatedNumber value={pnlFromCurrent} decimals={2} showSign={true} suffix="%" duration={0.3} flashColor={true} />
-            </span>
-          ) : effectivePnl != null ? (
-            <span className={cn("font-mono font-normal text-sm", effectivePnl > 0 ? "text-bull" : effectivePnl < 0 ? "text-bear" : "text-muted-foreground")}>
-              {effectivePnl > 0 ? `+₹${fmtNum(effectivePnl)}` : effectivePnl < 0 ? `-₹${fmtNum(Math.abs(effectivePnl))}` : "₹0"}
-            </span>
-          ) : (
-            <span className="font-mono font-normal text-sm text-muted-foreground/50" title="Entry was never triggered, no trade occurred">—</span>
-          )}
-        </div>
-
+      <div className="flex items-center justify-end">
         {/* Copy Button */}
-        <div className="flex items-center pl-4 ml-2">
+        <div className="flex items-center">
           <CopyButton text={formatSuggestionText(s)} tooltip="Copy signal" />
         </div>
       </div>
