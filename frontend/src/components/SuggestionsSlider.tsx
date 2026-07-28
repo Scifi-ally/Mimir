@@ -398,8 +398,10 @@ function SuggestionCard({ s, onSelectSymbol, onClose }: {
           <span className="font-mono font-normal text-sm">
             {isActive ? (
               <LivePrice symbol={s.symbol} decimals={2} fallback={currentPrice} />
-            ) : (
+            ) : (s.outcomePrice || currentPrice) ? (
               `₹${fmtNum(s.outcomePrice || currentPrice)}`
+            ) : (
+              <span className="text-muted-foreground/50 text-xs font-sans">Unfilled</span>
             )}
           </span>
         </div>
@@ -421,8 +423,12 @@ function SuggestionCard({ s, onSelectSymbol, onClose }: {
             <span className={cn("font-mono font-normal text-sm", pnlFromCurrent > 0 ? "text-bull" : pnlFromCurrent < 0 ? "text-bear" : "text-foreground")}>
               <AnimatedNumber value={pnlFromCurrent} decimals={2} showSign={true} suffix="%" duration={0.3} flashColor={true} />
             </span>
+          ) : s.pnlInr != null ? (
+            <span className={cn("font-mono font-normal text-sm", s.pnlInr > 0 ? "text-bull" : s.pnlInr < 0 ? "text-bear" : "text-muted-foreground")}>
+              {s.pnlInr > 0 ? `+₹${fmtNum(s.pnlInr)}` : s.pnlInr < 0 ? `-₹${fmtNum(Math.abs(s.pnlInr))}` : "₹0"}
+            </span>
           ) : (
-            <span className="font-mono font-normal text-sm text-muted-foreground/50">—</span>
+            <span className="font-mono font-normal text-sm text-muted-foreground/50" title="Entry was never triggered, no trade occurred">—</span>
           )}
         </div>
 
