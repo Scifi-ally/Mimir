@@ -15,6 +15,7 @@ import { isMarketOpen } from "../market_data/market_state";
 import { TelemetryEngine, type ModelDecayTelemetry } from "./telemetry_engine";
 import { intelligenceWorkerPools } from "./worker_pool";
 import { detectAlerts } from "../analysis/alerts";
+import { getCompositeMarketContext } from "../analysis/composite_context";
 import type { OHLCV } from "../analysis/technical";
 import type {
   IntelligenceSnapshot,
@@ -291,7 +292,6 @@ class ScannerOrchestrator {
   }
 
   getSnapshot(): IntelligenceSnapshot {
-    const { getCompositeMarketContext } = require("../analysis/composite_context");
     return {
       status: this.status,
       universeSize: this.universeManager.getUniverse().length,

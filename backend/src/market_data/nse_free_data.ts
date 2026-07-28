@@ -94,6 +94,8 @@ export interface DeliveryData {
 let deliveryCache: Map<string, DeliveryData> = new Map();
 let deliveryCacheDate = "";
 let deliveryFetchInFlight: Promise<Map<string, DeliveryData>> | null = null;
+let deliveryFailedAt = 0;
+const DELIVERY_FAILURE_COOLDOWN_MS = 10 * 60 * 1000;
 
 /** Bhavcopy date format: 02012026 → ddmmyyyy */
 function bhavDateParam(istDateStr: string): string {
@@ -148,6 +150,9 @@ export async function getDeliveryData(): Promise<Map<string, DeliveryData>> {
   const targetDate = getLastCompletedTradingDayStr();
   if (deliveryCacheDate === targetDate && deliveryCache.size > 0) return deliveryCache;
   if (deliveryFetchInFlight) return deliveryFetchInFlight;
+  // After a total failure (all 5 archive dates 404'd), don't re-run the walk
+  // on every call — wait out the cooldown first.
+  if (Date.now() - deliveryFailedAt < DELIVERY_FAILURE_COOLDOWN_MS) return deliveryCache;
 
   deliveryFetchInFlight = (async () => {
     let date = targetDate;
@@ -157,6 +162,7 @@ export async function getDeliveryData(): Promise<Map<string, DeliveryData>> {
         if (map) {
           deliveryCache = map;
           deliveryCacheDate = targetDate;
+          deliveryFailedAt = 0;
           logger.info({ symbols: map.size, date }, "NSE delivery data refreshed");
           return map;
         }
@@ -165,6 +171,7 @@ export async function getDeliveryData(): Promise<Map<string, DeliveryData>> {
       }
       date = shiftISTDateStr(date, -1);
     }
+    deliveryFailedAt = Date.now();
     logger.warn({ targetDate }, "NSE delivery data unavailable — using last-known cache");
     return deliveryCache;
   })().finally(() => {
@@ -210,7 +217,9 @@ export async function getFnOBanList(): Promise<Set<string>> {
       // Rows look like "1,KAYNES" — take the token after the leading index.
       const parts = trimmed.split(",");
       const sym = (parts.length > 1 ? parts[1] : parts[0])?.trim().toUpperCase();
-      if (sym && /^[A-Z&-]+$/.test(sym)) set.add(sym);
+      // Allow digits (e.g. 360ONE) but require at least one letter so a bare
+      // index token like "1" is never treated as a symbol.
+      if (sym && /^[A-Z0-9&-]+$/.test(sym) && /[A-Z]/.test(sym)) set.add(sym);
     }
 
     banListCache = set;
@@ -251,6 +260,12 @@ interface BulkDealRow {
   date?: string;
 }
 
+/** "26-JUL-2026" → epoch ms (0 for empty/unparseable, so any real date wins). */
+function parseDealDate(s: string): number {
+  const t = Date.parse(s);
+  return Number.isFinite(t) ? t : 0;
+}
+
 /**
  * Net bulk-deal flow per symbol over the last 7 days. Institutional bulk BUYs
  * confirm momentum; bulk SELLs into strength are distribution.
@@ -284,7 +299,9 @@ export async function getBulkDeals(): Promise<Map<string, BulkDealSignal>> {
       const existing = map.get(symbol) ?? { netBuyQty: 0, dealCount: 0, lastDealDate: "" };
       existing.netBuyQty += side.startsWith("B") ? qty : side.startsWith("S") ? -qty : 0;
       existing.dealCount += 1;
-      if (date > existing.lastDealDate) existing.lastDealDate = date;
+      // Dates arrive as "26-JUL-2026" — parse before comparing (lexicographic
+      // compare on that format orders by day-of-month, not by date).
+      if (parseDealDate(date) > parseDealDate(existing.lastDealDate)) existing.lastDealDate = date;
       map.set(symbol, existing);
     }
 

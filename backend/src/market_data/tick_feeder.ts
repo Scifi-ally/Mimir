@@ -7,6 +7,7 @@ import { intelligenceBus } from "../intelligence/event_bus";
 import { tickDistribution } from "./tick_distribution";
 import { initSectorRotation, updateSectorFlowFromTick } from "../analysis/sector_rotation";
 import { getISTDateStr } from "../lib/ist-time";
+import { isMarketOpen } from "./market_state";
 
 interface TickData {
   symbol: string;
@@ -117,21 +118,11 @@ async function doInitTickFeeder(stocks: Array<{ symbol: string; key: string }>):
 
   // Subscribe to central connection manager tick stream via internal event bus
   eventBusUnsubscribe = intelligenceBus.subscribe("marketTick", (tickEvent) => {
-    let sub = subscriptions.get(tickEvent.symbol);
+    const sub = subscriptions.get(tickEvent.symbol);
     if (!sub) {
-      sub = {
-        instrumentKey: tickEvent.instrumentKey || tickEvent.symbol,
-        symbol: tickEvent.symbol,
-        ticks: [],
-        lastPrice: null,
-        volume: 0,
-        bid: null,
-        ask: null,
-        openPrice: null,
-        highPrice: null,
-        lowPrice: null,
-      };
-      subscriptions.set(tickEvent.symbol, sub);
+      // Drop ticks for unmonitored symbols: auto-creating entries here made the
+      // subscriptions map grow unbounded on any stray bus tick.
+      return;
     }
 
     if (Date.now() - tickEvent.timestamp > 2000) {
@@ -149,8 +140,8 @@ async function doInitTickFeeder(stocks: Array<{ symbol: string; key: string }>):
     const bid = tickEvent.bid ?? sub.bid;
     const ask = tickEvent.ask ?? sub.ask;
 
-    if (lastPrice === sub.lastPrice && volume === sub.volume) {
-      return; // Ignore unchanged ticks
+    if (lastPrice === sub.lastPrice && volume === sub.volume && bid === sub.bid && ask === sub.ask) {
+      return; // Ignore completely unchanged ticks
     }
 
     sub.lastPrice = lastPrice;
@@ -246,19 +237,23 @@ function startVolumePoller(): void {
 
   volumePollerTimer = setInterval(async () => {
     if (subscriptions.size === 0) return;
+    if (!isMarketOpen()) return; // Yahoo quotes are meaningless off-session
 
     try {
+      // Indices carry "_INDEX" in their instrumentKey (e.g. "NSE_INDEX|Nifty 50");
+      // appending .NS to their symbol would poison the Yahoo batch.
       const symbolsToFetch = Array.from(subscriptions.values())
-        .map(sub => sub.symbol)
-        .filter(k => !k.includes("_INDEX")); // Only fetch for equities
+        .filter(sub => !sub.instrumentKey.includes("_INDEX")) // Only fetch for equities
+        .map(sub => sub.symbol);
 
       if (symbolsToFetch.length === 0) return;
 
       // Map to Yahoo Finance symbols
       const yfSymbols = symbolsToFetch.map(s => `${s}.NS`);
-      const quotes = await (yahooFinance.quote as any)(yfSymbols);
+      type YQuote = { symbol?: string; regularMarketPrice?: number; regularMarketVolume?: number };
+      const quotes = await (yahooFinance.quote as (s: string[]) => Promise<YQuote[]>)(yfSymbols);
 
-      const quoteMap = new Map<string, any>();
+      const quoteMap = new Map<string, YQuote>();
       for (const quote of quotes) {
          if (quote.symbol) {
              // Remove .NS suffix to match back
@@ -271,7 +266,11 @@ function startVolumePoller(): void {
         const quote = quoteMap.get(sub.symbol);
         if (quote) {
           const volume = Number(quote.regularMarketVolume || 0);
-          const price = Number(quote.regularMarketPrice || sub.lastPrice || 0);
+          // Yahoo prices are delayed: never overwrite a live WS price. Only use
+          // the delayed price when the last WS update is stale (>120s) or absent.
+          const wsStale = !sub.updatedAt || Date.now() - sub.updatedAt > 120_000;
+          const yahooPrice = Number(quote.regularMarketPrice || 0);
+          const price = wsStale && yahooPrice > 0 ? yahooPrice : Number(sub.lastPrice || 0);
 
           if (volume > 0 && price > 0) {
             sub.volume = volume;

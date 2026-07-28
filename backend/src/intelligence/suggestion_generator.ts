@@ -9,18 +9,17 @@ export class SuggestionGenerator {
     try {
       const { db, suggestionsTable } = await import("../../db/src");
       const { findStockBySymbol } = await import("../analysis/stock_scanner");
-      const { and, eq, gte } = await import("drizzle-orm");
-      const { todayStartUTC } = await import("../lib/ist-time");
+      const { inArray } = await import("drizzle-orm");
 
+      // Recover every non-terminal suggestion regardless of generation date —
+      // a multi-day SWING position generated last week is still live, and
+      // dropping it here made it invisible to duplicate checks after restart.
+      // The expiry filter below (persisted expiresAt, or tradeType fallback)
+      // discards anything already dead.
       const dbSuggestions = await db
         .select()
         .from(suggestionsTable)
-        .where(
-          and(
-            eq(suggestionsTable.status, "ACTIVE"),
-            gte(suggestionsTable.generatedAt, todayStartUTC())
-          )
-        );
+        .where(inArray(suggestionsTable.status, ["PENDING", "ACTIVE"]));
 
       const now = Date.now();
       for (const row of dbSuggestions) {

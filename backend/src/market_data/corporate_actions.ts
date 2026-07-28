@@ -11,6 +11,7 @@
 
 import axios from "axios";
 import { logger } from "../lib/logger";
+import { getISTDateStr, shiftISTDateStr } from "../lib/ist-time";
 
 const NSE_BASE = "https://www.nseindia.com";
 
@@ -34,10 +35,9 @@ interface EventRow {
 let cachedBlacklist: Set<string> = new Set();
 let cacheTime = 0;
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
-
-function fmtDate(d: Date): string {
-  return d.toISOString().split("T")[0]!;
-}
+let fetchInFlight: Promise<Set<string>> | null = null;
+let lastFailureTime = 0;
+const FAILURE_COOLDOWN_MS = 60 * 1000;
 
 async function getNSECookies(): Promise<string> {
   try {
@@ -61,41 +61,104 @@ async function getNSECookies(): Promise<string> {
  */
 export async function fetchCorporateActionBlacklist(): Promise<Set<string>> {
   if (Date.now() - cacheTime < CACHE_TTL_MS) return cachedBlacklist;
+  if (fetchInFlight) return fetchInFlight;
+  if (Date.now() - lastFailureTime < FAILURE_COOLDOWN_MS) return cachedBlacklist;
 
-  try {
-    const cookies = await getNSECookies();
+  fetchInFlight = (async () => {
+    try {
+      const cookies = await getNSECookies();
 
-    const from = new Date();
-    const to = new Date();
-    to.setDate(to.getDate() + 3);
+      // NSE dates must be IST calendar days — toISOString (UTC) is a day behind
+      // between 00:00 and 05:29 IST.
+      const from = getISTDateStr();
+      const to = shiftISTDateStr(from, 3);
 
-    const url = `${NSE_BASE}/api/event-calendar?index=equities&from=${fmtDate(from)}&to=${fmtDate(to)}`;
+      const url = `${NSE_BASE}/api/event-calendar?index=equities&from=${from}&to=${to}`;
 
-    const resp = await axios.get(url, {
-      headers: { ...BROWSER_HEADERS, Cookie: cookies },
-      timeout: 10_000,
-    });
+      const resp = await axios.get(url, {
+        headers: { ...BROWSER_HEADERS, Cookie: cookies },
+        timeout: 10_000,
+      });
 
-    const rows: EventRow[] = resp.data ?? [];
-    const blacklist = new Set<string>();
+      // NSE returns an error object (not an array) on soft failures — guard so
+      // the log names the payload instead of an iterator TypeError.
+      if (!Array.isArray(resp.data)) {
+        logger.warn({ data: resp.data }, "Corporate actions: unexpected non-array response — using cached blacklist");
+        lastFailureTime = Date.now();
+        return cachedBlacklist;
+      }
+      const rows: EventRow[] = resp.data;
+      const blacklist = new Set<string>();
 
-    const SENSITIVE_KEYWORDS = ["results", "dividend", "board meeting", "bonus", "rights", "split"];
+      const SENSITIVE_KEYWORDS = ["results", "dividend", "board meeting", "bonus", "rights", "split"];
 
-    for (const row of rows) {
-      const purpose = (row.purpose ?? "").toLowerCase();
-      const symbol = (row.symbol ?? "").toUpperCase().trim();
-      if (!symbol) continue;
-      if (SENSITIVE_KEYWORDS.some(kw => purpose.includes(kw))) {
-        blacklist.add(symbol);
+      for (const row of rows) {
+        const purpose = (row.purpose ?? "").toLowerCase();
+        const symbol = (row.symbol ?? "").toUpperCase().trim();
+        if (!symbol) continue;
+        if (SENSITIVE_KEYWORDS.some(kw => purpose.includes(kw))) {
+          blacklist.add(symbol);
+        }
+      }
+
+      cachedBlacklist = blacklist;
+      cacheTime = Date.now();
+      lastFailureTime = 0;
+      logger.info({ count: blacklist.size }, "Corporate action blacklist refreshed");
+      return blacklist;
+    } catch (err) {
+      lastFailureTime = Date.now();
+      logger.warn({ err }, "Corporate actions fetch failed — using empty blacklist");
+      return cachedBlacklist;
+    } finally {
+      fetchInFlight = null;
+    }
+  })();
+
+  return fetchInFlight;
+}
+
+export interface SplitAdjustment {
+  exDate: string; // ISO date string YYYY-MM-DD
+  splitRatio: number; // e.g. 0.5 for a 1:2 split (2 new shares for 1 old share -> price halved)
+}
+
+/**
+ * Adjust historical OHLCV candles retroactively across split/bonus ex-dates.
+ * Prior candles before the exDate are multiplied by splitRatio (for prices)
+ * and divided by splitRatio (for volume), preventing artificial indicator spikes.
+ */
+export function adjustCandlesForCorporateActions<T extends { timestamp: string; open: number; high: number; low: number; close: number; volume: number }>(
+  candles: T[],
+  adjustments: SplitAdjustment[]
+): T[] {
+  if (!candles || candles.length === 0 || !adjustments || adjustments.length === 0) {
+    return candles;
+  }
+
+  // Sort adjustments in chronological order
+  const sorted = [...adjustments].sort((a, b) => a.exDate.localeCompare(b.exDate));
+
+  return candles.map((c) => {
+    let cumulativeRatio = 1.0;
+    const candleDate = c.timestamp.slice(0, 10);
+
+    for (const adj of sorted) {
+      if (candleDate < adj.exDate) {
+        cumulativeRatio *= adj.splitRatio;
       }
     }
 
-    cachedBlacklist = blacklist;
-    cacheTime = Date.now();
-    logger.info({ count: blacklist.size }, "Corporate action blacklist refreshed");
-    return blacklist;
-  } catch (err) {
-    logger.warn({ err }, "Corporate actions fetch failed — using empty blacklist");
-    return cachedBlacklist;
-  }
+    if (cumulativeRatio === 1.0) return c;
+
+    return {
+      ...c,
+      open: Number((c.open * cumulativeRatio).toFixed(4)),
+      high: Number((c.high * cumulativeRatio).toFixed(4)),
+      low: Number((c.low * cumulativeRatio).toFixed(4)),
+      close: Number((c.close * cumulativeRatio).toFixed(4)),
+      volume: Math.round(c.volume / cumulativeRatio),
+    };
+  });
 }
+

@@ -148,6 +148,10 @@ async function doFetchFIIDIIData(): Promise<FIIDIISnapshot | null> {
           fetchedAt: new Date(),
         };
         resetDivergenceCache();
+        logger.warn(
+          { date: dbRow[0].date },
+          "STALE FEED ALERT: FII/DII scraper live fetch failed — serving stale historical fallback data"
+        );
         return cache;
       }
     } catch (dbErr) {

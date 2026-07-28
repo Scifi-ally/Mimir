@@ -42,7 +42,16 @@ export class CandleBuilderEngine {
       }
 
       const duration = TIMEFRAME_MS[timeframe];
-      const startTime = Math.floor(tick.timestamp / duration) * duration;
+      let startTime: number;
+      if (timeframe === "1d") {
+        const IST_OFFSET_MS = 330 * 60 * 1000;
+        const SESSION_START_OFFSET_MS = (9 * 60 + 15) * 60 * 1000; // 09:15 IST session open
+        const istMs = tick.timestamp + IST_OFFSET_MS;
+        const dayStartISTMs = Math.floor(istMs / 86_400_000) * 86_400_000;
+        startTime = dayStartISTMs - IST_OFFSET_MS + SESSION_START_OFFSET_MS;
+      } else {
+        startTime = Math.floor(tick.timestamp / duration) * duration;
+      }
       const current = this.active.get(key);
 
       if (!current || current.startTime !== startTime) {

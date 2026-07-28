@@ -14,6 +14,7 @@ import { logger } from "../lib/logger";
 import { loadBalancer } from "../intelligence/load_balancer";
 import { broadcastMarketTicks } from "../ws/websocket_server";
 import { intelligenceBus } from "../intelligence/event_bus";
+import { getISTDateStr } from "../lib/ist-time";
 
 const UI_TICK_FLUSH_MS = Math.max(
   1,
@@ -36,6 +37,8 @@ export interface NormalizedTick {
   low?: number;
   timestamp: number;
   sequence?: number;
+  /** IST date this cache entry's session fields (open/high/low/prevClose/volume) belong to. */
+  istDate?: string;
 }
 
 export interface DiagnosticsTelemetry {
@@ -101,6 +104,13 @@ class TickDistributionServer {
         this.historyCache.delete(symbol);
       }
     }
+    // tickCache is otherwise unbounded: evict symbols that haven't ticked in a day
+    const dayCutoff = Date.now() - 24 * 60 * 60 * 1000;
+    for (const [symbol, tick] of this.tickCache.entries()) {
+      if (tick.timestamp < dayCutoff) {
+        this.tickCache.delete(symbol);
+      }
+    }
   }
 
   /**
@@ -150,20 +160,37 @@ class TickDistributionServer {
     this.ticksInCurrentSecond++;
 
     // Acquire or update normalized object in O(1) cache without re-allocating
+    const todayIST = getISTDateStr(new Date(tickTime));
     let normalized = existing;
     if (!normalized) {
       normalized = {
         symbol: rawTick.symbol,
         instrumentKey: rawTick.instrumentKey,
         ltp: ltp,
-        bid: rawTick.bid ?? ltp,
-        ask: rawTick.ask ?? ltp,
+        // 0 = no quote. Never fabricate bid/ask from ltp: a zero-spread quote
+        // masks illiquidity and defeats paper_engine's spread/circuit guards
+        // (see tick_feeder.ts TickData contract). All consumers treat 0 as
+        // "no quote" (paper_engine checks bid === 0 / bid > 0 before dividing).
+        bid: rawTick.bid ?? 0,
+        ask: rawTick.ask ?? 0,
         volume: rawTick.volume ?? 0,
         timestamp: tickTime,
         sequence: rawTick.sequence,
+        istDate: todayIST,
       };
       this.tickCache.set(rawTick.symbol, normalized);
-      
+
+    } else if (normalized.istDate !== todayIST) {
+      // New IST trading day: reset session-scoped fields so yesterday's
+      // open/high/low/prevClose don't corrupt today's changePercent.
+      normalized.istDate = todayIST;
+      normalized.open = undefined;
+      normalized.high = undefined;
+      normalized.low = undefined;
+      normalized.prevClose = undefined;
+      normalized.change = undefined;
+      normalized.changePercent = undefined;
+      normalized.volume = 0;
     }
 
     normalized.ltp = Math.round(ltp * 100) / 100;

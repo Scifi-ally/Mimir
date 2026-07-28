@@ -108,7 +108,7 @@ function getISTTime(date: Date = new Date()): { day: number; totalMinutes: numbe
     weekday: "short",
     hour: "2-digit",
     minute: "2-digit",
-    hour12: false,
+    hourCycle: "h23", // not hour12:false — that can yield hour "24" at midnight
   }).formatToParts(date);
   const weekday = parts.find((part) => part.type === "weekday")?.value ?? "Sun";
   const hour = Number(parts.find((part) => part.type === "hour")?.value ?? "0");
