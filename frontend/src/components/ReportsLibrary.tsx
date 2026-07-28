@@ -1,12 +1,14 @@
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, RefreshCw, BarChart3, TrendingUp, Layers, Zap, Wallet, Bell, FileText, Calendar, Sparkles } from "lucide-react";
+import { X, RefreshCw, Calendar, ChevronDown, ChevronLeft, ChevronRight, Sparkles } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api } from "@/lib/api";
 import { FADE_FAST, FADE_SLOW } from "@/lib/motion";
 import { Skeleton } from "@/components/atoms/Skeleton";
 import { Button } from "@/components/mimir/button";
+import { cn } from "@/lib/format";
 
 interface ReportsLibraryProps {
   isOpen: boolean;
@@ -21,52 +23,39 @@ interface DailyReport {
   createdAt: string;
 }
 
-// Custom aesthetic renderers for markdown reports
-const customMarkdownComponents = {
+// Custom borderless, boxless markdown renderers
+const borderlessMarkdownComponents = {
   h1: ({ children }: any) => (
-    <div className="flex items-center gap-3 pb-4 mb-6 border-b border-border/10">
-      <div className="p-2 rounded-xl bg-primary/10 text-primary">
-        <FileText className="w-5 h-5" />
-      </div>
-      <h1 className="text-xl font-medium tracking-tight text-foreground m-0">{children}</h1>
+    <h1 className="text-2xl font-bold tracking-tight text-foreground mt-2 mb-6 m-0 flex items-center gap-3">
+      {children}
+    </h1>
+  ),
+  h3: ({ children }: any) => (
+    <div className="flex items-center gap-2.5 mt-8 mb-3 pb-1 border-b border-border/10">
+      <span className="w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0" />
+      <h3 className="text-xs font-mono tracking-wider uppercase text-foreground/80 font-bold m-0">{children}</h3>
     </div>
   ),
-  h3: ({ children }: any) => {
-    const text = String(children || "");
-    let icon = <BarChart3 className="w-4 h-4 text-primary" />;
-    if (text.includes("Market Overview")) icon = <TrendingUp className="w-4 h-4 text-bull" />;
-    else if (text.includes("Sector")) icon = <Layers className="w-4 h-4 text-primary" />;
-    else if (text.includes("Signals")) icon = <Zap className="w-4 h-4 text-amber-500" />;
-    else if (text.includes("Paper Trades")) icon = <Wallet className="w-4 h-4 text-bull" />;
-    else if (text.includes("Alerts")) icon = <Bell className="w-4 h-4 text-primary" />;
-
-    return (
-      <div className="flex items-center gap-2.5 mt-8 mb-4">
-        <div className="p-1.5 rounded-lg bg-foreground/5">{icon}</div>
-        <h3 className="text-sm font-mono tracking-wider uppercase text-foreground/90 font-semibold m-0">{children}</h3>
-      </div>
-    );
-  },
   table: ({ children }: any) => (
-    <div className="my-4 overflow-hidden rounded-2xl border border-border/10 bg-foreground/[0.02] shadow-sm">
-      <table className="w-full text-left text-xs font-sans border-collapse">{children}</table>
+    <div className="my-4 overflow-x-auto">
+      <table className="w-full text-left text-xs font-mono border-collapse">{children}</table>
     </div>
   ),
   thead: ({ children }: any) => (
-    <thead className="bg-foreground/[0.04] border-b border-border/10 text-[10px] uppercase font-mono tracking-wider text-muted-foreground">{children}</thead>
+    <thead className="border-b border-border/15 text-[10px] uppercase font-mono tracking-wider text-rose-500/90">{children}</thead>
   ),
   tr: ({ children }: any) => (
-    <tr className="border-b border-border/5 last:border-0 hover:bg-foreground/[0.03] transition-colors">{children}</tr>
+    <tr className="border-b border-border/5 last:border-0 hover:bg-foreground/[0.02] transition-colors">{children}</tr>
   ),
   th: ({ children }: any) => (
-    <th className="px-4 py-3 font-medium text-muted-foreground">{children}</th>
+    <th className="py-2.5 pr-6 font-semibold">{children}</th>
   ),
   td: ({ children }: any) => {
     const text = String(children || "");
     const isPos = text.includes("+") || (text.includes("Cr") && !text.includes("-"));
     const isNeg = text.includes("-");
     return (
-      <td className="px-4 py-3 font-mono text-xs">
+      <td className="py-2.5 pr-6 font-mono text-xs">
         {isPos && (text.includes("%") || text.includes("Cr")) ? (
           <span className="text-bull font-medium">{children}</span>
         ) : isNeg && (text.includes("%") || text.includes("Cr") || text.includes("-")) ? (
@@ -78,24 +67,137 @@ const customMarkdownComponents = {
     );
   },
   blockquote: ({ children }: any) => (
-    <div className="my-6 p-4 rounded-xl bg-gradient-to-r from-bull/10 via-bull/5 to-transparent border border-bull/20 text-bull font-mono text-sm flex items-center gap-3">
-      <Sparkles className="w-5 h-5 shrink-0" />
-      <div className="font-semibold">{children}</div>
+    <div className="my-6 pl-4 border-l-2 border-rose-500 py-1.5 text-foreground/90 font-mono text-sm flex items-center gap-3">
+      <Sparkles className="w-4 h-4 text-rose-500 shrink-0" />
+      <div className="font-medium">{children}</div>
     </div>
   ),
   ul: ({ children }: any) => (
     <ul className="my-3 space-y-2 pl-0 list-none">{children}</ul>
   ),
   li: ({ children }: any) => (
-    <li className="flex items-center gap-2 p-3 rounded-xl bg-foreground/[0.02] border border-border/10 text-xs font-sans text-foreground/80 hover:border-border/20 transition-colors">
-      <div className="w-1.5 h-1.5 rounded-full bg-primary shrink-0" />
+    <li className="flex items-start gap-2.5 py-1 text-xs font-sans text-foreground/80">
+      <span className="w-1.5 h-1.5 rounded-full bg-rose-500/70 mt-1.5 shrink-0" />
       <div className="flex-1 min-w-0">{children}</div>
     </li>
   ),
 };
 
+// Apple Calendar Popover Component (matching Apple Dark Theme Calendar)
+function AppleCalendarPopover({ 
+  selectedDate, 
+  onSelectDate, 
+  availableDates 
+}: { 
+  selectedDate: string; 
+  onSelectDate: (dateStr: string) => void;
+  availableDates: Set<string>;
+}) {
+  const parsed = selectedDate ? new Date(selectedDate) : new Date();
+  const [viewDate, setViewDate] = useState(() => isNaN(parsed.getTime()) ? new Date() : parsed);
+
+  useEffect(() => {
+    const p = selectedDate ? new Date(selectedDate) : new Date();
+    if (!isNaN(p.getTime())) setViewDate(p);
+  }, [selectedDate]);
+
+  const year = viewDate.getFullYear();
+  const month = viewDate.getMonth();
+
+  const monthName = viewDate.toLocaleString('default', { month: 'long' }).toUpperCase();
+
+  const firstDay = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  const prevMonthDays = Array.from({ length: firstDay });
+  const currentMonthDays = Array.from({ length: daysInMonth }, (_, i) => i + 1);
+
+  const formatYMD = (d: number) => {
+    const mm = String(month + 1).padStart(2, '0');
+    const dd = String(d).padStart(2, '0');
+    return `${year}-${mm}-${dd}`;
+  };
+
+  const handlePrevMonth = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setViewDate(new Date(year, month - 1, 1));
+  };
+  
+  const handleNextMonth = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setViewDate(new Date(year, month + 1, 1));
+  };
+
+  return (
+    <div className="w-72 p-4 rounded-3xl bg-[#1c1c1e] text-white shadow-2xl border border-white/10 select-none font-sans">
+      {/* Month Header */}
+      <div className="flex items-center justify-between mb-3 px-1">
+        <span className="text-xs font-bold tracking-wider text-rose-500 uppercase font-mono">
+          {monthName} {year}
+        </span>
+        <div className="flex items-center gap-1">
+          <button onClick={handlePrevMonth} className="p-1 rounded-full hover:bg-white/10 text-white/70 hover:text-white transition-colors">
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+          <button onClick={handleNextMonth} className="p-1 rounded-full hover:bg-white/10 text-white/70 hover:text-white transition-colors">
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+
+      {/* Weekday Headers */}
+      <div className="grid grid-cols-7 gap-1 text-center mb-2">
+        {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day, idx) => (
+          <span key={idx} className="text-[11px] font-semibold text-white/40">
+            {day}
+          </span>
+        ))}
+      </div>
+
+      {/* Days Grid */}
+      <div className="grid grid-cols-7 gap-1 text-center text-xs font-mono">
+        {prevMonthDays.map((_, i) => (
+          <div key={`prev-${i}`} className="h-8" />
+        ))}
+
+        {currentMonthDays.map((d) => {
+          const dateStr = formatYMD(d);
+          const isSelected = dateStr === selectedDate;
+          const hasReport = availableDates.has(dateStr);
+
+          return (
+            <button
+              key={d}
+              onClick={(e) => {
+                e.stopPropagation();
+                onSelectDate(dateStr);
+              }}
+              className={cn(
+                "relative h-8 w-8 mx-auto flex items-center justify-center rounded-full transition-all text-xs font-medium",
+                isSelected
+                  ? "bg-rose-500 text-white font-bold shadow-md shadow-rose-500/40"
+                  : hasReport
+                  ? "text-white font-bold hover:bg-white/15"
+                  : "text-white/40 hover:bg-white/10"
+              )}
+            >
+              {d}
+              {hasReport && !isSelected && (
+                <span className="absolute bottom-1 w-1 h-1 rounded-full bg-rose-500" />
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export function ReportsLibrary({ isOpen, onClose }: ReportsLibraryProps) {
   const queryClient = useQueryClient();
+  const [selectedDate, setSelectedDate] = useState<string>("");
+  const [isCalendarOpen, setIsCalendarOpen] = useState(false);
+  const calendarRef = useRef<HTMLDivElement>(null);
 
   const reportsQuery = useQuery({
     queryKey: ["reports"],
@@ -110,7 +212,38 @@ export function ReportsLibrary({ isOpen, onClose }: ReportsLibraryProps) {
     },
   });
 
-  const reports = reportsQuery.data ?? [];
+  const reports: DailyReport[] = reportsQuery.data ?? [];
+
+  // Index reports by date
+  const reportsByDate = useMemo(() => {
+    const map = new Map<string, DailyReport>();
+    reports.forEach((r) => map.set(r.date, r));
+    return map;
+  }, [reports]);
+
+  const availableDates = useMemo(() => new Set(reportsByDate.keys()), [reportsByDate]);
+
+  // Set default date to latest report date or today
+  useEffect(() => {
+    if (reports.length > 0 && (!selectedDate || !reportsByDate.has(selectedDate))) {
+      setSelectedDate(reports[0].date);
+    }
+  }, [reports, reportsByDate, selectedDate]);
+
+  // Close calendar popover on outside click
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (calendarRef.current && !calendarRef.current.contains(event.target as Node)) {
+        setIsCalendarOpen(false);
+      }
+    };
+    if (isCalendarOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [isCalendarOpen]);
+
+  const activeReport = selectedDate ? reportsByDate.get(selectedDate) : reports[0];
 
   return (
     <AnimatePresence>
@@ -136,10 +269,44 @@ export function ReportsLibrary({ isOpen, onClose }: ReportsLibraryProps) {
           >
             {/* Header */}
             <div className="relative px-8 pt-6 pb-4 flex flex-col sm:flex-row items-center justify-between shrink-0 border-b border-border/10">
-              <h2 className="text-[10px] font-mono font-normal tracking-[0.08em] uppercase text-muted-foreground flex items-center gap-2">
-                Daily Reports
-                <span className="text-foreground/40 hidden sm:inline ml-2">— End of day market summaries</span>
-              </h2>
+              <div className="flex items-center gap-3">
+                <h2 className="text-[10px] font-mono font-normal tracking-[0.08em] uppercase text-muted-foreground">
+                  Daily Reports
+                </h2>
+
+                {/* Apple Calendar Expand Button */}
+                <div className="relative" ref={calendarRef}>
+                  <button
+                    onClick={() => setIsCalendarOpen(!isCalendarOpen)}
+                    className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-secondary/50 hover:bg-secondary text-xs font-mono font-medium text-foreground transition-all duration-150 active:scale-95 border border-border/10"
+                  >
+                    <Calendar className="w-3.5 h-3.5 text-rose-500" />
+                    <span>{selectedDate || "Select Date"}</span>
+                    <ChevronDown className={cn("w-3.5 h-3.5 text-muted-foreground transition-transform duration-200", isCalendarOpen && "rotate-180")} />
+                  </button>
+
+                  <AnimatePresence>
+                    {isCalendarOpen && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 8, scale: 0.95 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, y: 8, scale: 0.95 }}
+                        transition={FADE_FAST}
+                        className="absolute left-0 top-full mt-2 z-50"
+                      >
+                        <AppleCalendarPopover
+                          selectedDate={selectedDate}
+                          onSelectDate={(d) => {
+                            setSelectedDate(d);
+                            setIsCalendarOpen(false);
+                          }}
+                          availableDates={availableDates}
+                        />
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+              </div>
 
               <div className="absolute right-6 top-5 z-10 flex items-center gap-3">
                 <Button 
@@ -161,58 +328,44 @@ export function ReportsLibrary({ isOpen, onClose }: ReportsLibraryProps) {
               </div>
             </div>
 
-            {/* Content */}
-            <div className="flex-1 overflow-y-auto px-8 py-6 flex flex-col">
+            {/* Content: Borderless, Boxless View */}
+            <div className="flex-1 overflow-y-auto px-10 py-8 flex flex-col">
               {reportsQuery.isPending ? (
-                <div className="flex flex-col gap-3 pt-2">
-                  {[0, 1, 2, 3, 4].map((i) => (
-                    <div key={i} className="flex flex-col gap-2 rounded-xl border border-border/10 p-4">
-                      <div className="flex items-center justify-between">
-                        <Skeleton className="h-3.5 w-32" />
-                        <Skeleton className="h-2.5 w-20" />
-                      </div>
-                      <Skeleton className="h-2.5 w-full max-w-lg" />
-                      <Skeleton className="h-2.5 w-2/3" />
-                    </div>
-                  ))}
+                <div className="flex flex-col gap-4 pt-4">
+                  <Skeleton className="h-6 w-48" />
+                  <Skeleton className="h-4 w-full" />
+                  <Skeleton className="h-4 w-2/3" />
+                  <Skeleton className="h-32 w-full mt-4" />
                 </div>
               ) : reportsQuery.isError ? (
                 <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground">
                   <p className="text-sm text-destructive font-mono">{reportsQuery.error?.message ?? "Failed to load reports"}</p>
                 </div>
-              ) : reports.length === 0 ? (
-                <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground">
-                  <p className="text-sm font-normal text-foreground/60">No reports generated yet</p>
+              ) : !activeReport ? (
+                <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground py-16">
+                  <p className="text-sm font-normal text-foreground/60">No report available for {selectedDate}</p>
                 </div>
               ) : (
-                <div className="flex flex-col gap-8">
-                  {reports.map((report: DailyReport) => (
-                    <div key={report.id} className="p-6 rounded-2xl border border-border/10 bg-foreground/[0.01] hover:bg-foreground/[0.015] transition-all duration-200 shadow-sm">
-                      <div className="flex items-center justify-between gap-4 mb-4 pb-4 border-b border-border/10">
-                        <div className="flex items-center gap-3">
-                          <div className="p-2 rounded-xl bg-primary/10 text-primary">
-                            <Calendar className="w-5 h-5" />
-                          </div>
-                          <div>
-                            <h3 className="font-mono font-semibold text-lg text-foreground tracking-tight">
-                              {report.date}
-                            </h3>
-                            {report.summary && (
-                              <p className="text-xs text-muted-foreground mt-0.5">{report.summary}</p>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                      <div className="max-w-none text-foreground/90">
-                        <ReactMarkdown
-                          remarkPlugins={[remarkGfm]}
-                          components={customMarkdownComponents}
-                        >
-                          {report.content?.replace(/\\n/g, '\n')}
-                        </ReactMarkdown>
-                      </div>
-                    </div>
-                  ))}
+                <div className="flex flex-col">
+                  {/* Date Title Header */}
+                  <div className="mb-6">
+                    <span className="text-xs font-mono font-semibold text-rose-500 uppercase tracking-wider">
+                      {activeReport.date}
+                    </span>
+                    {activeReport.summary && (
+                      <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">{activeReport.summary}</p>
+                    )}
+                  </div>
+
+                  {/* Borderless Markdown Body */}
+                  <div className="max-w-none text-foreground/90 font-sans">
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      components={borderlessMarkdownComponents}
+                    >
+                      {activeReport.content?.replace(/\\n/g, '\n')}
+                    </ReactMarkdown>
+                  </div>
                 </div>
               )}
             </div>
