@@ -6,8 +6,8 @@ export const fundamentalSnapshotsTable = pgTable("fundamental_snapshots", {
   fieldName: varchar("field_name", { length: 100 }).notNull(),
   value: real("value"),
   textValue: text("text_value"),
-  filedDate: timestamp("filed_date").notNull(),
-  fetchedAt: timestamp("fetched_at").defaultNow().notNull(),
+  filedDate: timestamp("filed_date", { withTimezone: true }).notNull(),
+  fetchedAt: timestamp("fetched_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({
   symbolIdx: index("idx_fundamental_snapshots_symbol").on(t.symbol),
   fieldIdx: index("idx_fundamental_snapshots_field").on(t.fieldName),

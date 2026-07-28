@@ -8,7 +8,7 @@ export const learningMetricsTable = pgTable(
     techEdge: decimal("tech_edge", { precision: 5, scale: 2 }),
     regimeAlign: decimal("regime_align", { precision: 5, scale: 2 }),
     regimeLabel: varchar("regime_label", { length: 50 }).notNull(),
-    updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
   },
   (table) => {
     return {
