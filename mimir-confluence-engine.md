@@ -4,7 +4,7 @@
 
 Most retail/algo systems go one of two ways: pure bottom-up (feed raw OHLCV and indicators into a model and hope it learns structure implicitly) or pure top-down manual (a human runs a checklist in their head). What experienced discretionary traders actually do is run a top-down funnel — context, then confirmation, then catalyst, then risk — every single time, fast enough that it feels like intuition. The tell is that they can always narrate the "why" afterward.
 
-Mimir already has strong bottom-up ML: Chronos-T5 forecasting, HMM regime detection, FinBERT sentiment gating, and an in-progress order-flow/F&O feature set. What it doesn't have yet is the explicit top-down structure or the narrative layer. This document proposes building that funnel as a mostly non-ML **Confluence Engine** that sits alongside the existing stack rather than replacing it. Three things make this worth prioritizing:
+Mimir already has strong bottom-up ML: Chronos-Bolt-Small forecasting, rule-based 7-state regime detection, FinBERT sentiment advisory scoring, and an order-flow/F&O feature set. What it has is an orchestrating scanner pipeline (`intelligence/orchestrator.ts`) and an 11-gate filter stack (`suggestions/generator.ts`) that evaluates signals against risk and market conditions. Three things make this worth prioritizing:
 
 1. It's cheap. Almost everything below is pandas/numpy, not GPU-bound — it doesn't compete with Chronos-T5/FinBERT for your RTX 3050's budget.
 2. It produces a human-readable narrative alongside a score, which is arguably more useful in a trading terminal UI than raw SHAP attributions, and gives you a second, independent way to explain a signal.

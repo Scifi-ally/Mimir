@@ -55,9 +55,9 @@ jobs:
         with:
           node-version: 22
       - name: npm audit backend
-        run: npm --prefix backend audit --audit-level=high || true
+        run: npm --prefix backend audit --audit-level=high
       - name: npm audit frontend
-        run: npm --prefix frontend audit --audit-level=high || true
+        run: npm --prefix frontend audit --audit-level=high
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -65,7 +65,7 @@ jobs:
       - name: pip-audit
         run: |
           pip install pip-audit
-          pip-audit -r backend/ai_service/requirements.txt || true
+          pip-audit -r backend/ai_service/requirements.txt
 
   unit-tests:
     runs-on: ubuntu-latest

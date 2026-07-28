@@ -128,11 +128,10 @@ Reading the pipeline left to right: raw market data feeds all six verdict-produc
 
 ## 5. Stage-by-Stage Specification
 
-### Stage 1: Regime
-**Rule logic (trader's insight):** Regime cutoffs derived from the historical India VIX distribution — a transparent, percentile-based classification of the current volatility state.
-**ML enhancement:** An HMM statistical regime classifier runs alongside the VIX cutoff, already sharing GPU time with FinBERT and the Chronos forecaster.
-**Output:** A single regime label (e.g. trending-low-vol, trending-high-vol, choppy) with an associated confidence.
-**The merge:** This is the one stage that's already a hybrid in the current system — the HMM's statistical read either confirms or complicates the VIX-cutoff's rule-based read, and the combined label is what gates every downstream weight vector (Section 7).
+**Rule logic (trader's insight):** 100% rule-based regime classification across 7 distinct market states (`regime_detector.ts:40-390`) evaluating Nifty 50 close vs SMA20/SMA50, ADX(14) trend strength, India VIX thresholds (with 24.0 high volatility pause gate), and FII/DII net flow shifts.
+**ML enhancement:** None (rule-based engine handles regime classification directly in TypeScript without GPU overhead).
+**Output:** A single regime label (e.g. `BULL_TRENDING`, `HIGH_VOLATILITY`, `BEAR_TRENDING`) with an associated confidence score.
+**The merge:** The rule-based regime state gates setup compatibility (`isRegimeCompatible`) and dynamically scales downstream confidence weights.
 
 ### Stage 2: Relative Strength
 **Rule logic:** RRG (Relative Rotation Graph) quadrant classification — leading, weakening, lagging, improving — with RS-Ratio smoothing and split weights across the calculation.

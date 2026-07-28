@@ -1,0 +1,425 @@
+@echo off
+setlocal enabledelayedexpansion
+chcp 65001 >nul
+
+:: Define ESC character for ANSI colors
+for /F %%a in ('echo prompt $E ^| cmd') do set "ESC=%%a"
+set "C_RESET=!ESC![0m"
+set "C_GREEN=!ESC![38;2;74;222;128m"
+set "C_CYAN=!ESC![38;2;103;232;249m"
+set "C_PURPLE=!ESC![38;2;168;130;255m"
+set "C_RED=!ESC![38;2;248;113;113m"
+set "C_YELLOW=!ESC![38;2;250;204;21m"
+set "C_GRAY=!ESC![38;2;115;115;115m"
+set "C_WHITE=!ESC![38;2;245;245;245m"
+set "C_DIM=!ESC![2m"
+set "C_BOLD=!ESC![1m"
+set "C_BLUE=!ESC![38;2;96;165;250m"
+
+set "SCRIPT_DIR=%~dp0"
+set "STATE_FILE=%SCRIPT_DIR%.codex-logs\trade.running"
+set "BACKEND_PID_FILE=%SCRIPT_DIR%.codex-logs\trade.backend.pid"
+set "ENGINE_PID_FILE=%SCRIPT_DIR%.codex-logs\trade.engine.pid"
+set "AI_PID_FILE=%SCRIPT_DIR%.codex-logs\trade.ai.pid"
+set "FRONTEND_PID_FILE=%SCRIPT_DIR%.codex-logs\trade.frontend.pid"
+
+pushd "%SCRIPT_DIR%" 2>nul || ( echo Error: Could not find project. & exit /b 1 )
+set "PROJECT_DIR=%CD%"
+popd
+
+if not exist "%PROJECT_DIR%\.codex-logs" mkdir "%PROJECT_DIR%\.codex-logs" >nul 2>&1
+if exist "%PROJECT_DIR%\.codex-logs\menu_top.txt" del /f /q "%PROJECT_DIR%\.codex-logs\menu_top.txt" >nul 2>&1
+
+:: Find Node.js path (Portable or Global) right at startup so stop/restart can run scripts cleanly
+set "NODE_CMD=node"
+if exist "%PROJECT_DIR%\.portable\node\node.exe" set "NODE_CMD=%PROJECT_DIR%\.portable\node\node.exe"
+
+:: Find Python path (Portable or .venv) right at startup
+set "PYTHON_CMD="
+if exist "%PROJECT_DIR%\.portable\python\python.exe" set "PYTHON_CMD=%PROJECT_DIR%\.portable\python\python.exe"
+if "%PYTHON_CMD%"=="" if exist "%PROJECT_DIR%\.venv\Scripts\python.exe" set "PYTHON_CMD=%PROJECT_DIR%\.venv\Scripts\python.exe"
+if "%PYTHON_CMD%"=="" if exist "%PROJECT_DIR%\..\.venv\Scripts\python.exe" set "PYTHON_CMD=%PROJECT_DIR%\..\.venv\Scripts\python.exe"
+
+set "ACTION=%~1"
+if /i "%ACTION%"=="start" goto start
+if /i "%ACTION%"=="stop" goto stop
+if /i "%ACTION%"=="status" goto status
+if /i "%ACTION%"=="restart" goto restart
+if /i "%ACTION%"=="tunnel" goto tunnel
+if /i "%ACTION%"=="tunnel-stop" goto tunnel_stop
+if "%ACTION%"=="" goto menu
+
+echo !C_CYAN!Usage: bot [start^|stop^|status^|restart^|tunnel ^<port^>^|tunnel-stop]!C_RESET!
+exit /b 1
+
+:print_banner
+echo !C_WHITE!  ======================================!C_RESET!
+echo !C_CYAN!       MIMIR TRADING SYSTEM v2.5       !C_RESET!
+echo !C_WHITE!  ======================================!C_RESET!
+goto :eof
+
+:toggle
+call :isRunning
+if "%RUNNING%"=="1" goto stop
+goto start
+
+:start
+call :isRunning
+if "%RUNNING%"=="1" (
+    echo !C_YELLOW!  [!] Bot is already running! Run 'bot restart' to reboot.!C_RESET!
+    goto :eof
+)
+call :print_banner
+echo !C_GRAY!  --------------------------------------!C_RESET!
+echo !C_WHITE!  ^> !C_GREEN!Initializing Engine...!C_RESET!
+:: Clean up any leftover zombie processes to prevent file locking issues
+call "!NODE_CMD!" "%SCRIPT_DIR%scripts\kill-zombies.mjs" >nul 2>&1
+:: Remove stale literal %STATE_FILE% junk file from a previous script version
+if exist "%SCRIPT_DIR%%%STATE_FILE%%" del /f /q "%SCRIPT_DIR%%%STATE_FILE%%" >nul 2>&1
+> "%STATE_FILE%" echo running
+
+if "%PYTHON_CMD%"=="" (
+    echo !C_RED!  [X] Python not found!C_RESET!
+    echo !C_DIM!!C_GRAY!    Run scripts\setup_portable.ps1 to install!C_RESET!
+    goto stop
+)
+
+:: AI service launch is deferred below (after backend build) so model-loading
+:: overlaps with the PostgreSQL + build steps for faster total startup.
+
+:: Start Portable Redis
+if exist "%PROJECT_DIR%\.portable\redis\redis-server.exe" (
+ echo !C_GRAY! +-- !C_DIM!Starting portable Redis...!C_RESET!
+ powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%scripts\run-detached.ps1" -FilePath "%PROJECT_DIR%\.portable\redis\redis-server.exe" -ArgumentList "redis.windows.conf" -WorkingDirectory "%PROJECT_DIR%\.portable\redis" -PidFile "%SCRIPT_DIR%.codex-logs\trade.redis.pid" -LogOut "%SCRIPT_DIR%.codex-logs\trade.redis.out.log" -LogErr "%SCRIPT_DIR%.codex-logs\trade.redis.err.log"
+)
+
+:: Check for Portable PostgreSQL
+if exist "%PROJECT_DIR%\.portable\pgsql\bin\pg_ctl.exe" (
+    echo !C_GRAY!    +-- !C_DIM!Starting portable PostgreSQL...!C_RESET!
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%scripts\run-detached.ps1" -FilePath "%SCRIPT_DIR%scripts\start-postgres.bat" -WorkingDirectory "%PROJECT_DIR%\.portable\pgsql\bin" -PidFile "%SCRIPT_DIR%.codex-logs\trade.postgres.pid" -LogOut "%SCRIPT_DIR%.codex-logs\trade.postgres.out.log" -LogErr "%SCRIPT_DIR%.codex-logs\trade.postgres.err.log"
+    :: Wait for Postgres to be ready
+    call :wait_pg
+    
+    :: Override DATABASE_URL so the node processes connect to the portable DB
+    set "DATABASE_URL=postgresql://postgres:postgres@localhost:5433/upstox_bot"
+    
+    :: Automatically create the database and run migrations/setup
+    set "PGPASSWORD=postgres"
+    "%PROJECT_DIR%\.portable\pgsql\bin\createdb.exe" -h localhost -p 5433 -U postgres upstox_bot >nul 2>&1
+    echo !C_GRAY!    +-- !C_DIM!Running database migrations...!C_RESET!
+    call !NODE_CMD! "%PROJECT_DIR%\backend\dist\migrate.mjs" >nul 2>&1
+)
+
+:: Start Backend processes (API Server + Trading Engine) in hidden PowerShell windows and capture PIDs
+echo !C_GRAY!    +-- !C_DIM!Compiling backend...!C_RESET!
+pushd "%PROJECT_DIR%\backend"
+call !NODE_CMD! "build.mjs"
+set "BUILD_ERR=!errorlevel!"
+popd
+if !BUILD_ERR! NEQ 0 (
+    echo !C_RED!  [X] Backend build failed!!C_RESET!
+    goto stop
+)
+echo !C_GRAY!    \-- !C_DIM!Starting backend ^& trading engine...!C_RESET!
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%scripts\run-detached.ps1" -FilePath "!NODE_CMD!" -ArgumentList "--enable-source-maps ./dist/index.mjs" -WorkingDirectory "%PROJECT_DIR%\backend" -PidFile "!BACKEND_PID_FILE!" -LogOut "!BACKEND_PID_FILE!.out.log" -LogErr "!BACKEND_PID_FILE!.err.log"
+
+:: Start AI Service *after* backend build so model-loading overlaps with prior steps.
+:: HF_HUB_OFFLINE=1 forces HuggingFace to use cached models only (skips ~150s of HTTP checks).
+echo !C_GRAY!    +-- !C_DIM!Starting AI service...!C_RESET!
+set "HF_HUB_OFFLINE=1"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%scripts\run-detached.ps1" -FilePath "!PYTHON_CMD!" -ArgumentList "-u main.py" -WorkingDirectory "%PROJECT_DIR%\backend\ai_service" -PidFile "!AI_PID_FILE!" -LogOut "!AI_PID_FILE!.out.log" -LogErr "!AI_PID_FILE!.err.log"
+
+:: Frontend is pre-built (run `vite build` in frontend/ after changing src).
+:: Startup only warns if dist looks older than src — it never builds, so
+:: launch stays fast.
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$src=(Get-ChildItem '%PROJECT_DIR%\frontend\src' -Recurse -File | Measure-Object LastWriteTime -Maximum).Maximum; $dist=(Get-Item '%PROJECT_DIR%\frontend\dist\index.html' -ErrorAction SilentlyContinue).LastWriteTime; if(-not $dist -or $src -gt $dist){ exit 1 }" >nul 2>&1
+if !errorlevel! NEQ 0 (
+    echo !C_YELLOW!  [*] Frontend dist is older than src — run a frontend build to pick up latest changes.!C_RESET!
+)
+echo !C_GRAY!    +-- !C_DIM!Starting frontend...!C_RESET!
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%scripts\run-detached.ps1" -FilePath "!NODE_CMD!" -ArgumentList "%PROJECT_DIR%\node_modules\vite\bin\vite.js preview" -WorkingDirectory "%PROJECT_DIR%\frontend" -PidFile "!FRONTEND_PID_FILE!" -LogOut "!FRONTEND_PID_FILE!.out.log" -LogErr "!FRONTEND_PID_FILE!.err.log"
+
+
+:: Wait for ports to become active to verify launch success
+set "BACKEND_OK=0"
+set "AI_OK=0"
+for /l %%i in (1,1,60) do (
+    for /f "tokens=5" %%p in ('netstat -ano ^| findstr /C:":5000" ^| findstr /C:"LISTENING" 2^>nul') do (
+        if not "%%p"=="" if %%p neq 0 set "BACKEND_OK=1"
+    )
+    for /f "tokens=5" %%p in ('netstat -ano ^| findstr /C:":8001" ^| findstr /C:"LISTENING" 2^>nul') do (
+        if not "%%p"=="" if %%p neq 0 set "AI_OK=1"
+    )
+    if "!BACKEND_OK!"=="1" if "!AI_OK!"=="1" goto startup_check_done
+    ping -n 2 127.0.0.1 >nul
+)
+:startup_check_done
+
+echo.
+echo !C_GRAY!  --------------------------------------!C_RESET!
+
+if "%AI_OK%"=="0" (
+    echo !C_RED!  [X] AI Service          failed :8001!C_RESET!
+    echo !C_DIM!!C_GRAY!    Check .codex-logs for details!C_RESET!
+) else (
+    echo !C_GREEN!  [OK] !C_WHITE!AI Service!C_RESET!!C_GRAY!          http://localhost:8001!C_RESET!
+)
+
+if "%BACKEND_OK%"=="0" (
+    echo !C_RED!  [X] Backend API         failed :5000!C_RESET!
+    echo !C_DIM!!C_GRAY!    Check .codex-logs for details!C_RESET!
+) else (
+    echo !C_GREEN!  [OK] !C_WHITE!Backend API!C_RESET!!C_GRAY!         http://localhost:5000!C_RESET!
+    echo !C_GREEN!  [OK] !C_WHITE!Frontend!C_RESET!!C_GRAY!            http://localhost:3000!C_RESET!
+)
+
+
+echo.
+echo !C_GRAY!  --------------------------------------!C_RESET!
+echo !C_DIM!!C_GRAY!  !C_WHITE!bot stop!C_GRAY! shut down  !C_WHITE!bot tunnel!C_GRAY! new link  !C_WHITE!bot tunnel-stop!C_GRAY! kill tunnel!C_RESET!
+goto :eof
+
+:tunnel
+if exist "%PROJECT_DIR%\.env" (
+    for /f "usebackq tokens=1,* delims==" %%A in ("%PROJECT_DIR%\.env") do (
+        if "%%A"=="UPSTOXBOT_ADMIN_TOKEN" set "UPSTOXBOT_ADMIN_TOKEN=%%B"
+    )
+)
+if "%UPSTOXBOT_ADMIN_TOKEN%"=="" (
+    echo !C_RED!  [X] UPSTOXBOT_ADMIN_TOKEN is missing!!C_RESET!
+    echo !C_DIM!!C_GRAY!    Please set a secure UPSTOXBOT_ADMIN_TOKEN in your .env file before using the tunnel.!C_RESET!
+    exit /b 1
+)
+if "%UPSTOXBOT_ADMIN_TOKEN%"=="your_secure_token_here" (
+    echo !C_RED!  [X] UPSTOXBOT_ADMIN_TOKEN is set to a placeholder!!C_RESET!
+    echo !C_DIM!!C_GRAY!    Please set a secure UPSTOXBOT_ADMIN_TOKEN in your .env file before using the tunnel.!C_RESET!
+    exit /b 1
+)
+
+set "TUNNEL_PORT=%~2"
+if "%TUNNEL_PORT%"=="" set "TUNNEL_PORT=3000"
+set "CF_CMD=%PROJECT_DIR%\.portable\cloudflared.exe"
+
+echo !C_YELLOW!  ^> Generating new tunnel link on port %TUNNEL_PORT%...!C_RESET!
+:: Kill existing tunnel
+call :killPidFromFile "%SCRIPT_DIR%.codex-logs\trade.tunnel.pid" "Tunnel"
+taskkill /im cloudflared.exe /f >nul 2>&1
+taskkill /im ngrok.exe /f >nul 2>&1
+if exist "%SCRIPT_DIR%.codex-logs\trade.tunnel.err.log" del /f /q "%SCRIPT_DIR%.codex-logs\trade.tunnel.err.log" >nul 2>&1
+ping -n 2 127.0.0.1 >nul
+
+:: Check if ngrok is available
+where ngrok >nul 2>&1
+if not errorlevel 1 (
+    :: Start ngrok tunnel
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%scripts\run-detached.ps1" -FilePath "ngrok" -ArgumentList "http %TUNNEL_PORT% --log stdout" -WorkingDirectory "%PROJECT_DIR%" -PidFile "%SCRIPT_DIR%.codex-logs\trade.tunnel.pid" -LogOut "%SCRIPT_DIR%.codex-logs\trade.tunnel.out.log" -LogErr "%SCRIPT_DIR%.codex-logs\trade.tunnel.err.log"
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%scripts\wait-ngrok.ps1" -Port "%TUNNEL_PORT%"
+    goto :eof
+)
+
+if not exist "!CF_CMD!" (
+    echo !C_RED!  [X] Neither ngrok nor cloudflared found! Please install ngrok.!C_RESET!
+    goto :eof
+)
+
+:: Start cloudflare tunnel
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%scripts\run-detached.ps1" -FilePath "!CF_CMD!" -ArgumentList "tunnel --url http://localhost:%TUNNEL_PORT%" -WorkingDirectory "%PROJECT_DIR%" -PidFile "%SCRIPT_DIR%.codex-logs\trade.tunnel.pid" -LogOut "%SCRIPT_DIR%.codex-logs\trade.tunnel.out.log" -LogErr "%SCRIPT_DIR%.codex-logs\trade.tunnel.err.log"
+:: Wait for URL to appear in logs
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%scripts\wait-tunnel.ps1" -LogFile "%SCRIPT_DIR%.codex-logs\trade.tunnel.err.log" -Port "%TUNNEL_PORT%"
+goto :eof
+
+:tunnel_stop
+echo !C_YELLOW!  ^> Stopping tunnel...!C_RESET!
+call :killPidFromFile "%SCRIPT_DIR%.codex-logs\trade.tunnel.pid" "Tunnel"
+taskkill /im cloudflared.exe /f >nul 2>&1
+taskkill /im ngrok.exe /f >nul 2>&1
+if exist "C:\Program Files\Tailscale\tailscale.exe" (
+    "C:\Program Files\Tailscale\tailscale.exe" funnel reset >nul 2>&1
+    "C:\Program Files\Tailscale\tailscale.exe" serve reset >nul 2>&1
+)
+echo !C_GREEN!  [OK] Tunnel stopped.!C_RESET!
+goto :eof
+
+:restart
+call :stop_impl
+echo !C_GRAY!    Waiting for ports to release...!C_RESET!
+ping -n 3 127.0.0.1 >nul
+goto start
+
+:status
+call :isRunning
+if "%RUNNING%"=="1" (
+    echo !C_GREEN!  [OK] !C_WHITE!Status!C_RESET!!C_GRAY!              running!C_RESET!
+) else (
+    echo !C_YELLOW!  [-] !C_WHITE!Status!C_RESET!!C_GRAY!              stopped!C_RESET!
+)
+goto :eof
+
+:stop
+call :stop_impl
+goto :eof
+
+:stop_impl
+echo !C_YELLOW!  ^> Stopping Engine...!C_RESET!
+
+if exist "%STATE_FILE%" del /f /q "%STATE_FILE%" >nul 2>&1
+set "STOPPED=0"
+
+:: First pass: Run robust node cleanup script immediately to terminate any running services or ports
+call "!NODE_CMD!" "%SCRIPT_DIR%scripts\kill-zombies.mjs" >nul 2>&1
+
+call :killPidFromFile "%AI_PID_FILE%" "AI microservice"
+call :killPidFromFile "%BACKEND_PID_FILE%" "backend api server"
+call :killPidFromFile "%ENGINE_PID_FILE%" "trading engine"
+call :killPidFromFile "%FRONTEND_PID_FILE%" "frontend"
+
+:: Stop Portable Redis
+if exist "%PROJECT_DIR%\.portable\redis\redis-server.exe" (
+ echo !C_GRAY! +-- !C_DIM!Stopping Redis...!C_RESET!
+ taskkill /f /im redis-server.exe >nul 2>&1
+ call :killPidFromFile "%SCRIPT_DIR%.codex-logs\trade.redis.pid" "Redis wrapper"
+)
+
+:: Stop Portable PostgreSQL if it exists
+if exist "%PROJECT_DIR%\.portable\pgsql\bin\pg_ctl.exe" (
+    echo !C_GRAY!    +-- !C_DIM!Stopping PostgreSQL...!C_RESET!
+    "%PROJECT_DIR%\.portable\pgsql\bin\pg_ctl.exe" stop -m fast -w -D "%PROJECT_DIR%\.portable\pgsql\data" >nul 2>&1
+    call :killPidFromFile "%SCRIPT_DIR%.codex-logs\trade.postgres.pid" "Postgres wrapper"
+)
+
+:: Kill Cloudflare tunnel
+call :killPidFromFile "%SCRIPT_DIR%.codex-logs\trade.tunnel.pid" "Cloudflare Tunnel"
+taskkill /f /im cloudflared.exe >nul 2>&1
+if exist "C:\Program Files\Tailscale\tailscale.exe" "C:\Program Files\Tailscale\tailscale.exe" serve reset >nul 2>&1
+
+:: Clean up orphaned processes on known ports (deduplicate PIDs to avoid double-kill)
+set "_KILLED_PIDS="
+for %%P in (3000 8001 5000) do (
+    for /f "tokens=5" %%p in ('netstat -ano ^| findstr /C:":%%P" ^| findstr /C:"LISTENING" 2^>nul') do (
+        if not "%%p"=="" if %%p neq 0 (
+            echo !_KILLED_PIDS! | findstr /L /C:"[%%p]" >nul 2>&1
+            if !errorlevel! NEQ 0 (
+                taskkill /f /t /pid %%p >nul 2>&1
+                if !errorlevel! EQU 0 (
+                    echo !C_GRAY!    +-- !C_DIM!Stopped orphaned process PID %%p on port %%P!C_RESET!
+                    set "STOPPED=1"
+                    set "_KILLED_PIDS=!_KILLED_PIDS![%%p]"
+                )
+            )
+        )
+    )
+)
+set "_KILLED_PIDS="
+
+:: Final pass: Ensure no remaining zombie node/python processes survived
+call "!NODE_CMD!" "%SCRIPT_DIR%scripts\kill-zombies.mjs" >nul 2>&1
+
+if "%STOPPED%"=="0" (
+  echo !C_GRAY!    No active processes were found.!C_RESET!
+)
+echo !C_GREEN!  [OK] Stopped.!C_RESET!
+goto :eof
+
+:isRunning
+set "RUNNING=0"
+set "BACKEND_RUNNING=0"
+set "FRONTEND_RUNNING=0"
+set "AI_RUNNING=0"
+
+if exist "%BACKEND_PID_FILE%" (
+    set /p BPID=<"%BACKEND_PID_FILE%"
+    if not "!BPID!"=="" (
+        tasklist /fi "pid eq !BPID!" 2>nul | findstr "!BPID!" >nul
+        if !errorlevel! EQU 0 set "BACKEND_RUNNING=1"
+    )
+)
+
+if exist "%AI_PID_FILE%" (
+    set /p AIPID=<"%AI_PID_FILE%"
+    if not "!AIPID!"=="" (
+        tasklist /fi "pid eq !AIPID!" 2>nul | findstr "!AIPID!" >nul
+        if !errorlevel! EQU 0 set "AI_RUNNING=1"
+    )
+)
+
+:: Bot is running if both backend and AI processes are alive
+if "%BACKEND_RUNNING%"=="1" if "%AI_RUNNING%"=="1" (
+    set "RUNNING=1"
+)
+
+:: Double check netstat as fallback
+for /f "tokens=5" %%p in ('netstat -ano ^| findstr /C:":5000" ^| findstr /C:"LISTENING" 2^>nul') do (
+    if not "%%p"=="" if %%p neq 0 set "RUNNING=1"
+)
+for /f "tokens=5" %%p in ('netstat -ano ^| findstr /C:":8001" ^| findstr /C:"LISTENING" 2^>nul') do (
+    if not "%%p"=="" if %%p neq 0 set "RUNNING=1"
+)
+exit /b 0
+
+:killPidFromFile
+set "PIDFILE=%~1"
+set "LABEL=%~2"
+if not exist "%PIDFILE%" exit /b 0
+set "PID="
+set /p PID=<"%PIDFILE%"
+if "!PID!"=="" (
+  del /f /q "%PIDFILE%" >nul 2>&1
+  exit /b 0
+)
+
+taskkill /f /t /pid !PID! >nul 2>&1
+if !errorlevel! EQU 0 (
+  echo !C_GRAY!    +-- !C_DIM!Stopped %LABEL% PID !PID!!C_RESET!
+  set "STOPPED=1"
+)
+del /f /q "%PIDFILE%" >nul 2>&1
+exit /b 0
+
+:wait_pg
+for /l %%i in (1,1,30) do (
+    for /f "tokens=5" %%p in ('netstat -ano ^| findstr /C:":5433" ^| findstr /C:"LISTENING" 2^>nul') do (
+        if not "%%p"=="" if %%p neq 0 exit /b 0
+    )
+    ping -n 2 127.0.0.1 >nul
+)
+exit /b 0
+
+:menu
+call :isRunning
+echo.
+echo !C_GRAY!  ======================================!C_RESET!
+if "%RUNNING%"=="1" (
+    echo     !C_GREEN!Status: [RUNNING]!C_RESET! Bot is active.
+) else (
+    echo     !C_RED!Status: [STOPPED]!C_RESET! Bot is not running.
+)
+echo !C_GRAY!  ======================================!C_RESET!
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%scripts\menu.ps1" -Running "!RUNNING!"
+set "MENU_OPT=!errorlevel!"
+
+if "!MENU_OPT!"=="0" goto :eof
+if "!MENU_OPT!"=="6" (
+    call :tunnel_stop
+    goto menu
+)
+if "!MENU_OPT!"=="5" (
+    call :tunnel
+    goto menu
+)
+if "!MENU_OPT!"=="4" (
+    call :status
+    goto menu
+)
+if "!MENU_OPT!"=="3" (
+    call :restart
+    goto menu
+)
+if "!MENU_OPT!"=="2" (
+    call :stop
+    goto menu
+)
+if "!MENU_OPT!"=="1" (
+    call :start
+    goto menu
+)
+goto menu

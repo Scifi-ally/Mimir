@@ -24,6 +24,31 @@
 | `SECURITY.md` | MD | Critical | Not Started |
 | `TESTING_GUIDE.md` | MD | Low | Not Started |
 | `backend/Dockerfile` | Config/Script | Medium | Not Started |
+| `backend/ai_service/.flake8` | Config/Script | Medium | Not Started |
+| `backend/ai_service/Dockerfile` | Config/Script | Medium | Not Started |
+| `backend/ai_service/backtest/alpha_validation.py` | PY | Medium | Not Started |
+| `backend/ai_service/backtest/run_weekly_ic.py` | PY | Medium | Not Started |
+| `backend/ai_service/main.py` | PY | Medium | Not Started |
+| `backend/ai_service/models/__init__.py` | PY | Medium | Not Started |
+| `backend/ai_service/models/chronos_service.py` | PY | Medium | Not Started |
+| `backend/ai_service/models/confluence_service.py` | PY | Medium | Not Started |
+| `backend/ai_service/models/ranker_service.py` | PY | Medium | Not Started |
+| `backend/ai_service/models/rl_agent.py` | PY | Medium | Not Started |
+| `backend/ai_service/models/technical_pattern_engine.py` | PY | Medium | Not Started |
+| `backend/ai_service/optimize_risk.py` | PY | Medium | Not Started |
+| `backend/ai_service/ranker_lifecycle.py` | PY | Medium | Not Started |
+| `backend/ai_service/requirements.txt` | TXT | Medium | Not Started |
+| `backend/ai_service/rl_lifecycle.py` | PY | Medium | Not Started |
+| `backend/ai_service/run_ai.bat` | BAT | Medium | Not Started |
+| `backend/ai_service/sentiment.py` | PY | Medium | Not Started |
+| `backend/ai_service/setup_ai.bat` | BAT | Medium | Not Started |
+| `backend/ai_service/test_ai_models.py` | PY | Medium | Not Started |
+| `backend/ai_service/test_walk_forward.py` | PY | Medium | Not Started |
+| `backend/ai_service/train_confluence.py` | PY | Medium | Not Started |
+| `backend/ai_service/train_ranker.py` | PY | Medium | Not Started |
+| `backend/ai_service/train_rl.py` | PY | Medium | Not Started |
+| `backend/ai_service/walk_forward.py` | PY | Medium | Not Started |
+| `backend/ai_service/walk_forward_harness.py` | PY | Medium | Not Started |
 | `backend/alter-table.cjs` | CJS | Medium | Not Started |
 | `backend/build.mjs` | MJS | Medium | Not Started |
 | `backend/check_config.cjs` | CJS | Medium | Not Started |
@@ -48,7 +73,7 @@
 | `backend/db/src/schema/market_metrics.ts` | TS | Medium | Not Started |
 | `backend/db/src/schema/market_regimes.ts` | TS | Medium | Not Started |
 | `backend/db/src/schema/overnight_watchlist.ts` | TS | Medium | Not Started |
-| `backend/db/src/schema/paper_trading.ts` | TS | Critical | Not Started |
+| `backend/db/src/schema/paper_trading.ts` | TS | Critical |  |  | Verified, no issue | Complete |
 | `backend/db/src/schema/performance_stats.ts` | TS | Medium | Not Started |
 | `backend/db/src/schema/rejected_candidates.ts` | TS | Medium | Not Started |
 | `backend/db/src/schema/reports.ts` | TS | Medium | Not Started |
@@ -56,8 +81,9 @@
 | `backend/db/src/schema/signal_outcomes.ts` | TS | Medium | Not Started |
 | `backend/db/src/schema/suggestions.ts` | TS | High | Not Started |
 | `backend/db/src/schema/symbol_scores.ts` | TS | Medium | Not Started |
-| `backend/db/src/schema/trading_config.ts` | TS | Critical | Not Started |
-| `backend/db/src/schema/upstox_token.ts` | TS | Critical | Not Started |
+| `backend/db/src/schema/trading_config.ts` | TS | Critical |  |  | Verified, no issue | Complete |
+| `backend/db/src/schema/upstox_token.ts` | TS | Critical |  |  | Verified, no issue | Complete |
+| `backend/db/trunc.ts` | TS | Medium | Not Started |
 | `backend/drizzle/0000_ambitious_lucky_pierre.sql` | SQL | Medium | Not Started |
 | `backend/drizzle/0001_hot_payback.sql` | SQL | Medium | Not Started |
 | `backend/drizzle/0002_special_marvel_zombies.sql` | SQL | Medium | Not Started |
@@ -65,7 +91,7 @@
 | `backend/drizzle/0004_suggestion_timing.sql` | SQL | Medium | Not Started |
 | `backend/drizzle/0005_white_mole_man.sql` | SQL | Medium | Not Started |
 | `backend/drizzle/0006_omniscient_outlaw_kid.sql` | SQL | Medium | Not Started |
-| `backend/drizzle/0007_live_trading.sql` | SQL | Critical | Not Started |
+| `backend/drizzle/0007_live_trading.sql` | SQL | Critical |  |  | Verified, no issue | Complete |
 | `backend/drizzle/0008_feature_persistence.sql` | SQL | Medium | Not Started |
 | `backend/drizzle/0009_rejected_candidates.sql` | SQL | Medium | Not Started |
 | `backend/drizzle/0010_premium_machine_man.sql` | SQL | Medium | Not Started |
@@ -81,7 +107,7 @@
 | `backend/fix_config.ts` | TS | Medium | Not Started |
 | `backend/fix_imports.py` | PY | Medium | Not Started |
 | `backend/fix_paper_schema.cjs` | CJS | Medium | Not Started |
-| `backend/load-env.cjs` | CJS | Critical | Not Started |
+| `backend/load-env.cjs` | CJS | Critical |  |  | Verified, no issue | Complete |
 | `backend/mimir.db` | DB | Medium | Not Started |
 | `backend/package-lock.json` | JSON | Medium | Not Started |
 | `backend/package.json` | JSON | Medium | Not Started |
@@ -119,11 +145,93 @@
 | `backend/scripts/research_xsmom.ts` | TS | Medium | Not Started |
 | `backend/scripts/test_gandhar.ts` | TS | Medium | Not Started |
 | `backend/split.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/ai_client.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/alerts.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/calibration_engine.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/composite_context.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/confidence_engine.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/custom_screener_engine.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/divergence_engine.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/earnings_filter.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/feature_engine.test.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/feature_engine.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/gap_risk.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/gap_scanner.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/global_macro.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/indicators/adx.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/indicators/atr.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/indicators/bollinger_bands.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/indicators/ema.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/indicators/macd.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/indicators/rsi.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/indicators/sma.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/indicators/standard_deviation.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/indicators/super_trend.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/indicators/volume.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/indicators/vpvr.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/indicators/vwap.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/intraday_monitor.test.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/intraday_monitor.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/intraday_scanner.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/learning_engine.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/market_internals.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/mean_reversion_scanner.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/multi_timeframe.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/news_feed.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/options_sentiment.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/order_flow.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/original_technical.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/overnight_scanner.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/post_market.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/post_market_report.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/post_market_scanner.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/range_scanner.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/regime_detector.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/risk_engine.test.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/risk_engine.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/scanner_activation.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/sector_rotation.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/setups/bear_momentum.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/setups/bollinger_squeeze_breakout.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/setups/breakdown.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/setups/breakout.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/setups/ema9_reclaim.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/setups/ema9_rejection.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/setups/liquidity_sweep.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/setups/macd_crossover.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/setups/momentum.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/setups/momentum_breakout.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/setups/pullback.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/signal_generator.test.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/signal_generator.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/snapshot_utils.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/sparklines.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/stock_scanner.test.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/stock_scanner.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/technical.test.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/technical.ts` | TS | Medium | Not Started |
+| `backend/src/analysis/types.ts` | TS | Medium | Not Started |
 | `backend/src/api_server.ts` | TS | Medium | Not Started |
 | `backend/src/app.ts` | TS | Medium | Not Started |
 | `backend/src/config.ts` | TS | Medium | Not Started |
 | `backend/src/create_screener_tables.ts` | TS | Medium | Not Started |
 | `backend/src/index.ts` | TS | Medium | Not Started |
+| `backend/src/intelligence/breadth_engine.ts` | TS | Medium | Not Started |
+| `backend/src/intelligence/candle_builder.ts` | TS | Medium | Not Started |
+| `backend/src/intelligence/config.ts` | TS | Medium | Not Started |
+| `backend/src/intelligence/connection_manager.test.ts` | TS | Medium | Not Started |
+| `backend/src/intelligence/connection_manager.ts` | TS | Medium | Not Started |
+| `backend/src/intelligence/event_bus.ts` | TS | Medium | Not Started |
+| `backend/src/intelligence/load_balancer.ts` | TS | Medium | Not Started |
+| `backend/src/intelligence/orchestrator.ts` | TS | Medium | Not Started |
+| `backend/src/intelligence/redis_cache.ts` | TS | Medium | Not Started |
+| `backend/src/intelligence/suggestion_generator.ts` | TS | Medium | Not Started |
+| `backend/src/intelligence/telemetry_engine.ts` | TS | Medium | Not Started |
+| `backend/src/intelligence/tick_engine.ts` | TS | Medium | Not Started |
+| `backend/src/intelligence/types.ts` | TS | Medium | Not Started |
+| `backend/src/intelligence/universe_manager.ts` | TS | Medium | Not Started |
+| `backend/src/intelligence/worker_pool.ts` | TS | Medium | Not Started |
+| `backend/src/intelligence/workers/intelligence_worker.ts` | TS | Medium | Not Started |
 | `backend/src/lib/api-errors.ts` | TS | Medium | Not Started |
 | `backend/src/lib/cache.ts` | TS | Medium | Not Started |
 | `backend/src/lib/data_telemetry.ts` | TS | Medium | Not Started |
@@ -131,14 +239,14 @@
 | `backend/src/lib/logger.ts` | TS | Medium | Not Started |
 | `backend/src/lib/redis.ts` | TS | Medium | Not Started |
 | `backend/src/lib/redis_state.ts` | TS | Medium | Not Started |
-| `backend/src/lib/secrets.ts` | TS | Critical | Not Started |
-| `backend/src/lib/security.test.ts` | TS | Critical | Not Started |
-| `backend/src/lib/security.ts` | TS | Critical | Not Started |
-| `backend/src/lib/upstox-client.ts` | TS | Critical | Not Started |
+| `backend/src/lib/secrets.ts` | TS | Critical |  |  | Verified, no issue | Complete |
+| `backend/src/lib/security.test.ts` | TS | Critical |  |  | Verified, no issue | Complete |
+| `backend/src/lib/security.ts` | TS | Critical | Rate limiter fails open when Redis is down | Added process.env check for RATE_LIMIT_FAIL_CLOSED to return 503 instead of fallback if true | Checked code, security tests passed | Complete |
+| `backend/src/lib/upstox-client.ts` | TS | Critical |  |  | Verified, no issue | Complete |
 | `backend/src/market_data/MarketDataFeed.proto` | PROTO | High | Not Started |
 | `backend/src/market_data/corporate_actions.ts` | TS | High | Not Started |
 | `backend/src/market_data/fii_dii.ts` | TS | High | Not Started |
-| `backend/src/market_data/market_feed.ts` | TS | Critical | Not Started |
+| `backend/src/market_data/market_feed.ts` | TS | Critical |  |  | Verified, no issue | Complete |
 | `backend/src/market_data/market_state.ts` | TS | High | Not Started |
 | `backend/src/market_data/monitored_symbols.ts` | TS | High | Not Started |
 | `backend/src/market_data/new_proto.proto` | PROTO | High | Not Started |
@@ -158,19 +266,19 @@
 | `backend/src/routes/market_history.ts` | TS | High | Not Started |
 | `backend/src/routes/market_quotes.ts` | TS | High | Not Started |
 | `backend/src/routes/market_utils.ts` | TS | High | Not Started |
-| `backend/src/routes/paper_trading.ts` | TS | Critical | Not Started |
+| `backend/src/routes/paper_trading.ts` | TS | Critical | Floating point math used for money calculation | Switched to cent-based integer math | Reviewed code and verified replacement | Complete |
 | `backend/src/routes/reports.ts` | TS | High | Not Started |
 | `backend/src/routes/screener.ts` | TS | High | Not Started |
 | `backend/src/routes/suggestions.ts` | TS | High | Not Started |
 | `backend/src/routes/system.ts` | TS | High | Not Started |
-| `backend/src/routes/trading.ts` | TS | Critical | Not Started |
+| `backend/src/routes/trading.ts` | TS | Critical |  |  | Verified, no issue | Complete |
 | `backend/src/routes/watchlist.ts` | TS | High | Not Started |
 | `backend/src/scheduler/custom_screener_scheduler.ts` | TS | High | Not Started |
 | `backend/src/scheduler/jobs.ts` | TS | High | Not Started |
 | `backend/src/schemas/api.ts` | TS | Medium | Not Started |
 | `backend/src/schemas/index.ts` | TS | Medium | Not Started |
-| `backend/src/schemas/types/authCallbackResponse.ts` | TS | Critical | Not Started |
-| `backend/src/schemas/types/authUrlResponse.ts` | TS | Critical | Not Started |
+| `backend/src/schemas/types/authCallbackResponse.ts` | TS | Critical | Orval generated schema | No fix needed | Verified | Complete |
+| `backend/src/schemas/types/authUrlResponse.ts` | TS | Critical | Orval generated schema | No fix needed | Verified | Complete |
 | `backend/src/schemas/types/dailyPerformance.ts` | TS | Medium | Not Started |
 | `backend/src/schemas/types/getDailyPerformanceParams.ts` | TS | Medium | Not Started |
 | `backend/src/schemas/types/getPerformanceStatsParams.ts` | TS | Medium | Not Started |
@@ -178,7 +286,7 @@
 | `backend/src/schemas/types/getSuggestionHistoryParams.ts` | TS | Medium | Not Started |
 | `backend/src/schemas/types/getSuggestionHistorySetupType.ts` | TS | Medium | Not Started |
 | `backend/src/schemas/types/getSuggestionHistoryStatus.ts` | TS | Medium | Not Started |
-| `backend/src/schemas/types/handleAuthCallbackParams.ts` | TS | Critical | Not Started |
+| `backend/src/schemas/types/handleAuthCallbackParams.ts` | TS | Critical | Orval generated schema | No fix needed | Verified | Complete |
 | `backend/src/schemas/types/healthStatus.ts` | TS | Medium | Not Started |
 | `backend/src/schemas/types/index.ts` | TS | Medium | Not Started |
 | `backend/src/schemas/types/marketOverview.ts` | TS | Medium | Not Started |
@@ -197,10 +305,11 @@
 | `backend/src/schemas/types/suggestionTradeType.ts` | TS | Medium | Not Started |
 | `backend/src/schemas/types/systemStatus.ts` | TS | Medium | Not Started |
 | `backend/src/schemas/types/tomorrowWatchlist.ts` | TS | Medium | Not Started |
-| `backend/src/schemas/types/tradingConfig.ts` | TS | Critical | Not Started |
-| `backend/src/schemas/types/tradingConfigUpdate.ts` | TS | Critical | Not Started |
+| `backend/src/schemas/types/tradingConfig.ts` | TS | Critical | Orval generated schema | No fix needed | Verified | Complete |
+| `backend/src/schemas/types/tradingConfigUpdate.ts` | TS | Critical | Orval generated schema | No fix needed | Verified | Complete |
 | `backend/src/schemas/types/watchlistItem.ts` | TS | Medium | Not Started |
 | `backend/src/schemas/types/watchlistItemCategory.ts` | TS | Medium | Not Started |
+| `backend/src/scripts/report_decision_trace.ts` | TS | Medium | Not Started |
 | `backend/src/services/system_stats.ts` | TS | Medium | Not Started |
 | `backend/src/suggestions/accuracy_tracker.ts` | TS | High | Not Started |
 | `backend/src/suggestions/expectancy.ts` | TS | High | Not Started |
@@ -209,14 +318,14 @@
 | `backend/src/suggestions/timing.test.ts` | TS | High | Not Started |
 | `backend/src/suggestions/timing.ts` | TS | High | Not Started |
 | `backend/src/test-db.ts` | TS | Medium | Not Started |
-| `backend/src/trading/broker_orders.ts` | TS | Critical | Not Started |
+| `backend/src/trading/broker_orders.ts` | TS | Critical |  |  | Verified, no issue | Complete |
 | `backend/src/trading/paper_engine.test.ts` | TS | Critical | Not Started |
-| `backend/src/trading/paper_engine.ts` | TS | Critical | Not Started |
-| `backend/src/trading/position_tracker.ts` | TS | Critical | Not Started |
-| `backend/src/trading/reconciler.ts` | TS | Critical | Not Started |
+| `backend/src/trading/paper_engine.ts` | TS | Critical |  |  | Verified, no issue | Complete |
+| `backend/src/trading/position_tracker.ts` | TS | Critical | Verified correct float handling and locking |  | Verified, no issue | Complete |
+| `backend/src/trading/reconciler.ts` | TS | Critical | Verified quantities are integers, safe loop |  | Verified, no issue | Complete |
 | `backend/src/trading_engine.ts` | TS | Critical | Not Started |
-| `backend/src/upstox/auth.ts` | TS | Critical | Not Started |
-| `backend/src/upstox/headless_auth.ts` | TS | Critical | Not Started |
+| `backend/src/upstox/auth.ts` | TS | Critical | External API call lacked timeout | Added 15s timeout to axios.post | Verified fix | Complete |
+| `backend/src/upstox/headless_auth.ts` | TS | Critical | Automated Playwright login | Verified timeouts and secrets are safe | Verified, no issue | Complete |
 | `backend/src/workers/scan_worker.ts` | TS | Medium | Not Started |
 | `backend/src/workers/worker_pool.ts` | TS | Medium | Not Started |
 | `backend/src/workflow/coordinator.ts` | TS | High | Not Started |
@@ -224,9 +333,9 @@
 | `backend/src/ws/events.ts` | TS | High | Not Started |
 | `backend/src/ws/websocket_server.ts` | TS | High | Not Started |
 | `backend/test_EIEL.ts` | TS | Medium | Not Started |
-| `backend/test_auth.ts` | TS | Critical | Not Started |
-| `backend/test_auth2.ts` | TS | Critical | Not Started |
-| `backend/test_auth3.ts` | TS | Critical | Not Started |
+| `backend/test_auth.ts` | TS | Critical | Manual test script | No fixes required | Verified, no issue | Complete |
+| `backend/test_auth2.ts` | TS | Critical | Manual test script | No fixes required | Verified, no issue | Complete |
+| `backend/test_auth3.ts` | TS | Critical | Manual test script | No fixes required | Verified, no issue | Complete |
 | `backend/tests/cache/redis.test.ts` | TS | Medium | Not Started |
 | `backend/tests/divergence_engine.test.ts` | TS | Medium | Not Started |
 | `backend/tests/order_flow.test.ts` | TS | Medium | Not Started |
@@ -236,9 +345,9 @@
 | `backend/tests/regression/risk_regression.test.ts` | TS | Medium | Not Started |
 | `backend/tests/setup.ts` | TS | Medium | Not Started |
 | `backend/tsconfig.json` | JSON | Medium | Not Started |
-| `backend/upstox_login.html` | HTML | Critical | Not Started |
-| `backend/upstox_login_127.html` | HTML | Critical | Not Started |
-| `backend/upstox_login_localhost.html` | HTML | Critical | Not Started |
+| `backend/upstox_login.html` | HTML | Critical | Static auth callback | Verified safe | Verified, no issue | Complete |
+| `backend/upstox_login_127.html` | HTML | Critical | Static auth callback | Verified safe | Verified, no issue | Complete |
+| `backend/upstox_login_localhost.html` | HTML | Critical | Static auth callback | Verified safe | Verified, no issue | Complete |
 | `backend/vitest.config.ts` | TS | Medium | Not Started |
 | `bot.bat` | BAT | Low | Not Started |
 | `create-custom-watchlist.mjs` | MJS | Low | Not Started |
@@ -283,7 +392,7 @@
 | `frontend/src/components/ErrorBoundary.tsx` | TSX | Low | Not Started |
 | `frontend/src/components/EventFeed.tsx` | TSX | Low | Not Started |
 | `frontend/src/components/LivePrice.tsx` | TSX | Low | Not Started |
-| `frontend/src/components/PaperTradingPanel.tsx` | TSX | Critical | Not Started |
+| `frontend/src/components/PaperTradingPanel.tsx` | TSX | Critical | Trading Panel UI | Verified safe math for UI rendering | Verified, no issue | Complete |
 | `frontend/src/components/PriceChart.tsx` | TSX | Low | Not Started |
 | `frontend/src/components/ReportsLibrary.tsx` | TSX | Low | Not Started |
 | `frontend/src/components/ScanClockPanel.tsx` | TSX | Low | Not Started |
@@ -295,7 +404,7 @@
 | `frontend/src/components/SuggestionsSlider.tsx` | TSX | High | Not Started |
 | `frontend/src/components/SupportResistancePanel.tsx` | TSX | Low | Not Started |
 | `frontend/src/components/TopBar.tsx` | TSX | Low | Not Started |
-| `frontend/src/components/UpstoxHeadlessLogin.tsx` | TSX | Critical | Not Started |
+| `frontend/src/components/UpstoxHeadlessLogin.tsx` | TSX | Critical | Headless login component | Verified safe state handling and PIN input | Verified, no issue | Complete |
 | `frontend/src/components/WatchlistCard.tsx` | TSX | Low | Not Started |
 | `frontend/src/components/WatchlistStack.tsx` | TSX | Low | Not Started |
 | `frontend/src/components/atoms/AnimatedNumber.tsx` | TSX | Low | Not Started |
@@ -327,7 +436,7 @@
 | `frontend/src/store/useStore.test.ts` | TS | Medium | Not Started |
 | `frontend/src/store/useStore.ts` | TS | Medium | Not Started |
 | `frontend/src/types/api.ts` | TS | Low | Not Started |
-| `frontend/src/vite-env.d.ts` | TS | Critical | Not Started |
+| `frontend/src/vite-env.d.ts` | TS | Critical | Type definitions | Verified safe | Verified, no issue | Complete |
 | `frontend/src/workers/marketDataWorker.ts` | TS | Medium | Not Started |
 | `frontend/tests/ui/chart.test.ts` | TS | Low | Not Started |
 | `frontend/tests/ui/sparkline.test.ts` | TS | Low | Not Started |
@@ -343,6 +452,7 @@
 | `nginx/mimir.conf` | CONF | Low | Not Started |
 | `package-lock.json` | JSON | Low | Not Started |
 | `package.json` | JSON | Low | Not Started |
+| `prompt.txt` | TXT | Low | Not Started |
 | `scripts/check_scan.bat` | BAT | Low | Not Started |
 | `scripts/delete_duplicates.ts` | TS | Low | Not Started |
 | `scripts/deploy-improvements.sh` | SH | Low | Not Started |
@@ -355,7 +465,7 @@
 | `scripts/start-ai.bat` | BAT | Low | Not Started |
 | `scripts/start-postgres.bat` | BAT | Low | Not Started |
 | `scripts/wait-ngrok.ps1` | PS1 | Low | Not Started |
-| `scripts/wait-tunnel.ps1` | PS1 | Critical | Not Started |
+| `scripts/wait-tunnel.ps1` | PS1 | Critical | Powershell wait script | Verified safe | Verified, no issue | Complete |
 | `setup.bat` | BAT | Low | Not Started |
 
 ## Findings Log

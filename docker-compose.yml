@@ -43,6 +43,7 @@ services:
       UPSTOX_API_SECRET: ${UPSTOX_API_SECRET:-}
       UPSTOX_REDIRECT_URI: ${UPSTOX_REDIRECT_URI:-http://localhost:5000/api/system/auth-callback}
       AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN:?set AI_SERVICE_TOKEN}
+      AI_SERVICE_URL: http://ai-service:8001
     ports:
       - "127.0.0.1:5000:5000"
     healthcheck:

@@ -3,7 +3,7 @@
 
 ## Context
 
-Mimir is a Node.js/TypeScript algo trading terminal for NSE/BSE with a Python FastAPI AI service (Chronos-Bolt-Small, FinBERT, an XGBoost learned ranker). Full architecture is in `ARCHITECTURE.md` at the repo root — read it before starting.
+Mimir is a Node.js/TypeScript algo trading terminal for NSE/BSE with a Python FastAPI AI service (Chronos-Bolt-Small, FinBERT, a LightGBM learned ranker). Full architecture is in `ARCHITECTURE.md` at the repo root — read it before starting.
 
 The goal of this work is **not** new predictive features. It's building the evaluation discipline needed to know whether the features and models already in place (technical, F&O microstructure, macro/FII-DII, sentiment) are finding real edge or are curve-fit to their training window. Right now there is no walk-forward methodology and no SHAP-based feature diagnostics, so that question is unanswerable.
 
