@@ -64,7 +64,9 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
     enabled: Boolean(selectedSymbol && typeof selectedSymbol === "string" && selectedSymbol.trim()),
     retry: false,
     refetchInterval: 30000,
-    staleTime: 15000,
+    staleTime: 60000,
+    gcTime: 300000,
+    placeholderData: (prev) => prev,
   });
 
   const insights = insightsQuery.data;
@@ -81,6 +83,8 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
     queryFn: () => api.scoreHistory(selectedSymbol),
     enabled: Boolean(selectedSymbol.trim()),
     staleTime: 60000,
+    gcTime: 300000,
+    placeholderData: (prev) => prev,
   });
   const scoreHistory = scoreHistoryQuery.data?.history ?? [];
 
@@ -487,7 +491,7 @@ function FitText({ children, className }: { children: React.ReactNode; className
 function Section({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
     <motion.div
-      variants={{ hidden: { opacity: 0, y: 8 }, visible: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 420, damping: 32 } } }}
+      variants={{ hidden: { opacity: 0 }, visible: { opacity: 1, transition: { duration: 0.08 } } }}
       className={cn("shrink-0 min-w-0", className)}
     >
       {children}
@@ -698,42 +702,7 @@ function PatternRow({ forecast, selectedSignal, scan, onClick }: { forecast: any
 /* ── Text effects ──────────────────────────────────────────────────────────── */
 
 function DecryptText({ text }: { text: string }) {
-  const ref = useRef<HTMLSpanElement>(null);
-  const prevTextRef = useRef<string>("");
-
-  useEffect(() => {
-    if (!text || !ref.current) return;
-    // Honor reduced-motion: the scramble is pure decoration, and on every
-    // refetch it churns a data-dense panel for users who asked for calm.
-    if (typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
-      ref.current.innerText = text;
-      prevTextRef.current = text;
-      return;
-    }
-    if (prevTextRef.current && text.length === prevTextRef.current.length && prevTextRef.current !== text) {
-      ref.current.innerText = text;
-      prevTextRef.current = text;
-      return;
-    }
-    prevTextRef.current = text;
-    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*";
-    let iteration = 0;
-    const interval = setInterval(() => {
-      if (!ref.current) return;
-      ref.current.innerText = text.split("").map((_, index) => {
-        if (index < iteration) return text[index];
-        return chars[Math.floor(Math.random() * chars.length)];
-      }).join("");
-      if (iteration >= text.length) {
-        clearInterval(interval);
-        if (ref.current) ref.current.innerText = text;
-      }
-      iteration += 1 / 2;
-    }, 20);
-    return () => clearInterval(interval);
-  }, [text]);
-
-  return <span ref={ref}>{text}</span>;
+  return <span>{text}</span>;
 }
 
 /* ── Matrix row ────────────────────────────────────────────────────────────── */

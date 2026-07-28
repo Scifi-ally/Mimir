@@ -586,12 +586,11 @@ export default function Dashboard() {
             <div className="flex flex-col w-[35%] xl:w-[28%] min-w-0 h-full pl-2">
               <motion.div 
                 className="h-full w-full min-h-0 min-w-0 rounded-2xl relative z-10 overflow-hidden"
-                initial={{ opacity: 0, x: 10 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ ...FADE_STANDARD, delay: 0.12 }}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={FADE_FAST}
               >
                 <DetailPanel
-                  key={activeSymbol}
                   suggestions={suggestions}
                   selectedSymbol={activeSymbol}
                   session={session}
@@ -662,7 +661,7 @@ export default function Dashboard() {
             {/* The detail panel is a fixed non-scrolling composition — it needs
                 real height to breathe; 400px crushed the ladder + matrix. */}
             <div className="h-[600px] shrink-0 px-1">
-              <DetailPanel key={activeSymbol} suggestions={suggestions} selectedSymbol={activeSymbol} session={session} isScanActive={isScanActive} />
+              <DetailPanel suggestions={suggestions} selectedSymbol={activeSymbol} session={session} isScanActive={isScanActive} />
             </div>
           </div>
           )}
