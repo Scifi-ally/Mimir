@@ -424,7 +424,7 @@ export function PaperTradingPanel({ isOpen, onClose }: { isOpen?: boolean; onClo
                 {/* Total Stocks / Qty Bought */}
                 <motion.div variants={staggerItem} className="flex flex-col gap-1 min-w-0 overflow-hidden">
                   <span className="text-[10px] font-normal text-foreground/50 tracking-[0.08em] uppercase truncate">Total Qty</span>
-                  <span className="text-xl sm:text-2xl font-mono tabular-nums font-semibold tracking-tight text-[#00f2fe] truncate">
+                  <span className="text-xl sm:text-2xl font-mono tabular-nums font-semibold tracking-tight text-slate-200 truncate">
                     {positions.reduce((acc, p) => acc + Math.abs(p.quantity), 0)} <span className="text-xs font-normal text-foreground/40">shares</span>
                   </span>
                   <span className="text-[10px] font-mono tabular-nums text-foreground/30 truncate">

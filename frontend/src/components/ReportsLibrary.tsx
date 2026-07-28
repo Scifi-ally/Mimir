@@ -26,14 +26,14 @@ interface DailyReport {
 // Custom borderless, boxless markdown renderers
 const borderlessMarkdownComponents = {
   h1: ({ children }: any) => (
-    <h1 className="text-2xl font-bold tracking-tight text-[#00f2fe] mt-2 mb-6 m-0 flex items-center gap-3">
+    <h1 className="text-2xl font-bold tracking-tight text-slate-200 mt-2 mb-6 m-0 flex items-center gap-3">
       {children}
     </h1>
   ),
   h3: ({ children }: any) => (
     <div className="flex items-center gap-2.5 mt-8 mb-3 pb-1 border-b border-border/10">
-      <span className="w-1.5 h-1.5 rounded-full bg-[#00f2fe] shrink-0 shadow-[0_0_8px_#00f2fe]" />
-      <h3 className="text-xs font-mono tracking-wider uppercase text-[#00f2fe] font-bold m-0">{children}</h3>
+      <span className="w-1.5 h-1.5 rounded-full bg-slate-400 shrink-0" />
+      <h3 className="text-xs font-mono tracking-wider uppercase text-slate-400 font-bold m-0">{children}</h3>
     </div>
   ),
   table: ({ children }: any) => (
@@ -42,7 +42,7 @@ const borderlessMarkdownComponents = {
     </div>
   ),
   thead: ({ children }: any) => (
-    <thead className="border-b border-border/15 text-[10px] uppercase font-mono tracking-wider text-[#00f2fe]">{children}</thead>
+    <thead className="border-b border-border/15 text-[10px] uppercase font-mono tracking-wider text-slate-400">{children}</thead>
   ),
   tr: ({ children }: any) => (
     <tr className="border-b border-border/5 last:border-0 hover:bg-foreground/[0.02] transition-colors">{children}</tr>
@@ -67,8 +67,8 @@ const borderlessMarkdownComponents = {
     );
   },
   blockquote: ({ children }: any) => (
-    <div className="my-6 pl-4 border-l-2 border-[#00f2fe] py-1.5 text-foreground/90 font-mono text-sm flex items-center gap-3">
-      <Sparkles className="w-4 h-4 text-[#00f2fe] shrink-0" />
+    <div className="my-6 pl-4 border-l-2 border-slate-500 py-1.5 text-foreground/90 font-mono text-sm flex items-center gap-3">
+      <Sparkles className="w-4 h-4 text-slate-400 shrink-0" />
       <div className="font-medium">{children}</div>
     </div>
   ),
@@ -77,7 +77,7 @@ const borderlessMarkdownComponents = {
   ),
   li: ({ children }: any) => (
     <li className="flex items-start gap-2.5 py-1 text-xs font-sans text-foreground/80">
-      <span className="w-1.5 h-1.5 rounded-full bg-[#00f2fe]/80 mt-1.5 shrink-0" />
+      <span className="w-1.5 h-1.5 rounded-full bg-slate-500/80 mt-1.5 shrink-0" />
       <div className="flex-1 min-w-0">{children}</div>
     </li>
   ),
