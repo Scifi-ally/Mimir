@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, useMemo, useId, memo } from "react";
 import { motion } from "framer-motion";
-import { Loader2 } from "lucide-react";
 import {
   CandlestickSeries,
   ColorType,
@@ -1239,23 +1238,93 @@ function buildForecastProjection(candles: Candle[], forecast: SymbolForecast | n
 }
 
 function AnimatedChartLoader({ symbol }: { symbol: string }) {
+  const bars = [
+    { open: 35, close: 65, high: 75, low: 25, bull: true },
+    { open: 60, close: 45, high: 68, low: 38, bull: false },
+    { open: 48, close: 80, high: 85, low: 42, bull: true },
+    { open: 75, close: 55, high: 82, low: 50, bull: false },
+    { open: 58, close: 90, high: 95, low: 52, bull: true },
+    { open: 85, close: 70, high: 90, low: 65, bull: false },
+    { open: 72, close: 105, high: 110, low: 68, bull: true },
+    { open: 100, close: 85, high: 104, low: 80, bull: false },
+    { open: 88, close: 120, high: 125, low: 82, bull: true },
+    { open: 115, close: 95, high: 118, low: 90, bull: false },
+    { open: 98, close: 135, high: 140, low: 92, bull: true },
+    { open: 130, close: 112, high: 135, low: 108, bull: false },
+  ];
+
   return (
     <motion.div
-      className="absolute inset-0 pointer-events-none flex items-start justify-end p-3 z-20"
+      className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center overflow-hidden bg-background/40 backdrop-blur-[2px] z-20"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       transition={{ duration: 0.08 }}
     >
-      <motion.div
-        initial={{ opacity: 0, scale: 0.96 }}
-        animate={{ opacity: 1, scale: 1 }}
-        transition={{ duration: 0.1, ease: "easeOut" }}
-        className="flex items-center gap-2 px-2.5 py-1 rounded-md bg-secondary/80 border border-border/15 backdrop-blur-md shadow-xs"
+      {/* Clean Subtle Grid */}
+      <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.015)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.015)_1px,transparent_1px)] bg-[size:32px_32px]" />
+
+      {/* Candlestick Bar Wave Animation */}
+      <div className="w-full max-w-sm h-28 px-4 flex items-center justify-between relative z-10">
+        {bars.map((bar, idx) => {
+          const color = bar.bull ? "#00e676" : "#ff1744";
+          return (
+            <motion.div
+              key={idx}
+              className="flex flex-col items-center justify-center h-full relative w-2.5"
+              initial={{ scaleY: 0.4, opacity: 0.3 }}
+              animate={{
+                scaleY: [0.5, 1.15, 0.65, 1, 0.5],
+                opacity: [0.4, 1, 0.75, 1, 0.4],
+              }}
+              transition={{
+                duration: 0.75,
+                repeat: Infinity,
+                repeatType: "reverse",
+                delay: idx * 0.05,
+                ease: "easeInOut",
+              }}
+            >
+              {/* Wick */}
+              <div
+                className="w-[1.5px] rounded-full opacity-60"
+                style={{
+                  height: `${bar.high - bar.low}px`,
+                  backgroundColor: color,
+                }}
+              />
+              {/* Candle Body */}
+              <div
+                className="absolute w-2 rounded-[1.5px] shadow-[0_0_6px_rgba(0,0,0,0.6)]"
+                style={{
+                  height: `${Math.max(6, Math.abs(bar.close - bar.open))}px`,
+                  backgroundColor: color,
+                  top: `calc(50% - ${(bar.high - bar.low) / 2}px + ${Math.min(bar.open, bar.close) - bar.low}px)`,
+                }}
+              />
+            </motion.div>
+          );
+        })}
+
+        {/* Laser Scanner Beam */}
+        <motion.div
+          className="absolute top-0 bottom-0 w-16 bg-gradient-to-r from-transparent via-[#00f2fe]/20 to-transparent border-r border-[#00f2fe]/40"
+          initial={{ left: "-15%" }}
+          animate={{ left: "115%" }}
+          transition={{ duration: 0.85, repeat: Infinity, ease: "linear" }}
+        />
+      </div>
+
+      {/* Super Clean HUD Badge */}
+      <motion.div 
+        className="mt-2 flex items-center gap-2 px-3 py-1 rounded-full bg-background/90 border border-foreground/10 backdrop-blur-md shadow-lg"
+        initial={{ y: 4, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        transition={{ duration: 0.08 }}
       >
-        <Loader2 className="w-3 h-3 animate-spin text-foreground/50 shrink-0" />
-        <span className="text-[10px] font-mono text-foreground/60 tracking-tight">
-          Updating <span className="text-foreground/90 font-medium">{symbol}</span>
+        <span className="w-1.5 h-1.5 rounded-full bg-[#00e676] animate-pulse" />
+        <span className="text-[10px] font-mono font-medium uppercase tracking-widest text-foreground/80">
+          BUILDING CHART <span className="text-[#00f2fe] font-bold">{symbol}</span>
         </span>
       </motion.div>
     </motion.div>
