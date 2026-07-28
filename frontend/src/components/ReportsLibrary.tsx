@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, RefreshCw } from "lucide-react";
+import { X, RefreshCw, BarChart3, TrendingUp, Layers, Zap, Wallet, Bell, FileText, Calendar, Sparkles } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api } from "@/lib/api";
@@ -20,6 +20,79 @@ interface DailyReport {
   content: string;
   createdAt: string;
 }
+
+// Custom aesthetic renderers for markdown reports
+const customMarkdownComponents = {
+  h1: ({ children }: any) => (
+    <div className="flex items-center gap-3 pb-4 mb-6 border-b border-border/10">
+      <div className="p-2 rounded-xl bg-primary/10 text-primary">
+        <FileText className="w-5 h-5" />
+      </div>
+      <h1 className="text-xl font-medium tracking-tight text-foreground m-0">{children}</h1>
+    </div>
+  ),
+  h3: ({ children }: any) => {
+    const text = String(children || "");
+    let icon = <BarChart3 className="w-4 h-4 text-primary" />;
+    if (text.includes("Market Overview")) icon = <TrendingUp className="w-4 h-4 text-bull" />;
+    else if (text.includes("Sector")) icon = <Layers className="w-4 h-4 text-primary" />;
+    else if (text.includes("Signals")) icon = <Zap className="w-4 h-4 text-amber-500" />;
+    else if (text.includes("Paper Trades")) icon = <Wallet className="w-4 h-4 text-bull" />;
+    else if (text.includes("Alerts")) icon = <Bell className="w-4 h-4 text-primary" />;
+
+    return (
+      <div className="flex items-center gap-2.5 mt-8 mb-4">
+        <div className="p-1.5 rounded-lg bg-foreground/5">{icon}</div>
+        <h3 className="text-sm font-mono tracking-wider uppercase text-foreground/90 font-semibold m-0">{children}</h3>
+      </div>
+    );
+  },
+  table: ({ children }: any) => (
+    <div className="my-4 overflow-hidden rounded-2xl border border-border/10 bg-foreground/[0.02] shadow-sm">
+      <table className="w-full text-left text-xs font-sans border-collapse">{children}</table>
+    </div>
+  ),
+  thead: ({ children }: any) => (
+    <thead className="bg-foreground/[0.04] border-b border-border/10 text-[10px] uppercase font-mono tracking-wider text-muted-foreground">{children}</thead>
+  ),
+  tr: ({ children }: any) => (
+    <tr className="border-b border-border/5 last:border-0 hover:bg-foreground/[0.03] transition-colors">{children}</tr>
+  ),
+  th: ({ children }: any) => (
+    <th className="px-4 py-3 font-medium text-muted-foreground">{children}</th>
+  ),
+  td: ({ children }: any) => {
+    const text = String(children || "");
+    const isPos = text.includes("+") || (text.includes("Cr") && !text.includes("-"));
+    const isNeg = text.includes("-");
+    return (
+      <td className="px-4 py-3 font-mono text-xs">
+        {isPos && (text.includes("%") || text.includes("Cr")) ? (
+          <span className="text-bull font-medium">{children}</span>
+        ) : isNeg && (text.includes("%") || text.includes("Cr") || text.includes("-")) ? (
+          <span className="text-bear font-medium">{children}</span>
+        ) : (
+          <span className="text-foreground/90">{children}</span>
+        )}
+      </td>
+    );
+  },
+  blockquote: ({ children }: any) => (
+    <div className="my-6 p-4 rounded-xl bg-gradient-to-r from-bull/10 via-bull/5 to-transparent border border-bull/20 text-bull font-mono text-sm flex items-center gap-3">
+      <Sparkles className="w-5 h-5 shrink-0" />
+      <div className="font-semibold">{children}</div>
+    </div>
+  ),
+  ul: ({ children }: any) => (
+    <ul className="my-3 space-y-2 pl-0 list-none">{children}</ul>
+  ),
+  li: ({ children }: any) => (
+    <li className="flex items-center gap-2 p-3 rounded-xl bg-foreground/[0.02] border border-border/10 text-xs font-sans text-foreground/80 hover:border-border/20 transition-colors">
+      <div className="w-1.5 h-1.5 rounded-full bg-primary shrink-0" />
+      <div className="flex-1 min-w-0">{children}</div>
+    </li>
+  ),
+};
 
 export function ReportsLibrary({ isOpen, onClose }: ReportsLibraryProps) {
   const queryClient = useQueryClient();
@@ -89,7 +162,7 @@ export function ReportsLibrary({ isOpen, onClose }: ReportsLibraryProps) {
             </div>
 
             {/* Content */}
-            <div className="flex-1 overflow-y-auto px-8 py-4 flex flex-col">
+            <div className="flex-1 overflow-y-auto px-8 py-6 flex flex-col">
               {reportsQuery.isPending ? (
                 <div className="flex flex-col gap-3 pt-2">
                   {[0, 1, 2, 3, 4].map((i) => (
@@ -112,20 +185,31 @@ export function ReportsLibrary({ isOpen, onClose }: ReportsLibraryProps) {
                   <p className="text-sm font-normal text-foreground/60">No reports generated yet</p>
                 </div>
               ) : (
-                <div className="flex flex-col">
+                <div className="flex flex-col gap-8">
                   {reports.map((report: DailyReport) => (
-                    <div key={report.id} className="py-8 border-b border-border/10 last:border-0">
-                      <div className="flex items-center gap-3 mb-6">
-                        <div className="w-1 h-6 bg-primary rounded-full" />
-                        <h3 className="font-mono font-normal text-lg text-foreground flex items-center gap-2">
-                          {report.date}
-                        </h3>
+                    <div key={report.id} className="p-6 rounded-2xl border border-border/10 bg-foreground/[0.01] hover:bg-foreground/[0.015] transition-all duration-200 shadow-sm">
+                      <div className="flex items-center justify-between gap-4 mb-4 pb-4 border-b border-border/10">
+                        <div className="flex items-center gap-3">
+                          <div className="p-2 rounded-xl bg-primary/10 text-primary">
+                            <Calendar className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <h3 className="font-mono font-semibold text-lg text-foreground tracking-tight">
+                              {report.date}
+                            </h3>
+                            {report.summary && (
+                              <p className="text-xs text-muted-foreground mt-0.5">{report.summary}</p>
+                            )}
+                          </div>
+                        </div>
                       </div>
-                      {report.summary && (
-                        <p className="text-sm text-muted-foreground mb-4 pl-4">{report.summary}</p>
-                      )}
-                      <div className="prose prose-sm dark:prose-invert prose-p:leading-relaxed prose-headings:font-normal prose-h1:text-xl prose-h2:text-lg prose-h3:text-base prose-a:text-primary max-w-none text-foreground/90 pl-4">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{report.content?.replace(/\\n/g, '\n')}</ReactMarkdown>
+                      <div className="max-w-none text-foreground/90">
+                        <ReactMarkdown
+                          remarkPlugins={[remarkGfm]}
+                          components={customMarkdownComponents}
+                        >
+                          {report.content?.replace(/\\n/g, '\n')}
+                        </ReactMarkdown>
                       </div>
                     </div>
                   ))}
