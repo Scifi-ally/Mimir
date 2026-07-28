@@ -75,9 +75,9 @@ class ScannerOrchestrator {
         }
 
         // Evaluate candidate detection stateless in worker Pool A
-        // THROTTLE: Only evaluate once every 2 seconds per symbol
+        // THROTTLE: Only evaluate once every 500ms per symbol
         const lastEval = this.lastCandidateEval.get(tick.instrumentKey) || 0;
-        if (Date.now() - lastEval < 2000) return;
+        if (Date.now() - lastEval < 500) return;
         this.lastCandidateEval.set(tick.instrumentKey, Date.now());
 
         void intelligenceWorkerPools.candidateDetection.enqueue<CandidateSignal | null>(
@@ -209,9 +209,10 @@ class ScannerOrchestrator {
               };
 
               const { ingestSignal, fetchLTPForSymbols } = await import("../suggestions/generator");
-              const ltpMap = await fetchLTPForSymbols([opportunity.symbol]);
+              const liveLtp = this.tickEngine.getState(opportunity.instrumentKey)?.ltp;
+              const ltpMap = liveLtp ? { [opportunity.symbol]: liveLtp } : await fetchLTPForSymbols([opportunity.symbol]);
               // ingestSignal returns null on success, or a rejection-reason string.
-              const rejectionReason = await ingestSignal(signal, ltpMap[opportunity.symbol], { isIntraday: true, source: "realtime" });
+              const rejectionReason = await ingestSignal(signal, ltpMap[opportunity.symbol] ?? opportunity.entry, { isIntraday: true, source: "realtime" });
               if (rejectionReason) {
                 logger.debug({ symbol: opportunity.symbol, rejectionReason }, "Realtime suggestion rejected by ingest gates");
               } else {
@@ -224,7 +225,7 @@ class ScannerOrchestrator {
           } catch (err) {
             logger.warn({ err }, "AI Ranking task failed");
           }
-        }, 2000);
+        }, 200);
       }),
 
       // Cache suggestions to Redis, persist to DB, and subscribe to live ticks

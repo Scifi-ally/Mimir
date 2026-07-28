@@ -1034,7 +1034,7 @@ export async function ingestSignal(
   }
 
   if (signal.signal === "BUY") {
-    if (ltp > signal.entryPrice * 1.002) {
+    if (ltp > signal.entryPrice * 1.006) {
       logger.warn({ symbol: signal.symbol, ltp, origEntry: signal.entryPrice }, "Discarding BUY suggestion: live price has already passed planned entry point (Late Entry / Chased)");
       return "risk_reward";
     }
@@ -1047,7 +1047,7 @@ export async function ingestSignal(
     }
     signal.riskReward = Number(liveRR.toFixed(2));
   } else if (signal.signal === "SELL") {
-    if (ltp < signal.entryPrice * 0.998) {
+    if (ltp < signal.entryPrice * 0.994) {
       logger.warn({ symbol: signal.symbol, ltp, origEntry: signal.entryPrice }, "Discarding SELL suggestion: live price has already passed planned entry point (Late Entry / Chased)");
       return "risk_reward";
     }

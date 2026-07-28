@@ -19,6 +19,23 @@ import Decimal from "decimal.js";
 
 let engineActive = false;
 
+// Track symbols with active OPEN paper positions to eliminate DB query thrashing on ticks
+const activeOpenSymbols = new Set<string>();
+
+async function syncActiveOpenSymbols() {
+  try {
+    const openPositions = await db.select({ symbol: paperPositionsTable.symbol })
+      .from(paperPositionsTable)
+      .where(eq(paperPositionsTable.status, "OPEN"));
+    activeOpenSymbols.clear();
+    for (const p of openPositions) {
+      if (p.symbol) activeOpenSymbols.add(p.symbol);
+    }
+  } catch (err) {
+    logger.warn({ err }, "PaperEngine: Failed to sync active open symbols");
+  }
+}
+
 // MEDIUM FIX (Issue #22): Track circuit limit detection per symbol
 const circuitLimitTracker = new Map<string, {
   consecutiveZeroVolumeTicks: number;
@@ -48,6 +65,8 @@ async function getAccount() {
 export async function initPaperEngine() {
   if (engineActive) return;
   engineActive = true;
+
+  await syncActiveOpenSymbols();
 
   const config = getConfig();
   // The engine runs in BOTH modes. PAPER: simulated fills only. LIVE: the same
@@ -245,18 +264,18 @@ export async function initPaperEngine() {
       // Use the current LTP as the true execution price, falling back to theoretical entry if tick is missing
       const trueBasePrice = currentLtp !== null && currentLtp > 0 ? new Decimal(currentLtp) : originalEntryPrice;
 
-      // Point-in-time missed fill guard: if trueBasePrice moved > 0.5% away from original theoretical entry in the wrong direction
+      // Point-in-time missed fill guard: if trueBasePrice moved > 1.0% away from original theoretical entry in the wrong direction
       const priceSlipPct = isBuy 
           ? trueBasePrice.minus(originalEntryPrice).div(originalEntryPrice).mul(100) 
           : originalEntryPrice.minus(trueBasePrice).div(originalEntryPrice).mul(100);
           
-      if (priceSlipPct.gt(0.5)) {
+      if (priceSlipPct.gt(1.0)) {
           logger.warn({ 
             symbol: suggestion.symbol, 
             priceSlipPct: priceSlipPct.toNumber(), 
             originalEntry: originalEntryPrice.toNumber(), 
             currentLtp: trueBasePrice.toNumber() 
-          }, "PaperEngine: Aborted entry due to point-in-time missed fill guard (price moved > 0.5% away)");
+          }, "PaperEngine: Aborted entry due to point-in-time missed fill guard (price moved > 1.0% away)");
           return;
       }
 
@@ -373,6 +392,7 @@ export async function initPaperEngine() {
           .where(eq(paperAccountsTable.id, account.id));
       });
 
+      activeOpenSymbols.add(suggestion.symbol);
       logger.info({ symbol: suggestion.symbol, quantity, requiredMargin }, "PaperEngine: Entered Position");
 
       broadcast(createServerEvent.positionUpdate({
@@ -426,6 +446,7 @@ export async function initPaperEngine() {
 
   intelligenceBus.subscribe("marketTick", async (tick: MarketTickEvent) => {
     const symbol = tick.symbol;
+    if (!activeOpenSymbols.has(symbol)) return;
     const lock = processingLocks.get(symbol) || Promise.resolve();
     
     const nextLock = lock.then(async () => {
@@ -439,7 +460,10 @@ export async function initPaperEngine() {
             eq(paperPositionsTable.symbol, symbol)
           ));
 
-        if (positionsForSymbol.length === 0) return;
+        if (positionsForSymbol.length === 0) {
+          activeOpenSymbols.delete(symbol);
+          return;
+        }
 
       // We need the suggestion details to know the target and stopLoss
       // For simplicity, we can fetch them or assume position_tracker updates them
