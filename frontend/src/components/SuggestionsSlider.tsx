@@ -296,12 +296,12 @@ function SuggestionCard({ s, onSelectSymbol, onClose }: {
               {s.direction}
             </span>
             <span className={cn(
-              "text-[10px] font-mono font-semibold px-2 py-0.5 rounded uppercase tracking-wider border",
-              s.status === 'OPEN' || s.status === 'ACTIVE' ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30" : 
-              s.status === 'PENDING' ? "bg-amber-500/20 text-amber-400 border-amber-500/30" :
-              isWin ? "bg-bull/20 text-bull border-bull/30" : 
-              isLoss ? "bg-bear/20 text-bear border-bear/30" : 
-              "bg-muted-foreground/20 text-foreground/80 border-foreground/10"
+              "text-[10px] font-mono font-semibold uppercase tracking-wider",
+              s.status === 'OPEN' || s.status === 'ACTIVE' ? "text-[#1d9bf0]" : 
+              s.status === 'PENDING' ? "text-amber-400" :
+              isWin ? "text-bull" : 
+              isLoss ? "text-bear" : 
+              "text-muted-foreground"
             )}>
               {s.status.replace(/_/g, ' ')}
             </span>

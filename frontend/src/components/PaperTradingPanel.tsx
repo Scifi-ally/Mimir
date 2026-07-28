@@ -655,7 +655,7 @@ function PositionRow({ pos }: { pos: PaperPosition }) {
           )}>
             {pos.direction}
           </span>
-          <span className="text-[10px] font-mono font-semibold tracking-[0.08em] uppercase px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+          <span className="text-[10px] font-mono font-semibold tracking-[0.08em] uppercase text-[#1d9bf0]">
             OPEN
           </span>
         </div>
