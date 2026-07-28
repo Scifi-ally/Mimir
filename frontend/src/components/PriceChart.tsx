@@ -13,11 +13,10 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { cn, fmtNum, fmtPct } from "@/lib/format";
 import { Card, CardHeader, CardContent } from "@/components/mimir/card";
-import { Skeleton } from "@/components/atoms/Skeleton";
 import { api } from "@/lib/api";
 import { marketDataStore } from "@/providers/MarketDataProvider";
 import type { Candle, SymbolForecast, Suggestion } from "@/types/api";
-import { FADE_FAST, SPRING_SNAPPY } from "@/lib/motion";
+import { SPRING_SNAPPY } from "@/lib/motion";
 
 const TIMEFRAMES = [
   { label: "1m", days: 5, interval: "1minute" }, // 5 days to ensure we hit a trading session even on long weekends
@@ -1111,29 +1110,7 @@ export const PriceChart = memo(function PriceChart({ symbol, chartMode, onChartM
           </motion.div>
         )}
         
-        {loading && (
-          <motion.div
-            className="absolute inset-0 pointer-events-none bg-background/40 backdrop-blur-sm flex flex-col justify-end overflow-hidden"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={FADE_FAST}
-          >
-            {/* Candlestick-shaped skeleton: staggered bars along a fake price
-                path so the placeholder reads "chart", not "wait". */}
-            <div className="flex items-end gap-[6px] px-6 pb-14 h-[70%] w-full">
-              {[38, 52, 44, 60, 55, 70, 62, 78, 66, 58, 72, 84, 76, 64, 70, 88, 80, 68, 74, 60, 66, 78, 72, 86].map((h, i) => (
-                <Skeleton key={i} className="flex-1 min-w-0 rounded-[2px]" style={{ height: `${h}%` }} />
-              ))}
-            </div>
-            {/* Time axis */}
-            <div className="flex justify-between px-6 pb-4">
-              {[0, 1, 2, 3, 4, 5].map((i) => (
-                <Skeleton key={i} className="h-2.5 w-10" />
-              ))}
-            </div>
-          </motion.div>
-        )}
+        {loading && <AnimatedChartLoader symbol={symbol} />}
 
         {!loading && candles.length === 0 && (
           <div className="absolute inset-0 flex flex-col items-center justify-center z-10 p-6 text-center gap-3 bg-background/80 backdrop-blur-md">
@@ -1265,6 +1242,96 @@ function buildForecastProjection(candles: Candle[], forecast: SymbolForecast | n
     upper90: [anchor, ...upper90],
     lower10: [anchor, ...lower10]
   };
+}
+
+function AnimatedChartLoader({ symbol }: { symbol: string }) {
+  return (
+    <motion.div
+      className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center overflow-hidden bg-background/50 backdrop-blur-xs z-20"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.15 }}
+    >
+      {/* Background Cyber Grid */}
+      <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.02)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.02)_1px,transparent_1px)] bg-[size:28px_28px] opacity-60" />
+
+      {/* Sweeping Glowing Laser Beam */}
+      <motion.div
+        className="absolute top-0 bottom-0 w-28 bg-gradient-to-r from-transparent via-[#00f2fe]/10 to-transparent border-r border-[#00f2fe]/30"
+        initial={{ left: "-15%" }}
+        animate={{ left: "115%" }}
+        transition={{ duration: 1.6, repeat: Infinity, ease: "linear" }}
+      />
+
+      {/* Animated Glowing Neon Line Path */}
+      <div className="w-full h-44 px-8 relative flex items-center justify-center opacity-90">
+        <svg className="w-full h-full overflow-visible" viewBox="0 0 600 200" preserveAspectRatio="none">
+          <defs>
+            <linearGradient id="neonGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stopColor="#00e676" stopOpacity="0.4" />
+              <stop offset="50%" stopColor="#00f2fe" stopOpacity="1" />
+              <stop offset="100%" stopColor="#c084fc" stopOpacity="0.5" />
+            </linearGradient>
+            <filter id="neonBlur" x="-20%" y="-20%" width="140%" height="140%">
+              <feGaussianBlur stdDeviation="5" result="blur" />
+              <feMerge>
+                <feMergeNode in="blur" />
+                <feMergeNode in="SourceGraphic" />
+              </feMerge>
+            </filter>
+          </defs>
+
+          {/* Glow backdrop path */}
+          <motion.path
+            d="M 0 130 Q 80 30 160 110 T 320 60 T 480 120 T 600 40"
+            fill="none"
+            stroke="url(#neonGrad)"
+            strokeWidth="3.5"
+            filter="url(#neonBlur)"
+            initial={{ pathLength: 0.1, opacity: 0.4 }}
+            animate={{ pathLength: 1, opacity: 0.9 }}
+            transition={{ duration: 1.4, repeat: Infinity, repeatType: "reverse", ease: "easeInOut" }}
+          />
+
+          {/* Foreground sharp line */}
+          <motion.path
+            d="M 0 130 Q 80 30 160 110 T 320 60 T 480 120 T 600 40"
+            fill="none"
+            stroke="#00f2fe"
+            strokeWidth="2"
+            initial={{ pathLength: 0 }}
+            animate={{ pathLength: 1 }}
+            transition={{ duration: 1.2, repeat: Infinity, ease: "easeInOut" }}
+          />
+        </svg>
+
+        {/* Traveling Pulsing Laser Orb */}
+        <motion.div
+          className="absolute w-3.5 h-3.5 rounded-full bg-[#00f2fe] shadow-[0_0_15px_#00f2fe,0_0_30px_#00f2fe]"
+          animate={{
+            x: ["-35vw", "35vw"],
+            y: [-15, 15, -25, 25, -10],
+          }}
+          transition={{
+            x: { duration: 1.8, repeat: Infinity, ease: "easeInOut" },
+            y: { duration: 1.8, repeat: Infinity, ease: "easeInOut" },
+          }}
+        />
+      </div>
+
+      {/* Futuristic HUD Loading Badge */}
+      <div className="mt-3 flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-background/80 border border-[#00f2fe]/20 backdrop-blur-md shadow-[0_0_20px_rgba(0,242,254,0.12)]">
+        <span className="relative flex h-2 w-2">
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#00f2fe] opacity-75" />
+          <span className="relative inline-flex rounded-full h-2 w-2 bg-[#00f2fe]" />
+        </span>
+        <span className="text-[10px] font-mono font-semibold uppercase tracking-[0.2em] text-foreground/90">
+          LOADING <span className="text-[#00f2fe]">{symbol}</span>
+        </span>
+      </div>
+    </motion.div>
+  );
 }
 
 
