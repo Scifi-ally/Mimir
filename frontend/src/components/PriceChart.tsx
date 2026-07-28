@@ -82,7 +82,6 @@ export const PriceChart = memo(function PriceChart({ symbol, chartMode, onChartM
   const [showEma, setShowEma] = useState(true);
   const [showVwap, setShowVwap] = useState(true);
   const legendRef = useRef<HTMLDivElement>(null);
-  const animFrameRef = useRef<number | null>(null);
   const chartId = useId();
 
   const activeTf = chartMode === "forecast" ? PROJECTION_LOOKBACK : timeframe;
@@ -578,91 +577,50 @@ export const PriceChart = memo(function PriceChart({ symbol, chartMode, onChartM
       color: c.close >= c.open ? "rgba(0, 230, 118, 0.3)" : "rgba(255, 23, 68, 0.3)",
     }));
 
-    // Set candle data with smooth left-to-right bar-by-bar progressive animation
+    // Set candle data instantly without any animation delay
     const loadedChartKey = `${symbol}-${activeTf.label}-${chartMode}`;
 
-    if (animFrameRef.current) {
-      cancelAnimationFrame(animFrameRef.current);
-      animFrameRef.current = null;
+    candleRef.current.setData(formatted);
+
+    if (showEma && chartMode === "actual" && emaRef.current) {
+      emaRef.current.setData(calcEma(closes, 20));
+    }
+
+    if (showVwap && chartMode === "actual" && uniqueLiveCandles.length > 0 && vwapRef.current) {
+      const vwapInput = liveBarRef.current && (liveBarRef.current.time as number) > lastTime
+        ? [...uniqueLiveCandles, {
+            ts: new Date((liveBarRef.current.time as number) * 1000).toISOString(),
+            open: liveBarRef.current.open,
+            high: liveBarRef.current.high,
+            low: liveBarRef.current.low,
+            close: liveBarRef.current.close,
+            volume: liveBarRef.current.volume,
+            vwapTurnover: liveBarRef.current.vwapTurnover
+          }]
+        : uniqueLiveCandles;
+      vwapRef.current.setData(calcVwap(vwapInput));
+    }
+
+    if (volumeRef.current) {
+      volumeRef.current.setData(volumes);
     }
 
     const containerReady = (containerRef.current?.clientHeight ?? 0) > 20;
-    const isNewChart = lastFitKey.current !== loadedChartKey && loadedChartKey === currentChartKey && formatted.length > 0 && containerReady;
-
-    if (isNewChart) {
-      const totalBars = formatted.length;
-      const step = Math.max(4, Math.ceil(totalBars / 14));
-      let count = Math.min(step, totalBars);
-
-      const renderFrame = () => {
-        if (!candleRef.current) return;
-        const slice = formatted.slice(0, count);
-        candleRef.current.setData(slice);
-
-        if (showEma && chartMode === "actual" && emaRef.current) {
-          emaRef.current.setData(calcEma(closes.slice(0, count), 20));
-        }
-
-        if (volumeRef.current) {
-          volumeRef.current.setData(volumes.slice(0, count));
-        }
-
-        const timeScale = chartRef.current?.timeScale();
-        if (timeScale) {
+    if (lastFitKey.current !== loadedChartKey && loadedChartKey === currentChartKey && formatted.length > 0 && containerReady) {
+      const timeScale = chartRef.current?.timeScale();
+      if (timeScale) {
+        const totalBars = formatted.length;
+        if (activeTf.label === "1D") {
+          const visibleBars = Math.min(totalBars, 150);
           timeScale.setVisibleLogicalRange({
-            from: 0,
-            to: count + 2,
+            from: Math.max(0, totalBars - visibleBars),
+            to: totalBars + 2,
           });
-        }
-
-        if (count < totalBars) {
-          count = Math.min(count + step, totalBars);
-          animFrameRef.current = requestAnimationFrame(renderFrame);
         } else {
-          lastFitKey.current = currentChartKey;
-          if (timeScale) {
-            if (activeTf.label === "1D") {
-              const visibleBars = Math.min(totalBars, 150);
-              timeScale.setVisibleLogicalRange({
-                from: Math.max(0, totalBars - visibleBars),
-                to: totalBars + 2,
-              });
-            } else {
-              timeScale.fitContent();
-            }
-          }
-          if (showVwap && chartMode === "actual" && uniqueLiveCandles.length > 0 && vwapRef.current) {
-            vwapRef.current.setData(calcVwap(uniqueLiveCandles));
-          }
+          timeScale.fitContent();
         }
-      };
-
-      animFrameRef.current = requestAnimationFrame(renderFrame);
-    } else {
-      candleRef.current.setData(formatted);
-
-      if (showEma && chartMode === "actual" && emaRef.current) {
-        emaRef.current.setData(calcEma(closes, 20));
       }
-
-      if (showVwap && chartMode === "actual" && uniqueLiveCandles.length > 0 && vwapRef.current) {
-        const vwapInput = liveBarRef.current && (liveBarRef.current.time as number) > lastTime
-          ? [...uniqueLiveCandles, {
-              ts: new Date((liveBarRef.current.time as number) * 1000).toISOString(),
-              open: liveBarRef.current.open,
-              high: liveBarRef.current.high,
-              low: liveBarRef.current.low,
-              close: liveBarRef.current.close,
-              volume: liveBarRef.current.volume,
-              vwapTurnover: liveBarRef.current.vwapTurnover
-            }]
-          : uniqueLiveCandles;
-        vwapRef.current.setData(calcVwap(vwapInput));
-      }
-
-      if (volumeRef.current) {
-        volumeRef.current.setData(volumes);
-      }
+      lastFitKey.current = currentChartKey;
     }
   }, [candles, chartMode, showEma, showVwap, symbol, activeTf.label, currentChartKey]);
 
