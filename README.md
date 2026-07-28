@@ -25,7 +25,7 @@
 ## Dashboard Preview
 
 <div align="center">
-  <img src="smooth.gif" alt="Mimir Real-Time Trading Dashboard" width="100%" style="border-radius: 8px; box-shadow: 0 8px 30px rgba(0,0,0,0.5);" />
+  <img src="docs/smooth.gif" alt="Mimir Real-Time Trading Dashboard" width="100%" style="border-radius: 8px; box-shadow: 0 8px 30px rgba(0,0,0,0.5);" />
 </div>
 
 ---
