@@ -3,28 +3,35 @@ import { dailyReportsTable } from "../../db/src/schema/reports";
 import { suggestionsTable } from "../../db/src/schema/suggestions";
 import { paperPositionsTable } from "../../db/src/schema/paper_trading";
 import { marketMetricsTable } from "../../db/src/schema/market_metrics";
-import { gte, eq, desc } from "drizzle-orm";
+import { gte, lte, and, eq, desc } from "drizzle-orm";
 import { todayStartUTC, getISTDateStr } from "../lib/ist-time";
 import { logger } from "../lib/logger";
 import { getAlertHistory } from "./alerts";
 import { getMarketState } from "../market_data/market_state";
 
-export async function generateDailyReport() {
+export async function generateDailyReport(targetDateStr?: string) {
   try {
-    const today = todayStartUTC();
-    const dateStr = getISTDateStr();
+    const dateStr = targetDateStr ? targetDateStr.trim() : getISTDateStr();
+    
+    // Determine start and end of date range in UTC
+    const dateObj = new Date(dateStr + "T00:00:00.000Z");
+    const dayStart = isNaN(dateObj.getTime()) ? todayStartUTC() : new Date(dateObj.setUTCHours(0, 0, 0, 0));
+    const dayEnd = isNaN(dateObj.getTime()) ? new Date() : new Date(dateObj.setUTCHours(23, 59, 59, 999));
 
     // Fetch top suggestions
     const suggestions = await db.select().from(suggestionsTable)
-      .where(gte(suggestionsTable.generatedAt, today));
+      .where(and(gte(suggestionsTable.generatedAt, dayStart), lte(suggestionsTable.generatedAt, dayEnd)));
 
     // Fetch paper trades
     const trades = await db.select().from(paperPositionsTable)
-      .where(gte(paperPositionsTable.createdAt, today));
+      .where(and(gte(paperPositionsTable.createdAt, dayStart), lte(paperPositionsTable.createdAt, dayEnd)));
 
     // Fetch alerts
     const alerts = await getAlertHistory();
-    const todaysAlerts = alerts.filter(a => new Date(a.timestamp) >= today);
+    const todaysAlerts = alerts.filter(a => {
+      const t = new Date(a.timestamp);
+      return t >= dayStart && t <= dayEnd;
+    });
 
     let mkt = getMarketState();
     

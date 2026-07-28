@@ -228,19 +228,13 @@ export default function Dashboard() {
   // Null fields render "N/A" — never show fabricated macro numbers as real
   const indianContext = indianContextQuery.data ?? { fiiDii: null, niftyOptionChain: null };
 
-  const isIndex = ["NIFTY 50", "BANKNIFTY", "FINNIFTY", "INDIA VIX", "SENSEX"].includes(selectedSymbol);
-  const isSelectedValid = isIndex || watchlistItems.some(i => i.symbol === selectedSymbol) || activeSymbols.has(selectedSymbol);
-  const activeSymbol = isSelectedValid
-    ? selectedSymbol
-    : (watchlistItems[0]?.symbol || "NIFTY 50");
+  const activeSymbol = selectedSymbol || watchlistItems[0]?.symbol || "NIFTY 50";
 
   useEffect(() => {
-    if ((!selectedSymbol || !isSelectedValid) && watchlistItems.length > 0) {
+    if (!selectedSymbol && watchlistItems.length > 0) {
       setSelectedSymbol(watchlistItems[0]!.symbol);
-    } else if (!isSelectedValid && watchlistItems.length === 0 && selectedSymbol !== "NIFTY 50") {
-      setSelectedSymbol("NIFTY 50");
     }
-  }, [watchlistItems, selectedSymbol, isSelectedValid, setSelectedSymbol]);
+  }, [watchlistItems, selectedSymbol, setSelectedSymbol]);
 
   useEffect(() => {
     const customSymbols = (customWatchlistQuery.data?.data ?? []).map((i: { symbol: string }) => i.symbol);

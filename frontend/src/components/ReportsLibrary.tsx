@@ -247,7 +247,19 @@ export function ReportsLibrary({ isOpen, onClose }: ReportsLibraryProps) {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [isCalendarOpen]);
 
-  const activeReport = selectedDate ? reportsByDate.get(selectedDate) : reports[0];
+  // Query single date report on-demand if missing from local map
+  const singleDateReportQuery = useQuery({
+    queryKey: ["report-by-date", selectedDate],
+    queryFn: async () => {
+      const res = await api.reportByDate(selectedDate);
+      queryClient.invalidateQueries({ queryKey: ["reports"] });
+      return res;
+    },
+    enabled: Boolean(isOpen && selectedDate && !reportsByDate.has(selectedDate)),
+    retry: false,
+  });
+
+  const activeReport = (selectedDate ? reportsByDate.get(selectedDate) : null) ?? singleDateReportQuery.data ?? reports[0];
 
   return (
     <AnimatePresence>

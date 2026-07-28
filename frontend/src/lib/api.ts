@@ -256,7 +256,8 @@ export const api = {
     ),
   alertsHistory: () => apiFetch<import("@/types/api").AlertRecord[]>("/api/alerts/history"),
   reports: () => apiFetch<Array<{ id: string; date: string; summary: string; content: string; createdAt: string }>>("/api/reports"),
-  generateReport: () => apiFetch<{ success: boolean; message: string }>("/api/reports/generate", { method: "POST" }),
+  reportByDate: (date: string) => apiFetch<{ id: string; date: string; summary: string; content: string; createdAt: string }>(`/api/reports/by-date/${encodeURIComponent(date)}`),
+  generateReport: (date?: string) => apiFetch<{ success: boolean; message: string }>("/api/reports/generate", { method: "POST", body: JSON.stringify({ date }) }),
   getConfig: () => apiFetch<import("@/types/api").SystemConfig>("/api/config"),
   updateConfig: (body: import("@/types/api").UpdateSystemConfig) =>
     apiFetch<import("@/types/api").SystemConfig>("/api/config", {
