@@ -1240,89 +1240,59 @@ function buildForecastProjection(candles: Candle[], forecast: SymbolForecast | n
 function AnimatedChartLoader({ symbol }: { symbol: string }) {
   return (
     <motion.div
-      className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center overflow-hidden bg-background/50 backdrop-blur-xs z-20"
+      className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center overflow-hidden bg-background/40 backdrop-blur-[2px] z-20"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      transition={{ duration: 0.15 }}
+      transition={{ duration: 0.08 }}
     >
-      {/* Background Cyber Grid */}
-      <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.02)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.02)_1px,transparent_1px)] bg-[size:28px_28px] opacity-60" />
+      {/* Crisp Minimal Cyber Grid */}
+      <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.015)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.015)_1px,transparent_1px)] bg-[size:24px_24px]" />
 
-      {/* Sweeping Glowing Laser Beam */}
+      {/* Fast & Smooth Horizontal Scan Pulse Line */}
       <motion.div
-        className="absolute top-0 bottom-0 w-28 bg-gradient-to-r from-transparent via-[#00f2fe]/10 to-transparent border-r border-[#00f2fe]/30"
-        initial={{ left: "-15%" }}
-        animate={{ left: "115%" }}
-        transition={{ duration: 1.6, repeat: Infinity, ease: "linear" }}
+        className="absolute w-full h-[1.5px] bg-gradient-to-r from-transparent via-[#00f2fe] to-transparent shadow-[0_0_12px_#00f2fe]"
+        initial={{ top: "10%", opacity: 0.2 }}
+        animate={{ top: ["10%", "90%", "10%"], opacity: [0.2, 0.8, 0.2] }}
+        transition={{ duration: 0.8, repeat: Infinity, ease: "easeInOut" }}
       />
 
-      {/* Animated Glowing Neon Line Path */}
-      <div className="w-full h-44 px-8 relative flex items-center justify-center opacity-90">
-        <svg className="w-full h-full overflow-visible" viewBox="0 0 600 200" preserveAspectRatio="none">
-          <defs>
-            <linearGradient id="neonGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" stopColor="#00e676" stopOpacity="0.4" />
-              <stop offset="50%" stopColor="#00f2fe" stopOpacity="1" />
-              <stop offset="100%" stopColor="#c084fc" stopOpacity="0.5" />
-            </linearGradient>
-            <filter id="neonBlur" x="-20%" y="-20%" width="140%" height="140%">
-              <feGaussianBlur stdDeviation="5" result="blur" />
-              <feMerge>
-                <feMergeNode in="blur" />
-                <feMergeNode in="SourceGraphic" />
-              </feMerge>
-            </filter>
-          </defs>
-
-          {/* Glow backdrop path */}
-          <motion.path
-            d="M 0 130 Q 80 30 160 110 T 320 60 T 480 120 T 600 40"
-            fill="none"
-            stroke="url(#neonGrad)"
-            strokeWidth="3.5"
-            filter="url(#neonBlur)"
-            initial={{ pathLength: 0.1, opacity: 0.4 }}
-            animate={{ pathLength: 1, opacity: 0.9 }}
-            transition={{ duration: 1.4, repeat: Infinity, repeatType: "reverse", ease: "easeInOut" }}
+      {/* Smooth High-Frequency Equalizer Pulse Visualizer */}
+      <div className="flex items-center gap-1.5 h-10 my-2">
+        {[0, 1, 2, 3, 4, 5, 6].map((i) => (
+          <motion.div
+            key={i}
+            className="w-1.5 rounded-full bg-gradient-to-t from-[#00e676] via-[#00f2fe] to-[#c084fc] shadow-[0_0_10px_#00f2fe]"
+            animate={{
+              height: ["20%", "90%", "30%"],
+              opacity: [0.4, 1, 0.5],
+            }}
+            transition={{
+              duration: 0.45,
+              repeat: Infinity,
+              repeatType: "reverse",
+              ease: "easeInOut",
+              delay: i * 0.06,
+            }}
           />
-
-          {/* Foreground sharp line */}
-          <motion.path
-            d="M 0 130 Q 80 30 160 110 T 320 60 T 480 120 T 600 40"
-            fill="none"
-            stroke="#00f2fe"
-            strokeWidth="2"
-            initial={{ pathLength: 0 }}
-            animate={{ pathLength: 1 }}
-            transition={{ duration: 1.2, repeat: Infinity, ease: "easeInOut" }}
-          />
-        </svg>
-
-        {/* Traveling Pulsing Laser Orb */}
-        <motion.div
-          className="absolute w-3.5 h-3.5 rounded-full bg-[#00f2fe] shadow-[0_0_15px_#00f2fe,0_0_30px_#00f2fe]"
-          animate={{
-            x: ["-35vw", "35vw"],
-            y: [-15, 15, -25, 25, -10],
-          }}
-          transition={{
-            x: { duration: 1.8, repeat: Infinity, ease: "easeInOut" },
-            y: { duration: 1.8, repeat: Infinity, ease: "easeInOut" },
-          }}
-        />
+        ))}
       </div>
 
-      {/* Futuristic HUD Loading Badge */}
-      <div className="mt-3 flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-background/80 border border-[#00f2fe]/20 backdrop-blur-md shadow-[0_0_20px_rgba(0,242,254,0.12)]">
+      {/* Ultra-Snappy HUD Sync Badge */}
+      <motion.div 
+        initial={{ scale: 0.95, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        transition={{ duration: 0.08, ease: "easeOut" }}
+        className="flex items-center gap-2 px-3 py-1 rounded-full bg-background/90 border border-[#00f2fe]/30 backdrop-blur-md shadow-[0_0_15px_rgba(0,242,254,0.15)]"
+      >
         <span className="relative flex h-2 w-2">
-          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#00f2fe] opacity-75" />
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#00f2fe] opacity-80" />
           <span className="relative inline-flex rounded-full h-2 w-2 bg-[#00f2fe]" />
         </span>
-        <span className="text-[10px] font-mono font-semibold uppercase tracking-[0.2em] text-foreground/90">
-          LOADING <span className="text-[#00f2fe]">{symbol}</span>
+        <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-foreground">
+          SYNCING <span className="text-[#00f2fe]">{symbol}</span>
         </span>
-      </div>
+      </motion.div>
     </motion.div>
   );
 }
