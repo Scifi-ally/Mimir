@@ -290,17 +290,18 @@ function SuggestionCard({ s, onSelectSymbol, onClose }: {
         <div className="flex flex-col">
           <div className="flex items-center gap-2 mb-1">
             <span className={cn(
-              "text-[10px] font-normal px-1.5 py-0.5 rounded uppercase tracking-wider",
-              s.direction === 'BUY' ? "bg-bull/10 text-bull" : "bg-bear/10 text-bear"
+              "text-[10px] font-mono font-semibold px-2 py-0.5 rounded uppercase tracking-wider border",
+              s.direction === 'BUY' ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30" : "bg-rose-500/20 text-rose-400 border-rose-500/30"
             )}>
               {s.direction}
             </span>
             <span className={cn(
-              "text-[10px] font-normal px-1.5 py-0.5 rounded uppercase tracking-wider ml-1",
-              isActive ? "bg-primary/10 text-primary" : 
-              isWin ? "bg-bull/10 text-bull" : 
-              isLoss ? "bg-bear/10 text-bear" : 
-              "bg-muted-foreground/10 text-muted-foreground"
+              "text-[10px] font-mono font-semibold px-2 py-0.5 rounded uppercase tracking-wider border",
+              s.status === 'OPEN' || s.status === 'ACTIVE' ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30" : 
+              s.status === 'PENDING' ? "bg-amber-500/20 text-amber-400 border-amber-500/30" :
+              isWin ? "bg-bull/20 text-bull border-bull/30" : 
+              isLoss ? "bg-bear/20 text-bear border-bear/30" : 
+              "bg-muted-foreground/20 text-foreground/80 border-foreground/10"
             )}>
               {s.status.replace(/_/g, ' ')}
             </span>
