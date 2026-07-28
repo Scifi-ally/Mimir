@@ -214,21 +214,25 @@ export function ReportsLibrary({ isOpen, onClose }: ReportsLibraryProps) {
 
   const reports: DailyReport[] = reportsQuery.data ?? [];
 
-  // Index reports by date
+  // Index reports by date (normalized YYYY-MM-DD)
   const reportsByDate = useMemo(() => {
     const map = new Map<string, DailyReport>();
-    reports.forEach((r) => map.set(r.date, r));
+    reports.forEach((r) => {
+      const dateKey = (r.date || "").split("T")[0].trim();
+      if (dateKey) map.set(dateKey, r);
+    });
     return map;
   }, [reports]);
 
   const availableDates = useMemo(() => new Set(reportsByDate.keys()), [reportsByDate]);
 
-  // Set default date to latest report date or today
+  // Set default date to latest report date ONCE when reports load
   useEffect(() => {
-    if (reports.length > 0 && (!selectedDate || !reportsByDate.has(selectedDate))) {
-      setSelectedDate(reports[0].date);
+    if (reports.length > 0 && !selectedDate) {
+      const latestDate = (reports[0].date || "").split("T")[0].trim();
+      setSelectedDate(latestDate);
     }
-  }, [reports, reportsByDate, selectedDate]);
+  }, [reports, selectedDate]);
 
   // Close calendar popover on outside click
   useEffect(() => {
