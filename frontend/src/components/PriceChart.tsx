@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useMemo, useId, memo } from "react";
 import { motion } from "framer-motion";
+import { Loader2 } from "lucide-react";
 import {
   CandlestickSeries,
   ColorType,
@@ -1240,57 +1241,21 @@ function buildForecastProjection(candles: Candle[], forecast: SymbolForecast | n
 function AnimatedChartLoader({ symbol }: { symbol: string }) {
   return (
     <motion.div
-      className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center overflow-hidden bg-background/40 backdrop-blur-[2px] z-20"
+      className="absolute inset-0 pointer-events-none flex items-start justify-end p-3 z-20"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       transition={{ duration: 0.08 }}
     >
-      {/* Crisp Minimal Cyber Grid */}
-      <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.015)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.015)_1px,transparent_1px)] bg-[size:24px_24px]" />
-
-      {/* Fast & Smooth Horizontal Scan Pulse Line */}
       <motion.div
-        className="absolute w-full h-[1.5px] bg-gradient-to-r from-transparent via-[#00f2fe] to-transparent shadow-[0_0_12px_#00f2fe]"
-        initial={{ top: "10%", opacity: 0.2 }}
-        animate={{ top: ["10%", "90%", "10%"], opacity: [0.2, 0.8, 0.2] }}
-        transition={{ duration: 0.8, repeat: Infinity, ease: "easeInOut" }}
-      />
-
-      {/* Smooth High-Frequency Equalizer Pulse Visualizer */}
-      <div className="flex items-center gap-1.5 h-10 my-2">
-        {[0, 1, 2, 3, 4, 5, 6].map((i) => (
-          <motion.div
-            key={i}
-            className="w-1.5 rounded-full bg-gradient-to-t from-[#00e676] via-[#00f2fe] to-[#c084fc] shadow-[0_0_10px_#00f2fe]"
-            animate={{
-              height: ["20%", "90%", "30%"],
-              opacity: [0.4, 1, 0.5],
-            }}
-            transition={{
-              duration: 0.45,
-              repeat: Infinity,
-              repeatType: "reverse",
-              ease: "easeInOut",
-              delay: i * 0.06,
-            }}
-          />
-        ))}
-      </div>
-
-      {/* Ultra-Snappy HUD Sync Badge */}
-      <motion.div 
-        initial={{ scale: 0.95, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        transition={{ duration: 0.08, ease: "easeOut" }}
-        className="flex items-center gap-2 px-3 py-1 rounded-full bg-background/90 border border-[#00f2fe]/30 backdrop-blur-md shadow-[0_0_15px_rgba(0,242,254,0.15)]"
+        initial={{ opacity: 0, scale: 0.96 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ duration: 0.1, ease: "easeOut" }}
+        className="flex items-center gap-2 px-2.5 py-1 rounded-md bg-secondary/80 border border-border/15 backdrop-blur-md shadow-xs"
       >
-        <span className="relative flex h-2 w-2">
-          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#00f2fe] opacity-80" />
-          <span className="relative inline-flex rounded-full h-2 w-2 bg-[#00f2fe]" />
-        </span>
-        <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-foreground">
-          SYNCING <span className="text-[#00f2fe]">{symbol}</span>
+        <Loader2 className="w-3 h-3 animate-spin text-foreground/50 shrink-0" />
+        <span className="text-[10px] font-mono text-foreground/60 tracking-tight">
+          Updating <span className="text-foreground/90 font-medium">{symbol}</span>
         </span>
       </motion.div>
     </motion.div>
