@@ -710,7 +710,14 @@ export const PriceChart = memo(function PriceChart({ symbol, chartMode, onChartM
       return price >= rangeMin && price <= rangeMax;
     };
 
-    if (suggestion && (!suggestion.symbol || suggestion.symbol === symbol)) {
+    const isMatchingSymbol = (targetSym?: string) => {
+      if (!targetSym || !symbol) return false;
+      const normTarget = targetSym.replace(/^NSE:|^BSE:|\.NS$|\.BO$/i, '').toUpperCase();
+      const normCurrent = symbol.replace(/^NSE:|^BSE:|\.NS$|\.BO$/i, '').toUpperCase();
+      return normTarget === normCurrent;
+    };
+
+    if (suggestion && isMatchingSymbol(suggestion.symbol)) {
       if (isInRange(suggestion.entryPrice)) {
         entryLineRef.current = candleRef.current.createPriceLine({
           price: suggestion.entryPrice,
@@ -743,7 +750,7 @@ export const PriceChart = memo(function PriceChart({ symbol, chartMode, onChartM
       }
     }
 
-    if (position && (!position.symbol || position.symbol === symbol)) {
+    if (position && isMatchingSymbol(position.symbol)) {
       const posEntry = Number(position.avgEntryPrice || 0);
       const posSL = Number(position.trailingStopLoss || 0);
       const posTgt = position.direction === 'BUY' ? posEntry * 1.05 : posEntry * 0.95;
@@ -781,8 +788,8 @@ export const PriceChart = memo(function PriceChart({ symbol, chartMode, onChartM
     }
 
     const liveData = marketDataStore.get(symbol);
-    const basePrice = liveData?.ltp || (forecast && (!forecast.symbol || forecast.symbol === symbol) ? forecast.lastClose : null) || lastClose;
-    if (forecast && (!forecast.symbol || forecast.symbol === symbol) && forecast.forecastReturnPct !== undefined && chartMode === "forecast") {
+    const basePrice = liveData?.ltp || (forecast && isMatchingSymbol(forecast.symbol) ? forecast.lastClose : null) || lastClose;
+    if (forecast && isMatchingSymbol(forecast.symbol) && forecast.forecastReturnPct !== undefined && chartMode === "forecast") {
       const targetPrice = basePrice * (1 + (forecast.forecastReturnPct || 0) / 100);
       const fReturn = forecast.forecastReturnPct || 0;
 
