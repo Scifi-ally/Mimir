@@ -655,7 +655,7 @@ function PositionRow({ pos }: { pos: PaperPosition }) {
           )}>
             {pos.direction}
           </span>
-          <span className="text-[10px] font-mono font-semibold tracking-[0.08em] uppercase text-[#1d9bf0]">
+          <span className="text-[10px] font-mono font-semibold tracking-[0.08em] uppercase text-[#c084fc]">
             OPEN
           </span>
         </div>
@@ -721,8 +721,10 @@ function HistoryRow({ hist }: { hist: PaperPosition }) {
             {hist.direction}
           </span>
           <span className={cn(
-            "text-[10px] font-normal tracking-[0.08em] uppercase px-1.5 py-0.5 rounded",
-            isProfit ? "text-bull/70 bg-bull/5" : isLoss ? "text-bear/70 bg-bear/5" : "text-foreground/50 bg-foreground/5"
+            "text-[10px] font-mono font-semibold tracking-[0.08em] uppercase",
+            exitLabel.includes("TARGET") ? "text-[#00f2fe]" :
+            exitLabel.includes("STOP") ? "text-[#ff6b00]" :
+            "text-[#c084fc]"
           )}>
             {exitLabel}
           </span>

@@ -297,11 +297,11 @@ function SuggestionCard({ s, onSelectSymbol, onClose }: {
             </span>
             <span className={cn(
               "text-[10px] font-mono font-semibold uppercase tracking-wider",
-              s.status === 'OPEN' || s.status === 'ACTIVE' ? "text-[#1d9bf0]" : 
-              s.status === 'PENDING' ? "text-amber-400" :
-              isWin ? "text-bull" : 
-              isLoss ? "text-bear" : 
-              "text-muted-foreground"
+              s.status === 'OPEN' || s.status === 'ACTIVE' ? "text-[#c084fc]" : 
+              s.status === 'PENDING' ? "text-[#f59e0b]" :
+              s.status === 'STOP_HIT' ? "text-[#ff6b00]" :
+              s.status.includes('TARGET') ? "text-[#00f2fe]" :
+              "text-[#e2e8f0]"
             )}>
               {s.status.replace(/_/g, ' ')}
             </span>
