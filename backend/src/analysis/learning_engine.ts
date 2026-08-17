@@ -177,8 +177,9 @@ async function syncSignalOutcomes(closed: any[]): Promise<void> {
     const pnl = trade.pnlInr ? parseFloat(trade.pnlInr) : 0;
 
     let duration = 0;
-    if (trade.closedAt && trade.generatedAt) {
-      duration = Math.round((trade.closedAt.getTime() - trade.generatedAt.getTime()) / (1000 * 60));
+    const fillAt = trade.activatedAt ?? trade.generatedAt;
+    if (trade.closedAt && fillAt) {
+      duration = Math.max(0, Math.round((trade.closedAt.getTime() - fillAt.getTime()) / (1000 * 60)));
     }
 
     // Realized excursions in R-multiples (R = initial risk = |entry - stop|).
@@ -518,10 +519,12 @@ async function analyzeSymbolMetrics(closed: any[]): Promise<void> {
 
     let techEdge: number | null;
     if (techSignals.length >= 10) {
-      const profitable = techSignals.filter(t => t.status.includes("TARGET")).length;
+      const profitable = techSignals.filter(t => Number(t.pnlInr) > 0).length;
       techEdge = (profitable / techSignals.length) * 100;
     } else {
-      techEdge = 50.0; // Baseline for learning phase
+      // Insufficient evidence is not a 50% observation. Persist NULL so
+      // downstream ranking can distinguish unknown from measured performance.
+      techEdge = null;
     }
 
     // Regime Align Calculation
@@ -529,10 +532,11 @@ async function analyzeSymbolMetrics(closed: any[]): Promise<void> {
     let regimeAlign: number | null;
     const regimeTrades = trades.filter(t => t.marketRegime === currentRegime);
     if (regimeTrades.length >= 10) {
-      const profitable = regimeTrades.filter(t => t.status.includes("TARGET")).length;
+      const profitable = regimeTrades.filter(t => Number(t.pnlInr) > 0).length;
       regimeAlign = (profitable / regimeTrades.length) * 100;
     } else {
-      regimeAlign = 50.0; // Baseline for learning phase
+      // Keep the metric unavailable until there is enough same-regime evidence.
+      regimeAlign = null;
     }
 
     // Upsert into learning_metrics table

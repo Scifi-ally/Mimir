@@ -8,13 +8,14 @@
  * HIGH FIX (Issue #9): Added retry logic with exponential backoff and trading
  * calendar awareness to handle transient failures and market holidays properly.
  */
-import yahooFinance from "yahoo-finance2";
+import YahooFinance from "yahoo-finance2";
 import { updateMarketState } from "./market_state";
 import { recordVixSample } from "../analysis/market_internals";
 import { detectRegime } from "../analysis/regime_detector";
 import { logger } from "../lib/logger";
 import { getISTDateStr } from "../lib/ist-time";
 
+const yahooFinance = new YahooFinance({ suppressNotices: ["yahooSurvey"] });
 const NIFTY_KEY = "^NSEI";
 const VIX_KEY = "^INDIAVIX";
 

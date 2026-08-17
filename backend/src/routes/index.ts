@@ -13,6 +13,7 @@ import systemRouter from "./system";
 import paperTradingRouter from "./paper_trading";
 import tradingRouter from "./trading";
 import alertsRouter from "./alerts";
+import scrapeverseRouter from "./scrapeverse";
 
 const router: IRouter = Router();
 
@@ -28,6 +29,7 @@ router.use(systemRouter);
 router.use(paperTradingRouter);
 router.use(tradingRouter);
 router.use(alertsRouter);
+router.use(scrapeverseRouter);
 router.use("/reports", reportsRouter);
 router.use("/benchmark", benchmarkRouter);
 

@@ -883,8 +883,10 @@ router.get("/system/auth-callback", async (req, res) => {
 // --- Debug Endpoints ---
 if (process.env.NODE_ENV !== "production") {
   router.use("/system/debug", (req, res, next) => {
-    // Basic guard to prevent accidental access if exposed
-    if (req.headers.authorization !== `Bearer ${process.env.UPSTOXBOT_ADMIN_TOKEN}`) {
+    // Local paper-only development diagnostics do not require a token. Production
+    // never enters this block because debug routes are not registered there.
+    const authDisabled = process.env.DISABLE_REMOTE_API_AUTH === "true" || process.env.DISABLE_REMOTE_API_AUTH === "1";
+    if (!authDisabled && req.headers.authorization !== `Bearer ${process.env.UPSTOXBOT_ADMIN_TOKEN}`) {
       res.status(401).json({ error: "Unauthorized" });
       return;
     }

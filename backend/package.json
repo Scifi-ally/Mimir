@@ -14,6 +14,7 @@
     "db:push": "drizzle-kit push --config ./db/drizzle.config.ts",
     "db:studio": "drizzle-kit studio --config ./db/drizzle.config.ts",
     "typecheck": "tsc --noEmit",
+    "lint": "eslint src",
     "test": "vitest run",
     "test:preflight": "tsx ./scripts/preflight.ts",
     "test:cache": "vitest run tests/cache",
@@ -21,7 +22,8 @@
     "test:all": "npm run test:preflight && vitest run",
     "ranker:extract": "tsx ./scripts/extract_training_data.ts",
     "ranker:train": "npm run ranker:extract && python ./ai_service/train_ranker.py",
-    "ranker:train:only": "python ./ai_service/train_ranker.py"
+    "ranker:train:only": "python ./ai_service/train_ranker.py",
+    "scrapeverse:fii-dii": "tsx ./scripts/scrapeverse_fii_dii.ts"
   },
   "dependencies": {
     "axios": "^1.16.0",
@@ -61,7 +63,7 @@
     "@types/ws": "^8.18.1",
     "@vitest/coverage-v8": "^4.1.9",
     "drizzle-kit": "^0.31.10",
-    "esbuild": "^0.28.1",
+    "esbuild": "0.25.8",
     "esbuild-plugin-pino": "^2.3.3",
     "eslint": "^10.5.0",
     "eslint-plugin-unused-imports": "^4.4.1",

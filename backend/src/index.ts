@@ -11,6 +11,7 @@ import { logSecurityMode } from "./lib/security";
 import { startMarketIntelligence, marketIntelligence } from "./intelligence/orchestrator";
 import { initPaperEngine } from "./trading/paper_engine";
 import { startBrokerReconciliationLoop } from "./trading/reconciler";
+import { ensureScanRunTable } from "./workflow/scan_persistence";
 import { db, pool } from "../db/src";
 import { sql } from "drizzle-orm";
 import { redisClient } from "./lib/redis";
@@ -47,6 +48,13 @@ try {
   await db.execute(sql`SELECT activated_at FROM suggestions LIMIT 1`);
 } catch (schemaErr) {
   logger.fatal({ err: schemaErr }, "CRITICAL: Database schema out of sync with Drizzle ORM! Run 'npm run setup:db' to apply missing migrations before starting the server.");
+  process.exit(1);
+}
+
+try {
+  await ensureScanRunTable();
+} catch (scanSchemaErr) {
+  logger.fatal({ err: scanSchemaErr }, "CRITICAL: Failed to initialize scan-run persistence table");
   process.exit(1);
 }
 

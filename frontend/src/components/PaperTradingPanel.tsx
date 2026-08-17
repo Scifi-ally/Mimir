@@ -1,6 +1,6 @@
 import { useMemo, useEffect } from "react";
 import { api } from "@/lib/api";
-import { Wallet, History, RotateCcw, TrendingUp, TrendingDown, X } from "lucide-react";
+import { Wallet, RotateCcw, TrendingUp, TrendingDown, X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { Variants } from "framer-motion";
 import { cn, fmtNum, toFixed, toFixedPct } from "@/lib/format";
@@ -45,19 +45,6 @@ export function PaperTradingPanel({ isOpen, onClose, onSelectSymbol }: { isOpen?
     return () => window.removeEventListener("keydown", onKey);
   }, [isOpen, onClose]);
 
-  // Mode drives the whole panel: PAPER shows the simulated ledger,
-  // LIVE swaps in real broker positions/funds/orders.
-  const { data: modeData, isPending: modePending } = useQuery({
-    queryKey: ["trading-mode"],
-    queryFn: api.tradingMode,
-    enabled: isOpen,
-    refetchInterval: 15000,
-  });
-  const isLive = modeData?.mode === "LIVE";
-  // Until the mode resolves, don't assert either label — a LIVE-armed account
-  // must never briefly render as "Paper Trading".
-  const modeResolved = !modePending && !!modeData;
-
   // WS position_update invalidates ["paperTrading"] instantly; polling is only
   // a slow safety net now.
   const { data: accountData } = useQuery({
@@ -79,31 +66,6 @@ export function PaperTradingPanel({ isOpen, onClose, onSelectSymbol }: { isOpen?
     queryFn: api.paperTrading.history,
     enabled: isOpen,
     refetchInterval: 30000,
-  });
-
-  // LIVE-mode data (only fetched when armed)
-  const { data: brokerFunds, isPending: brokerFundsPending } = useQuery({
-    queryKey: ["live", "funds"],
-    queryFn: api.liveBrokerFunds,
-    enabled: !!isOpen && isLive,
-    refetchInterval: 10000,
-    retry: false,
-  });
-
-  const { data: brokerPositions } = useQuery({
-    queryKey: ["live", "positions"],
-    queryFn: api.liveBrokerPositions,
-    enabled: !!isOpen && isLive,
-    refetchInterval: 5000,
-    retry: false,
-  });
-
-  const { data: liveOrders } = useQuery({
-    queryKey: ["live", "orders"],
-    queryFn: () => api.liveOrders(50),
-    enabled: !!isOpen && isLive,
-    refetchInterval: 10000,
-    retry: false,
   });
 
   const account = accountData || null;
@@ -137,11 +99,6 @@ export function PaperTradingPanel({ isOpen, onClose, onSelectSymbol }: { isOpen?
   const totalReturn = startingBalance > 0 ? ((equity - startingBalance) / startingBalance) * 100 : 0;
   const isProfit = livePnl > 0;
   const isLoss = livePnl < 0;
-  const liveDayPnl = useMemo(
-    () => (brokerPositions ?? []).reduce((sum, p) => sum + (Number.isFinite(p.pnl) ? p.pnl : 0), 0),
-    [brokerPositions],
-  );
-
   // Compute stats from history
   const stats = useMemo(() => {
     const wins = history.filter(h => Number(h.realizedPnl) > 0);
@@ -188,38 +145,6 @@ export function PaperTradingPanel({ isOpen, onClose, onSelectSymbol }: { isOpen?
     return groups;
   }, [positions, history]);
 
-  const combinedLive = useMemo(() => {
-    if (!isLive) return [];
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const items: Array<{ type: "live-position" | "live-order"; item: any; date: Date }> = [
-      ...(brokerPositions?.filter(p => p.quantity !== 0) || []).map(p => ({ type: "live-position" as const, item: p, date: new Date() })),
-      ...(liveOrders || []).map(o => ({ type: "live-order" as const, item: o, date: new Date(o.placedAt) }))
-    ];
-    items.sort((a, b) => b.date.getTime() - a.date.getTime());
-
-    const groups: { label: string; items: typeof items }[] = [];
-    const todayStr = new Date().toDateString();
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    const yesterdayStr = yesterday.toDateString();
-
-    for (const x of items) {
-      const ds = x.date.toDateString();
-      let label: string;
-      if (ds === todayStr) label = "Today";
-      else if (ds === yesterdayStr) label = "Yesterday";
-      else label = x.date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-      
-      let lastGroup = groups[groups.length - 1];
-      if (!lastGroup || lastGroup.label !== label) {
-        lastGroup = { label, items: [] };
-        groups.push(lastGroup);
-      }
-      lastGroup.items.push(x);
-    }
-    return groups;
-  }, [isLive, brokerPositions, liveOrders]);
-
   return (
     <AnimatePresence>
       {isOpen && (
@@ -250,30 +175,24 @@ export function PaperTradingPanel({ isOpen, onClose, onSelectSymbol }: { isOpen?
               <div className="flex flex-col">
                 <h2 className="text-lg font-normal tracking-tight flex items-center gap-2 text-foreground">
                   <Wallet className="w-4 h-4 text-foreground/80" strokeWidth={2.5} />
-                  {!modeResolved ? "Trading" : isLive ? "Live Trading" : "Paper Trading"}
-                  {isLive && (
-                    <span className="flex items-center gap-1.5 ml-1 text-[10px] font-normal tracking-[0.08em] text-destructive uppercase">
-                      <span className="w-1.5 h-1.5 rounded-full bg-destructive animate-pulse" />
-                      Real Orders
-                    </span>
-                  )}
+                  Paper Trading
+                  <span className="flex items-center gap-1.5 ml-1 text-[10px] font-normal tracking-[0.08em] text-bull uppercase">
+                    <span className="w-1.5 h-1.5 rounded-full bg-bull" />
+                    Signal-only
+                  </span>
                 </h2>
                 <p className="text-foreground/40 text-[10px] mt-0.5 tracking-[0.08em] uppercase font-normal">
-                  {isLive
-                    ? `Broker Account · Available ${brokerFundsPending && !brokerFunds ? "—" : `₹${fmtNum(brokerFunds?.availableMargin ?? 0, 0)}`}`
-                    : `Simulated Portfolio · Starting ₹${fmtNum(startingBalance, 0)}`}
+                  {`Simulated Portfolio · Starting ₹${fmtNum(startingBalance, 0)} · Broker orders disabled`}
                 </p>
               </div>
               <div className="flex items-center gap-3">
-                {!isLive && (
-                  <button
-                    onClick={handleReset}
-                    className="apple-hover text-[10px] font-normal tracking-[0.08em] uppercase flex items-center gap-1.5 hover:bg-destructive/10 text-foreground/40 hover:text-destructive px-3 py-1.5 rounded-lg transition-all duration-300 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60"
-                  >
-                    <RotateCcw className="w-3 h-3" />
-                    Reset
-                  </button>
-                )}
+                <button
+                  onClick={handleReset}
+                  className="apple-hover text-[10px] font-normal tracking-[0.08em] uppercase flex items-center gap-1.5 hover:bg-destructive/10 text-foreground/40 hover:text-destructive px-3 py-1.5 rounded-lg transition-all duration-300 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  Reset
+                </button>
                 {onClose && (
                   <button
                     onClick={onClose}
@@ -314,47 +233,6 @@ export function PaperTradingPanel({ isOpen, onClose, onSelectSymbol }: { isOpen?
               </div>
             ) : (
               <>
-            {isLive ? (
-
-            /* LIVE Account Metrics — real broker numbers */
-            <motion.div variants={staggerContainer} initial="hidden" animate="show" className="px-6 sm:px-8 py-5 shrink-0">
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-6">
-                <motion.div variants={staggerItem} className="flex flex-col gap-1 min-w-0 overflow-hidden">
-                  <span className="text-[10px] font-normal text-foreground/50 tracking-[0.08em] uppercase truncate">Available Margin</span>
-                  <span className="text-xl sm:text-2xl font-mono tabular-nums font-normal tracking-tight text-foreground truncate">
-                    {brokerFundsPending && !brokerFunds ? "—" : `₹${fmtNum(brokerFunds?.availableMargin ?? 0, 2)}`}
-                  </span>
-                </motion.div>
-                <motion.div variants={staggerItem} className="flex flex-col gap-1 min-w-0 overflow-hidden">
-                  <span className="text-[10px] font-normal text-foreground/50 tracking-[0.08em] uppercase truncate">Used Margin</span>
-                  <span className="text-xl sm:text-2xl font-mono tabular-nums font-normal tracking-tight text-foreground/60 truncate">
-                    ₹{fmtNum(brokerFunds?.usedMargin ?? 0, 2)}
-                  </span>
-                </motion.div>
-                <motion.div variants={staggerItem} className="flex flex-col gap-1 min-w-0 overflow-hidden">
-                  <span className="text-[10px] font-normal text-foreground/50 tracking-[0.08em] uppercase truncate">Day PnL</span>
-                  <span className={cn(
-                    "text-xl sm:text-2xl font-mono tabular-nums font-normal tracking-tight flex items-center gap-1.5 truncate",
-                    liveDayPnl > 0 ? "text-bull" : liveDayPnl < 0 ? "text-bear" : "text-foreground/40"
-                  )}>
-                    {liveDayPnl > 0 ? <TrendingUp className="w-4 h-4 shrink-0" /> : liveDayPnl < 0 ? <TrendingDown className="w-4 h-4 shrink-0" /> : null}
-                    {/* A loss must read as negative even in monochrome/screenshot/color-blind
-                        contexts — never strip the minus sign. Positive gets '+', negative gets
-                        '-₹', zero stays bare. */}
-                    <span className="truncate">{liveDayPnl > 0 ? '+' : liveDayPnl < 0 ? '-' : ''}₹{fmtNum(Math.abs(liveDayPnl), 2)}</span>
-                  </span>
-                </motion.div>
-                <motion.div variants={staggerItem} className="flex flex-col gap-1 min-w-0 overflow-hidden">
-                  <span className="text-[10px] font-normal text-foreground/50 tracking-[0.08em] uppercase truncate">Open Positions</span>
-                  <span className="text-xl sm:text-2xl font-mono tabular-nums font-normal tracking-tight text-foreground/80 truncate">
-                    {brokerPositions?.filter(p => p.quantity !== 0).length ?? 0}
-                  </span>
-                </motion.div>
-              </div>
-            </motion.div>
-
-            ) : (
-
             /* Account Metrics — Hero Row */
             <motion.div variants={staggerContainer} initial="hidden" animate="show" className="px-6 sm:px-8 py-5 shrink-0">
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 sm:gap-6">
@@ -434,8 +312,6 @@ export function PaperTradingPanel({ isOpen, onClose, onSelectSymbol }: { isOpen?
               </div>
             </motion.div>
 
-            )}
-
             {/* Unified Feed */}
             <div className="px-8 pb-8 pt-3 flex-1 overflow-y-auto">
               <AnimatePresence mode="wait">
@@ -447,30 +323,7 @@ export function PaperTradingPanel({ isOpen, onClose, onSelectSymbol }: { isOpen?
                   exit="hidden"
                   className="flex flex-col gap-6 pt-2"
                 >
-                  {isLive ? (
-                    combinedLive.length === 0 ? (
-                      <motion.div variants={staggerItem} className="flex flex-col items-center justify-center py-16 text-foreground/30">
-                        <History className="w-10 h-10 mb-3 opacity-30" strokeWidth={1} />
-                        <p className="text-sm font-normal tracking-wide">No live activity yet</p>
-                      </motion.div>
-                    ) : (
-                      combinedLive.map(group => (
-                        <div key={group.label} className="flex flex-col gap-3">
-                          <div className="flex items-center gap-3 mb-1 mt-2">
-                            <div className="w-1 h-4 bg-primary/80 rounded-full" />
-                            <h3 className="font-mono font-normal text-sm text-foreground/80 flex items-center gap-2">
-                              {group.label}
-                            </h3>
-                          </div>
-                          {group.items.map((x, i) => (
-                            x.type === "live-position" ? <BrokerPositionRow key={`pos-${x.item.symbol}-${i}`} pos={x.item} />
-                            : <LiveOrderRow key={`ord-${x.item.id}`} order={x.item} />
-                          ))}
-                        </div>
-                      ))
-                    )
-                  ) : (
-                    <>
+                  <>
                       {history.length > 0 && (
                         <motion.div variants={staggerItem} className="flex flex-wrap gap-6 py-2 border-b border-border/10 mb-2 text-[11px] font-mono text-foreground/50">
                           <span>Realized PnL: <span className={cn("font-normal", stats.totalRealizedPnl >= 0 ? "text-bull" : "text-bear")}>{stats.totalRealizedPnl >= 0 ? '+' : ''}₹{fmtNum(Math.abs(stats.totalRealizedPnl), 2)}</span></span>
@@ -515,8 +368,7 @@ export function PaperTradingPanel({ isOpen, onClose, onSelectSymbol }: { isOpen?
                           </div>
                         ))
                       )}
-                    </>
-                  )}
+                  </>
                 </motion.div>
               </AnimatePresence>
             </div>
@@ -530,116 +382,6 @@ export function PaperTradingPanel({ isOpen, onClose, onSelectSymbol }: { isOpen?
 }
 
 /* ─── Sub-components ────────────────────────────────────────────── */
-
-function BrokerPositionRow({ pos }: { pos: { symbol: string; quantity: number; avgPrice: number; lastPrice: number; pnl: number; product: string } }) {
-  const isProfit = pos.pnl > 0;
-  const isLoss = pos.pnl < 0;
-  const isLong = pos.quantity > 0;
-  const value = Math.abs(pos.quantity) * pos.avgPrice;
-  const pnlPct = value > 0 ? (pos.pnl / value) * 100 : 0;
-
-  return (
-    <motion.div
-      variants={staggerItem}
-      className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-secondary/10 hover:bg-secondary/20 transition-all duration-300 rounded-xl group"
-    >
-      <div className="flex flex-col gap-2 min-w-0">
-        <div className="flex items-center gap-3">
-          <span className="font-normal text-base text-foreground tracking-tight">{pos.symbol}</span>
-          <span className={cn(
-            "text-[10px] font-normal tracking-[0.08em] uppercase px-1.5 py-0.5 rounded",
-            isLong ? "text-bull bg-bull/10" : "text-bear bg-bear/10"
-          )}>
-            {isLong ? "LONG" : "SHORT"}
-          </span>
-          <span className="text-[10px] font-normal tracking-[0.08em] uppercase text-destructive px-1.5 py-0.5 rounded bg-destructive/10">
-            LIVE
-          </span>
-          <span className="text-[10px] font-normal tracking-[0.08em] uppercase text-foreground/40">
-            {pos.product === "I" ? "MIS" : pos.product === "D" ? "CNC" : pos.product}
-          </span>
-        </div>
-        <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-[11px] font-mono font-normal text-foreground/50">
-          <span className="flex items-center gap-1.5">
-            QTY <span className="text-foreground/90">{Math.abs(pos.quantity)}</span>
-          </span>
-          <span className="flex items-center gap-1.5">
-            AVG <span className="text-foreground/90">₹{fmtNum(pos.avgPrice, 2)}</span>
-          </span>
-          <span className="flex items-center gap-1.5">
-            LTP <span className="text-foreground/90">₹{fmtNum(pos.lastPrice, 2)}</span>
-          </span>
-          <span className="flex items-center gap-1.5">
-            VALUE <span className="text-foreground/70">₹{fmtNum(value, 0)}</span>
-          </span>
-        </div>
-      </div>
-      <div className="flex flex-col items-end gap-0.5 shrink-0">
-        <span className={cn("text-sm font-mono font-normal tabular-nums", isProfit ? "text-bull" : isLoss ? "text-bear" : "text-foreground/40")}>
-          <AnimatedNumber value={pos.pnl} decimals={2} showSign={true} prefix="₹" duration={0.3} flashColor={true} />
-        </span>
-        <span className={cn("text-[10px] font-mono font-normal", isProfit ? "text-bull/70" : isLoss ? "text-bear/70" : "text-foreground/30")}>
-          <AnimatedNumber value={pnlPct} decimals={2} showSign={true} suffix="%" duration={0.3} flashColor={true} />
-        </span>
-      </div>
-    </motion.div>
-  );
-}
-
-function LiveOrderRow({ order }: { order: { id: string; symbol: string; direction: string; orderType: string; quantity: number; price: string | null; status: string; statusMessage: string | null; brokerOrderId: string | null; placedAt: string } }) {
-  const statusColor =
-    order.status === "PLACED" ? "text-bull bg-bull/10"
-    : order.status === "FAILED" || order.status === "REJECTED" ? "text-destructive bg-destructive/10"
-    : order.status === "CANCELLED" ? "text-foreground/40 bg-foreground/5"
-    : "text-amber-500 bg-amber-500/10";
-
-  return (
-    <motion.div
-      variants={staggerItem}
-      className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-secondary/10 hover:bg-secondary/20 transition-all duration-300 rounded-xl"
-    >
-      <div className="flex flex-col gap-2 min-w-0">
-        <div className="flex items-center gap-3">
-          <span className="font-normal text-base text-foreground tracking-tight">{order.symbol}</span>
-          <span className={cn(
-            "text-[10px] font-mono font-bold tracking-[0.08em] uppercase",
-            order.direction === "BUY" ? "text-[#00e676]" : "text-[#ff1744]"
-          )}>
-            {order.direction}
-          </span>
-          <span className={cn("text-[10px] font-normal tracking-[0.08em] uppercase px-1.5 py-0.5 rounded", statusColor)}>
-            {order.status}
-          </span>
-          <span className="text-[10px] font-normal tracking-[0.08em] uppercase text-foreground/40">
-            {order.orderType.replace(/_/g, " ")}
-          </span>
-        </div>
-        <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-[11px] font-mono font-normal text-foreground/50">
-          <span className="flex items-center gap-1.5">
-            QTY <span className="text-foreground/90">{order.quantity}</span>
-          </span>
-          {order.price && (
-            <span className="flex items-center gap-1.5">
-              REF <span className="text-foreground/90">₹{fmtNum(Number(order.price), 2)}</span>
-            </span>
-          )}
-          {order.brokerOrderId && (
-            <span className="text-foreground/30 truncate max-w-[160px]" title={order.brokerOrderId}>
-              #{order.brokerOrderId}
-            </span>
-          )}
-          <span className="text-foreground/30">
-            {new Date(order.placedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-          </span>
-        </div>
-        {order.statusMessage && (
-          <p className="text-[10px] text-destructive/80 font-mono">{order.statusMessage}</p>
-        )}
-      </div>
-    </motion.div>
-  );
-}
-
 
 function PositionRow({ pos, onSelectSymbol, onClose }: { pos: PaperPosition; onSelectSymbol?: (symbol: string) => void; onClose?: () => void }) {
   const pnl = Number(pos.unrealizedPnl);

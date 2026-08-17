@@ -2,20 +2,11 @@ import type { IntradayMonitoring } from "@/types/api";
 import { SessionStateSchema, MarketRegimeSchema, SuggestionSchema } from "./schemas";
 import { z } from "zod";
 
-export function hasAdminToken(): boolean {
-  return Boolean(localStorage.getItem("mimir_admin_token")?.trim());
-}
-
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = localStorage.getItem("mimir_admin_token");
   const headers = new Headers(init?.headers);
   if (!headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
-  if (token) {
-    headers.set("x-admin-token", token);
-  }
-
   const baseUrl = import.meta.env.VITE_API_URL || "";
   let res: Response;
   try {
@@ -57,9 +48,7 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
 
 async function apiFetchSoft<T>(path: string, fallback: T): Promise<T> {
   try {
-    const token = localStorage.getItem("mimir_admin_token");
     const headers = new Headers();
-    if (token) headers.set("x-admin-token", token);
 
     const baseUrl = import.meta.env.VITE_API_URL || "";
     const res = await fetch(`${baseUrl}${path}`, { credentials: "include", headers });
@@ -226,6 +215,10 @@ export const api = {
     );
   },
   // Fallback must be honest: null fields render as "N/A", never fabricated numbers.
+  scrapeverse: {
+    fiiDiiLatest: () => apiFetch<{ source: string; rows: import("@/types/api").ScrapeverseFiiDiiFlow[] }>("/api/scrapeverse/fii-dii/latest"),
+    fiiDiiHealth: () => apiFetch<import("@/types/api").ScrapeverseCollectorHealth>("/api/scrapeverse/fii-dii/health"),
+  },
   indianContext: () => apiFetchSoft<unknown>("/api/market/indian-context", {
     fiiDii: null,
     niftyOptionChain: null,
@@ -235,27 +228,33 @@ export const api = {
     eventRiskActive: false
   }),
   get paper() { return this.paperTrading; },
-  tradingMode: () =>
-    apiFetch<{ mode: "PAPER" | "LIVE"; liveActive: boolean; brokerAuthenticated: boolean; armPhrase: string }>(
-      "/api/trading/mode",
-    ),
-  setTradingMode: (mode: "PAPER" | "LIVE", confirmationPhrase?: string) =>
-    apiFetch<{ mode: "PAPER" | "LIVE"; liveActive: boolean; availableMargin?: number }>("/api/trading/mode", {
-      method: "POST",
-      body: JSON.stringify({ mode, confirmationPhrase }),
-    }),
-  liveBrokerPositions: () =>
-    apiFetch<Array<{ symbol: string; quantity: number; avgPrice: number; lastPrice: number; pnl: number; product: string }>>(
-      "/api/trading/live/positions",
-    ),
-  liveBrokerFunds: () =>
-    apiFetch<{ availableMargin: number; usedMargin: number }>("/api/trading/live/funds"),
-  liveOrders: (limit = 50) =>
-    apiFetch<Array<{ id: string; symbol: string; direction: string; orderType: string; quantity: number; price: string | null; status: string; statusMessage: string | null; brokerOrderId: string | null; placedAt: string }>>(
-      `/api/trading/live/orders?limit=${limit}`,
-    ),
   alertsHistory: () => apiFetch<import("@/types/api").AlertRecord[]>("/api/alerts/history"),
   reports: () => apiFetch<Array<{ id: string; date: string; summary: string; content: string; createdAt: string }>>("/api/reports"),
+  expectancyReport: (days = 60) => apiFetch<{
+    windowDays: number;
+    from: string;
+    totalClosed: number;
+    excludedNoRisk: number;
+    excludedNoPnl: number;
+    overall: {
+      trades: number;
+      wins: number;
+      losses: number;
+      scratches: number;
+      winRatePct: number | null;
+      avgWinR: number | null;
+      avgLossR: number | null;
+      expectancyR: number | null;
+      totalPnlInr: number;
+      avgNetPnlInr: number | null;
+      maxDrawdownInr: number;
+      profitFactor: number | null;
+    };
+    bySetup: Record<string, unknown>;
+    byRegime: Record<string, unknown>;
+    byDirection: Record<string, unknown>;
+    verdict: string;
+  }>(`/api/reports/expectancy?days=${Math.min(365, Math.max(7, Math.floor(days)))}`),
   reportByDate: (date: string) => apiFetch<{ id: string; date: string; summary: string; content: string; createdAt: string }>(`/api/reports/by-date/${encodeURIComponent(date)}`),
   generateReport: (date?: string) => apiFetch<{ success: boolean; message: string }>("/api/reports/generate", { method: "POST", body: JSON.stringify({ date }) }),
   getConfig: () => apiFetch<import("@/types/api").SystemConfig>("/api/config"),

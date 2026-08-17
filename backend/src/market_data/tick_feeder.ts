@@ -1,6 +1,6 @@
 import { logger } from "../lib/logger";
 import { stateStore } from "../lib/redis_state";
-import yahooFinance from "yahoo-finance2";
+import YahooFinance from "yahoo-finance2";
 import { broadcast } from "../ws/websocket_server";
 import { createServerEvent } from "../ws/events";
 import { intelligenceBus } from "../intelligence/event_bus";
@@ -8,6 +8,8 @@ import { tickDistribution } from "./tick_distribution";
 import { initSectorRotation, updateSectorFlowFromTick } from "../analysis/sector_rotation";
 import { getISTDateStr } from "../lib/ist-time";
 import { isMarketOpen } from "./market_state";
+
+const yahooFinance = new YahooFinance({ suppressNotices: ["yahooSurvey"] });
 
 interface TickData {
   symbol: string;

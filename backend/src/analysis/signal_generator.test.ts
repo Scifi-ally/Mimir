@@ -126,6 +126,26 @@ describe('runIntelligencePipeline', () => {
     expect(trace?.rankerBlendApplied).toBe(true);
   });
 
+  it('should preserve null provenance when AI sentiment is unavailable', async () => {
+    const aiResults = new Map();
+    aiResults.set('RELIANCE', {
+      composite_score: 80,
+      ranker_loaded: false,
+      isFallback: false,
+      technicalRanking: { bullish_probability: 0.8, detected_patterns: [] },
+      chronos: { trend: 'bullish', forecast_return_pct: 2 },
+      sentiment_score: null,
+    });
+    vi.mocked(aiClient.batchInference).mockResolvedValue(aiResults);
+
+    const result = await runIntelligencePipeline([mockScanResult]);
+    const signal = result.signals[0] ?? result.rejectedSignals?.[0];
+    expect(signal).toBeDefined();
+    expect(signal?.sentimentScore).toBeNull();
+    expect(signal?.decisionTrace?.sentiment_score).toBeNull();
+    expect(aiClient.getConfluenceScore).not.toHaveBeenCalled();
+  });
+
   it('should reject signal when win_probability is below ranker_threshold', async () => {
     const aiResults = new Map();
     aiResults.set('RELIANCE', {
@@ -157,8 +177,13 @@ describe('runIntelligencePipeline', () => {
     const result = await runIntelligencePipeline([mockScanResult]);
     // The signal might be accepted or rejected depending on fallback confidence calculation.
     // For now, let's just check the trace confidence path.
-    const trace = result.signals[0]?.decisionTrace || result.rejectedSignals![0]?.decisionTrace;
+    const signal = result.signals[0] ?? result.rejectedSignals![0];
+    const trace = signal?.decisionTrace;
     expect(trace).toBeDefined();
     expect(trace?.confidencePath).toBe('native_math_fallback');
+    expect(signal?.aiScore).toBeNull();
+    expect(signal?.patternScore).toBeNull();
+    expect(signal?.chronosScore).toBeNull();
+    expect(signal?.sentimentScore).toBeNull();
   });
 });

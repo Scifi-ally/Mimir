@@ -31,8 +31,8 @@ const FULL_WEIGHT_SAMPLES = 50;
 export interface SetupCalibration {
   setupType: string;
   tradeType: string;
-  samples: number;
-  winRate: number;            // 0..1, TARGET hits / all closed
+  samples: number;            // decided trades: TARGET or STOP
+  winRate: number;            // 0..1, TARGET hits / decided trades
   avgPnlInr: number;
   // MAE: how far price went AGAINST entry on winning trades, as fraction of entry
   avgAdverseExcursionPct: number | null;
@@ -164,9 +164,9 @@ export async function refreshCalibration(): Promise<void> {
         next.set(k, {
           setupType: b.setupType,
           tradeType: b.tradeType,
-          samples: b.total,
+          samples: b.decided,
           winRate: b.decided > 0 ? b.wins / b.decided : 0,
-          avgPnlInr: b.total > 0 ? b.pnlSum / b.total : 0,
+          avgPnlInr: b.decided > 0 ? b.pnlSum / b.decided : 0,
           avgAdverseExcursionPct: b.maeOnWinCount > 0 ? b.maeOnWinSum / b.maeOnWinCount : null,
           avgFavorableOnLossPct: b.mfeOnLossCount > 0 ? b.mfeOnLossSum / b.mfeOnLossCount : null,
           medianTimeToTargetMin: median(b.winDurationsMin),

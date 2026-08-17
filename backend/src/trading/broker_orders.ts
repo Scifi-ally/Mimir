@@ -4,8 +4,8 @@
  * The ONLY module that talks to the real-money order endpoints. Everything
  * here is deliberately conservative:
  *
- *  - Orders only fire when tradingMode === "LIVE" (checked by the caller AND
- *    re-checked here — defense in depth).
+ *  - This application is permanently paper-only. Order placement and broker-side
+ *    cancellation are hard-disabled; Upstox is used only for read-only data.
  *  - Every order attempt is recorded in live_orders BEFORE the HTTP call, and
  *    the row is updated with the broker's response. If the process dies
  *    mid-call, reconciliation finds the orphan.
@@ -19,7 +19,6 @@ import axios from "axios";
 import { db, liveOrdersTable } from "../../db/src";
 import { eq, desc, and, inArray } from "drizzle-orm";
 import { getAccessToken } from "../upstox/auth";
-import { getConfig } from "../config";
 import { logger } from "../lib/logger";
 import { findStockBySymbol } from "../analysis/stock_scanner";
 
@@ -58,9 +57,13 @@ export interface PlaceOrderResult {
   error?: string;
 }
 
+/**
+ * Mimir is a signal-generation and paper-trading system only.
+ * Keep this hard false even if stale configuration says LIVE; this prevents an
+ * environment flag or UI setting from turning paper signals into real orders.
+ */
 export function isLiveModeActive(): boolean {
-  const cfg = getConfig();
-  return cfg.tradingMode === "LIVE" && !cfg.paperTradingEnabled;
+  return false;
 }
 
 /**
@@ -331,6 +334,10 @@ export async function placeLiveGTTStopLoss(params: PlaceGTTStopLossParams): Prom
 }
 
 export async function cancelLiveGTTOrder(gttOrderId: string): Promise<boolean> {
+  if (!isLiveModeActive()) {
+    logger.warn({ gttOrderId }, "Paper-only mode: broker GTT cancellation refused");
+    return false;
+  }
   const token = getAccessToken("trading");
   if (!token) return false;
   try {
@@ -350,6 +357,10 @@ export async function cancelLiveGTTOrder(gttOrderId: string): Promise<boolean> {
 }
 
 export async function cancelLiveOrder(brokerOrderId: string): Promise<boolean> {
+  if (!isLiveModeActive()) {
+    logger.warn({ brokerOrderId }, "Paper-only mode: broker order cancellation refused");
+    return false;
+  }
   const token = getAccessToken("trading");
   if (!token) return false;
   try {

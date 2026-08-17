@@ -415,7 +415,33 @@ async function refreshFIIDII(): Promise<void> {
       detectRegime(); // re-run regime with fresh FII/DII context
     }
   } catch (err) {
-    logger.warn({ err }, "FII/DII refresh failed");
+    logger.warn({ err }, "FII/DII legacy refresh failed");
+  }
+}
+
+async function refreshScrapeverseFiiDii(): Promise<void> {
+  const configured = Boolean(
+    process.env.BRIGHT_DATA_API_TOKEN?.trim() &&
+    process.env.BRIGHT_DATA_FII_DII_COLLECTOR_ID?.trim(),
+  );
+  if (!configured) {
+    logger.info("Scrapeverse FII/DII collector is not configured; no live Scraper Studio claim is made");
+    return;
+  }
+  try {
+    const result = await runAndPersistFiiDiiCollection();
+    if (result.status !== "completed" || !result.normalization) {
+      logger.warn({ status: result.status, reason: result.reason }, "Scrapeverse FII/DII run did not produce validated rows");
+      return;
+    }
+    const fii = result.normalization.records.find((record) => record.category === "FII_FPI");
+    const dii = result.normalization.records.find((record) => record.category === "DII");
+    if (!fii || !dii) return;
+    updateMarketState({ fiiNetInr: fii.netCrore, diiNetInr: dii.netCrore });
+    logger.info({ collectionId: result.collectionId, dataAsOf: fii.dataAsOf, fii: fii.netCrore, dii: dii.netCrore }, "Scrapeverse FII/DII data applied to market state");
+    detectRegime();
+  } catch (err) {
+    logger.warn({ err }, "Scrapeverse FII/DII refresh failed");
   }
 }
 
@@ -475,6 +501,7 @@ async function runStateReconciliation(): Promise<void> {
 
 import { fetchGlobalMacroData } from "../analysis/global_macro";
 import { fetchOptionsSentimentData } from "../analysis/options_sentiment";
+import { runAndPersistFiiDiiCollection } from "../scrapeverse/fii_dii_service";
 
 export function startScheduler(): void {
   if (schedulerRunning) {
@@ -765,6 +792,20 @@ export function startScheduler(): void {
         message:
           "Market closed. Tick-by-tick monitoring stopped. Starting post-market analysis...",
       },
+    });
+  });
+
+  // ── POST-MARKET: 17:30 IST — Bright Data Scraper Studio FII/DII collector ─
+  // The source publishes provisional activity after the session; do not poll it
+  // intraday. A second run at 19:00 is a bounded retry, not high-frequency polling.
+  scheduleJob("scrapeverse-fii-dii", "30 17 * * 1-5", async () => {
+    await runExclusive("scrapeverse-fii-dii", async () => {
+      await refreshScrapeverseFiiDii();
+    });
+  });
+  scheduleJob("scrapeverse-fii-dii-retry", "0 19 * * 1-5", async () => {
+    await runExclusive("scrapeverse-fii-dii-retry", async () => {
+      await refreshScrapeverseFiiDii();
     });
   });
 

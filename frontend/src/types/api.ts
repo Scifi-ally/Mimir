@@ -278,7 +278,7 @@ export interface SystemConfig {
   weeklyLossLimitPct: number;
   rollingDrawdownPct: number;
   paperTradingEnabled: boolean;
-  tradingMode?: "PAPER" | "LIVE";
+  tradingMode?: "PAPER";
   upstoxApiKey?: string;
   upstoxApiSecret?: string;
   upstoxDataApiKey?: string;
@@ -293,3 +293,49 @@ export interface SystemConfig {
 }
 
 export type UpdateSystemConfig = Partial<SystemConfig>;
+
+export interface ScrapeverseFiiDiiFlow {
+  id: string;
+  source: string;
+  sourceUrl: string;
+  dataAsOf: string;
+  category: "FII_FPI" | "DII";
+  segment: "CAPITAL_MARKET";
+  grossPurchaseCrore: number;
+  grossSalesCrore: number;
+  netCrore: number;
+  scrapedAt: string;
+  collectorId: string;
+  collectionId: string;
+  rawRecordHash: string;
+  validationStatus: "VALID" | "INCOMPLETE" | "INVALID";
+  rawPayload: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface ScrapeverseCollectorRun {
+  id: string;
+  collectorId: string;
+  collectionId: string | null;
+  sourceUrl: string;
+  startedAt: string;
+  completedAt: string | null;
+  status: string;
+  rowsReceived: number;
+  rowsValid: number;
+  completenessRate: number;
+  lastError: string | null;
+  selfHealEventId: string | null;
+  rawResponse: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+export interface ScrapeverseCollectorHealth {
+  configured: boolean;
+  collectorId: string | null;
+  sourceUrl: string;
+  lastRun: ScrapeverseCollectorRun | null;
+  recentRunCount: number;
+  recentSuccessCount: number;
+  recentCompletenessRate: number | null;
+}

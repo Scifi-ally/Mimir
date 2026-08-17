@@ -7,20 +7,29 @@ import { logger } from "../lib/logger";
 import { intelligenceBus } from "../intelligence/event_bus";
 import { todayStartUTC } from "../lib/ist-time";
 import { tickDistribution } from "../market_data/tick_distribution";
+import { calculateNetPnl } from "../trading/trade_economics";
 
 interface PriceMap {
   [symbol: string]: number;
 }
 
-// Round-trip transaction costs as fraction of traded value per side:
-// brokerage + STT + exchange charges + slippage approximation for NSE intraday.
-// Flat rate; replace with per-broker fee schedule if live-order accuracy needed.
-const COST_RATE_PER_SIDE = 0.0005; // 0.05% per side
-
-/** Net PnL after transaction costs on both legs. */
-function netPnl(entry: number, exit: number, qty: number, gross: number): number {
-  const costs = (entry + exit) * qty * COST_RATE_PER_SIDE;
-  return gross - costs;
+/** Net PnL after the shared broker/STT model used by paper execution. */
+function netPnl(
+  entry: number,
+  exit: number,
+  qty: number,
+  gross: number,
+  direction: "BUY" | "SELL",
+  tradeType: "INTRADAY" | "SWING",
+): number {
+  return calculateNetPnl({
+    entryPrice: entry,
+    exitPrice: exit,
+    quantity: qty,
+    direction,
+    tradeType,
+    grossPnl: gross,
+  }).netPnl;
 }
 
 // Outcome polling runs every 60s; look slightly further back so a tick landing
@@ -210,20 +219,20 @@ export async function checkSuggestionOutcomes(prices: PriceMap): Promise<void> {
       if (firstTouch.level === "STOP") {
         outcome = "STOP_HIT";
         pnl = suggestion.direction === "BUY"
-          ? netPnl(entry, exitPrice, qty, (exitPrice - entry) * qty)
-          : netPnl(entry, exitPrice, qty, (entry - exitPrice) * qty);
+          ? netPnl(entry, exitPrice, qty, (exitPrice - entry) * qty, "BUY", suggestion.tradeType === "SWING" ? "SWING" : "INTRADAY")
+          : netPnl(entry, exitPrice, qty, (entry - exitPrice) * qty, "SELL", suggestion.tradeType === "SWING" ? "SWING" : "INTRADAY");
       } else if (firstTouch.level === "T2") {
         outcome = "TARGET_2_HIT";
         exitPrice = t2!;
         pnl = suggestion.direction === "BUY"
-          ? netPnl(entry, t2!, qty, (t2! - entry) * qty)
-          : netPnl(entry, t2!, qty, (entry - t2!) * qty);
+          ? netPnl(entry, t2!, qty, (t2! - entry) * qty, "BUY", suggestion.tradeType === "SWING" ? "SWING" : "INTRADAY")
+          : netPnl(entry, t2!, qty, (entry - t2!) * qty, "SELL", suggestion.tradeType === "SWING" ? "SWING" : "INTRADAY");
       } else {
         outcome = "TARGET_1_HIT";
         exitPrice = t1;
         pnl = suggestion.direction === "BUY"
-          ? netPnl(entry, t1, qty, (t1 - entry) * qty)
-          : netPnl(entry, t1, qty, (entry - t1) * qty);
+          ? netPnl(entry, t1, qty, (t1 - entry) * qty, "BUY", suggestion.tradeType === "SWING" ? "SWING" : "INTRADAY")
+          : netPnl(entry, t1, qty, (entry - t1) * qty, "SELL", suggestion.tradeType === "SWING" ? "SWING" : "INTRADAY");
       }
     } else if (suggestion.direction === "BUY") {
       // No usable tick history (e.g. REST-fallback polling) — fall back to the
@@ -231,18 +240,18 @@ export async function checkSuggestionOutcomes(prices: PriceMap): Promise<void> {
       // label wins when the poll gap makes the touch order ambiguous.
       if (price <= stop) {
         outcome = "STOP_HIT";
-        pnl = netPnl(entry, price, qty, (price - entry) * qty);
+        pnl = netPnl(entry, price, qty, (price - entry) * qty, "BUY", suggestion.tradeType === "SWING" ? "SWING" : "INTRADAY");
       } else if (price >= t1) {
         outcome = "TARGET_1_HIT";
-        pnl = netPnl(entry, t1, qty, (t1 - entry) * qty);
+        pnl = netPnl(entry, t1, qty, (t1 - entry) * qty, "BUY", suggestion.tradeType === "SWING" ? "SWING" : "INTRADAY");
       }
     } else {
       if (price >= stop) {
         outcome = "STOP_HIT";
-        pnl = netPnl(entry, price, qty, (entry - price) * qty);
+        pnl = netPnl(entry, price, qty, (entry - price) * qty, "SELL", suggestion.tradeType === "SWING" ? "SWING" : "INTRADAY");
       } else if (price <= t1) {
         outcome = "TARGET_1_HIT";
-        pnl = netPnl(entry, t1, qty, (entry - t1) * qty);
+        pnl = netPnl(entry, t1, qty, (entry - t1) * qty, "SELL", suggestion.tradeType === "SWING" ? "SWING" : "INTRADAY");
       }
     }
 

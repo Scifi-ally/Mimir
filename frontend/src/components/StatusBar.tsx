@@ -3,8 +3,6 @@ import { cn, fmtNum, toFixed, fmtPct } from "@/lib/format";
 import type { SystemStatus, MarketRegime } from "@/types/api";
 import { ArrowUpRight, ArrowDownRight } from "lucide-react";
 import { Tooltip } from "@/components/mimir/tooltip";
-import { useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/api";
 import { useStore } from "@/store/useStore";
 
 function StatusLed({ status }: { status: "ok" | "warn" | "error" | "unknown" }) {
@@ -31,13 +29,6 @@ interface StatusBarProps {
 }
 
 export const StatusBar = memo(function StatusBar({ status, regime, wsConnected, macro }: StatusBarProps) {
-  const { data: tradingMode } = useQuery({
-    queryKey: ["trading-mode"],
-    queryFn: api.tradingMode,
-    refetchInterval: 30000,
-    staleTime: 15000,
-  });
-  const isLiveTrading = tradingMode?.mode === "LIVE";
   const aiStatus = status?.aiStatus?.toLowerCase() ?? "unknown";
   const aiMode = status?.aiMode?.toLowerCase() ?? "";
   const aiOk = aiStatus.includes("healthy") || aiMode === "ai mode";
@@ -51,14 +42,12 @@ export const StatusBar = memo(function StatusBar({ status, regime, wsConnected, 
   return (
     <div className="shrink-0 h-9 lg:h-10 w-full bg-background flex items-center px-4 sm:px-6 text-[10px] sm:text-[10px] xl:text-[10px] font-sans text-muted-foreground/60 tracking-[0.1em] uppercase z-50 overflow-x-auto whitespace-nowrap [&::-webkit-scrollbar]:hidden">
       <div className="flex shrink-0 items-center gap-5 sm:gap-6 text-foreground/60">
-        {isLiveTrading && (
-          <span className="flex items-center gap-1.5 cursor-help" title="Live trading armed — engine fills place real broker orders">
-            <div className="flex items-center gap-1.5 bg-destructive/10 px-2 py-0.5 rounded-full">
-              <StatusLed status="error" />
-              <span className="font-normal text-[10px] text-destructive">LIVE</span>
-            </div>
-          </span>
-        )}
+        <span className="flex items-center gap-1.5 cursor-help" title="Signal-only paper trading. Broker order placement is permanently disabled.">
+          <div className="flex items-center gap-1.5 bg-bull/10 px-2 py-0.5 rounded-full">
+            <StatusLed status="ok" />
+            <span className="font-normal text-[10px] text-bull">PAPER ONLY</span>
+          </div>
+        </span>
         <span className="flex items-center gap-1.5 cursor-help" title="AI Status: Health of Native Math Models">
           AI
           <div className="flex items-center gap-1.5 bg-foreground/5 px-2 py-0.5 rounded-full">

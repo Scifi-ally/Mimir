@@ -116,13 +116,6 @@ export function useWebSocket() {
       }
     };
     
-    const sendAuth = (ws: WebSocket) => {
-      const token = localStorage.getItem("mimir_admin_token");
-      if (token) {
-        ws.send(JSON.stringify({ event: "auth", data: { token } }));
-      }
-    };
-
     const connectInt = (retryCount = 0) => {
       if (cancelled) return;
       const nextSocketInt = new WebSocket(wsUrl("/ws/intelligence"));
@@ -132,7 +125,6 @@ export function useWebSocket() {
 
       nextSocketInt.onopen = () => {
         if (cancelled) return;
-        sendAuth(nextSocketInt);
         checkConnected();
         lastMessageTimeInt = Date.now();
         nextSocketInt.send(JSON.stringify({ event: "subscribe", data: { topic: "system" } }));
@@ -180,7 +172,6 @@ export function useWebSocket() {
 
       nextSocketMd.onopen = () => {
         if (cancelled) return;
-        sendAuth(nextSocketMd);
         isMdConnected = true;
         checkConnected();
         lastMessageTimeMd = Date.now();
@@ -409,30 +400,6 @@ export function useWebSocket() {
               {
                 const msgText = event.data.message || "";
                 const lower = msgText.toLowerCase();
-                const isLiveOrderEvent = lower.startsWith("live ");
-                const isModeChange = lower.includes("live trading armed") || lower.includes("live trading disarmed");
-
-                if (isLiveOrderEvent || isModeChange) {
-                  // Real-money events get first-class island treatment and
-                  // refresh the live panel + mode badge immediately.
-                  useStore.getState().showIsland({
-                    title: isModeChange
-                      ? (lower.includes("armed") ? "Live Trading Armed" : "Live Trading Disarmed")
-                      : lower.includes("failed") ? "Live Order Failed" : "Live Order Placed",
-                    subtitle: msgText,
-                    isNotification: true,
-                  });
-                  useStore.getState().addEvent({
-                    type: lower.includes("failed") ? "warning" : "info",
-                    title: isModeChange ? "Trading Mode" : "Live Order",
-                    message: msgText,
-                  });
-                  debouncedInvalidate(["trading-mode"]);
-                  debouncedInvalidate(["live", "orders"]);
-                  debouncedInvalidate(["live", "positions"]);
-                  debouncedInvalidate(["live", "funds"]);
-                  break;
-                }
 
                 if (lower.includes("paper trading account reset")) {
                   debouncedInvalidate(["paperTrading"]);

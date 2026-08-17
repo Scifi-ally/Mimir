@@ -1,0 +1,12 @@
+{
+  "collector": "bright_data_scraper_studio",
+  "source": "NSE_FII_DII_CAPITAL_MARKET",
+  "verifiedAt": "2026-08-17T08:28:03.830Z",
+  "status": "not_configured",
+  "collectionId": null,
+  "reason": "Bright Data is not configured: set BRIGHT_DATA_API_TOKEN and BRIGHT_DATA_FII_DII_COLLECTOR_ID after publishing the collector.",
+  "rowsReceived": 0,
+  "rowsValid": 0,
+  "completenessRate": 0,
+  "records": []
+}

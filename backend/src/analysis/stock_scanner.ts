@@ -3,6 +3,7 @@ import { fetchRecentNews } from "./news_feed";
 
 import { getAccessToken } from "../upstox/auth";
 import { getConfig } from "../config";
+import { buildIndiaMarketContext, computeIndiaSignalAdjustment, evaluateIndiaTradeability } from "./india_market_state";
 import type {
   OHLCV,
   SetupCandidate,
@@ -1374,6 +1375,27 @@ function scoreSetupQuality(
     };
   }
 
+  // India-specific tradeability remains a hard gate. It uses only currently
+  // available, provenance-safe fields; unavailable macro state cannot fabricate
+  // a directional score or silently make an instrument tradable.
+  const indiaContext = buildIndiaMarketContext();
+  const indiaTradeability = evaluateIndiaTradeability({
+    price: snap.close,
+    avgDailyVolume: snap.avgDailyVolume,
+    atrPct: (snap.atr14 / snap.close) * 100,
+    volumeRatio: snap.volumeRatio,
+  }, indiaContext, {
+    minDailyVolume: getConfig().minDailyVolume,
+    minDailyTurnoverInr: getConfig().minDailyTurnoverInr,
+  });
+  if (!indiaTradeability.accepted) {
+    return {
+      accepted: false,
+      adjustment: 0,
+      reason: indiaTradeability.reasons.join("; ") || "India tradeability score below threshold",
+    };
+  }
+
   // MOMENTUM_CONTINUATION entry-quality gate (scripts/backtest_filters.ts,
   // --days 180, 2058 instruments, honest fills, costs 0.05%/side):
   // baseline -0.224%/trade over 5276 fills (26.4% WR). Requiring
@@ -1412,6 +1434,9 @@ function scoreSetupQuality(
   }
 
   let adjustment = 0;
+
+  const indiaAdjustment = computeIndiaSignalAdjustment(candidate.direction, undefined, indiaContext);
+  adjustment += indiaAdjustment.adjustment;
 
   if (!isIntradayFallback && !hasConstructiveLastCandle(candles, candidate.direction)) {
     adjustment -= 1.0;

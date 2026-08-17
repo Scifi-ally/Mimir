@@ -41,12 +41,8 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
   // field doesn't get re-parsed and clobbered mid-keystroke.
   const [numberDrafts, setNumberDrafts] = useState<Record<string, string>>({});
   const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({});
-  const [adminTokenInput, setAdminTokenInput] = useState("");
-  const [tokenSavedToast, setTokenSavedToast] = useState(false);
   const [saveSuccessMessage, setSaveSuccessMessage] = useState<string | null>(null);
   const [actionFeedback, setActionFeedback] = useState<{ type: "success" | "error"; text: string } | null>(null);
-  const [armingLive, setArmingLive] = useState(false);
-  const [armPhraseInput, setArmPhraseInput] = useState("");
 
   // Load config from backend
   const { data: config, isLoading } = useQuery({
@@ -56,48 +52,11 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
     staleTime: 0,
   });
 
-  // Trading mode (separate arming flow, not part of the config form)
-  const tradingModeQuery = useQuery({
-    queryKey: ["trading-mode"],
-    queryFn: api.tradingMode,
-    enabled: isOpen,
-    staleTime: 0,
-  });
-
-  const setModeMutation = useMutation({
-    mutationFn: ({ mode, confirmationPhrase }: { mode: "PAPER" | "LIVE"; confirmationPhrase?: string }) =>
-      api.setTradingMode(mode, confirmationPhrase),
-    onSuccess: (res) => {
-      queryClient.invalidateQueries({ queryKey: ["trading-mode"] });
-      queryClient.invalidateQueries({ queryKey: ["system-config"] });
-      queryClient.invalidateQueries({ queryKey: ["paperTrading"] });
-      queryClient.invalidateQueries({ queryKey: ["live"] });
-      queryClient.invalidateQueries({ queryKey: ["positions"] });
-      queryClient.invalidateQueries({ queryKey: ["status"] });
-      queryClient.invalidateQueries({ queryKey: ["session"] });
-      setArmingLive(false);
-      setArmPhraseInput("");
-      setActionFeedback({
-        type: "success",
-        text: res.mode === "LIVE"
-          ? `Live trading ARMED. Available margin ₹${Math.round(res.availableMargin ?? 0).toLocaleString("en-IN")}.`
-          : "Disarmed — engine is back in paper mode.",
-      });
-      setTimeout(() => setActionFeedback(null), 5000);
-    },
-    onError: (err: Error) => {
-      setActionFeedback({ type: "error", text: err.message || "Failed to switch trading mode" });
-      setTimeout(() => setActionFeedback(null), 6000);
-    },
-  });
-
   useEffect(() => {
     if (config) {
       setFormData({ ...config });
       setNumberDrafts({});
     }
-    // Also load admin token from local storage
-    setAdminTokenInput(localStorage.getItem("mimir_admin_token") || "");
   }, [config, isOpen]);
 
   // Check dirty state
@@ -129,7 +88,6 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
       queryClient.setQueryData(["system-config"], newConfig);
       queryClient.invalidateQueries({ queryKey: ["status"] });
       queryClient.invalidateQueries({ queryKey: ["session"] });
-      queryClient.invalidateQueries({ queryKey: ["trading-mode"] });
       queryClient.invalidateQueries({ queryKey: ["suggestions"] });
       queryClient.invalidateQueries({ queryKey: ["regime"] });
       queryClient.invalidateQueries({ queryKey: ["monitoring"] });
@@ -220,22 +178,9 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
     }
   };
 
-  const saveAdminToken = () => {
-    const trimmed = adminTokenInput.trim();
-    if (trimmed) {
-      localStorage.setItem("mimir_admin_token", trimmed);
-    } else {
-      localStorage.removeItem("mimir_admin_token");
-    }
-    setTokenSavedToast(true);
-    setTimeout(() => setTokenSavedToast(false), 3000);
-  };
-
   const clearLocalTokensAndCache = () => {
-    localStorage.removeItem("mimir_admin_token");
-    setAdminTokenInput("");
     queryClient.clear();
-    setActionFeedback({ type: "success", text: "Local admin token & cache cleared successfully." });
+    setActionFeedback({ type: "success", text: "Local query cache cleared successfully." });
     setTimeout(() => setActionFeedback(null), 4000);
   };
 
@@ -498,40 +443,16 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                   {/* TAB 2: AUTH & ALERTS */}
                   {activeTab === "auth_alerts" && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-6">
-                      <div className="flex flex-col">
+                      <div className="flex flex-col col-span-full">
                         <div className="flex items-center gap-2 mb-1.5">
-                          <label className="text-sm font-normal text-foreground tracking-tight">Remote Admin Token (Local Auth)</label>
-                          <Tooltip content="Set a secure token to allow remote network access to this dashboard." align="start">
+                          <label className="text-sm font-normal text-foreground tracking-tight">Local Access</label>
+                          <Tooltip content="The local paper-only development service does not require an admin token." align="start">
                             <span className="text-[10px] text-muted-foreground/60 hover:text-primary cursor-help">ⓘ</span>
                           </Tooltip>
                         </div>
-                        <form className="flex gap-3 relative" onSubmit={(e) => { e.preventDefault(); saveAdminToken(); }}>
-                          <input type="text" name="username" autoComplete="username" className="hidden" />
-                          <input
-                            type={showSecrets.adminToken ? "text" : "password"}
-                            value={adminTokenInput}
-                            onChange={(e) => setAdminTokenInput(e.target.value)}
-                            placeholder="Set custom token..."
-                            autoComplete="new-password"
-                            className="w-full bg-transparent text-sm font-mono text-foreground outline-none ring-0 border-0 border-b border-foreground/8 focus:border-primary px-0 py-2.5 transition-colors shadow-none rounded-none pr-14 placeholder:text-muted-foreground/30"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => toggleSecretVisibility("adminToken")}
-                            className="absolute right-[85px] top-2.5 text-[10px] font-normal text-muted-foreground hover:text-foreground outline-none"
-                          >
-                            {showSecrets.adminToken ? "[ Hide ]" : "[ Show ]"}
-                          </button>
-                          <button
-                            onClick={saveAdminToken}
-                            className="shrink-0 text-[10px] font-normal text-primary underline underline-offset-4 decoration-primary hover:opacity-80 px-2"
-                          >
-                            [ APPLY ]
-                          </button>
-                        </form>
-                        {localStorage.getItem("mimir_admin_token") && (
-                          <div className="text-[10px] font-normal text-bull mt-1">✓ ENABLED</div>
-                        )}
+                        <div className="border-b border-foreground/8 py-2.5 text-xs text-bull">
+                          ✓ ADMIN TOKEN NOT REQUIRED — PAPER-ONLY LOCAL MODE
+                        </div>
                       </div>
                       {renderField(
                         "Discord Webhook URL",
@@ -597,103 +518,22 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                       <div className="flex flex-col col-span-full">
                         <div className="flex items-center gap-2 mb-1.5">
                           <label className="text-sm font-normal text-foreground tracking-tight">Trading Engine Mode</label>
-                          <Tooltip content="Paper mode simulates all fills locally with zero risk. Live mode mirrors every engine fill to Upstox as a REAL order — arming requires a typed confirmation." align="start">
+                          <Tooltip content="Mimir is signal-only. All entries, exits, fees, and outcomes are simulated locally; no broker order endpoint is enabled." align="start">
                             <span className="text-[10px] text-muted-foreground/60 hover:text-primary cursor-help">ⓘ</span>
                           </Tooltip>
                         </div>
 
                         <div className="flex items-center justify-between py-3 border-b border-foreground/8">
                           <div className="flex items-center gap-3">
-                            {tradingModeQuery.data?.mode === "LIVE" ? (
-                              <>
-                                <span className="w-2 h-2 rounded-full bg-destructive animate-pulse" />
-                                <span className="text-xs font-normal text-destructive tracking-[0.1em]">LIVE — REAL ORDERS ACTIVE</span>
-                              </>
-                            ) : (
-                              <>
-                                <span className="w-2 h-2 rounded-full bg-bull" />
-                                <span className="text-xs font-normal text-bull tracking-[0.1em]">PAPER — SIMULATED FILLS</span>
-                              </>
-                            )}
+                            <span className="w-2 h-2 rounded-full bg-bull" />
+                            <span className="text-xs font-normal text-bull tracking-[0.1em]">PAPER — SIGNALS AND SIMULATED FILLS ONLY</span>
                           </div>
-                          {tradingModeQuery.data?.mode === "LIVE" ? (
-                            <button
-                              onClick={() => setModeMutation.mutate({ mode: "PAPER" })}
-                              disabled={setModeMutation.isPending}
-                              className="text-[10px] font-normal text-bull border border-bull/30 hover:border-bull hover:bg-bull/5 px-4 py-1.5 rounded uppercase tracking-[0.1em] transition-colors disabled:opacity-50"
-                            >
-                              {setModeMutation.isPending ? "Disarming..." : "Disarm → Paper"}
-                            </button>
-                          ) : (
-                            <button
-                              onClick={() => setArmingLive(true)}
-                              disabled={!tradingModeQuery.data?.brokerAuthenticated}
-                              className={cn(
-                                "text-[10px] font-normal px-4 py-1.5 rounded uppercase tracking-[0.1em] transition-colors border",
-                                tradingModeQuery.data?.brokerAuthenticated
-                                  ? "text-destructive border-destructive/30 hover:border-destructive hover:bg-destructive/5"
-                                  : "text-muted-foreground border-foreground/10 opacity-50 cursor-not-allowed"
-                              )}
-                            >
-                              Arm Live Trading
-                            </button>
-                          )}
+                          <span className="text-[10px] text-muted-foreground border border-bull/20 px-3 py-1.5 rounded uppercase tracking-[0.1em]">Broker orders disabled</span>
                         </div>
+                        <p className="text-[10px] text-muted-foreground mt-2">
+                          Upstox is used only for read-only market data. Entries, exits, costs, and outcomes are simulated locally.
+                        </p>
 
-                        {!tradingModeQuery.data?.brokerAuthenticated && tradingModeQuery.data?.mode !== "LIVE" && (
-                          <p className="text-[10px] text-muted-foreground mt-2">
-                            Connect your Upstox account (Broker Integration tab) to enable live trading.
-                          </p>
-                        )}
-
-                        <AnimatePresence>
-                          {armingLive && (
-                            <motion.div
-                              initial={{ opacity: 0, height: 0 }}
-                              animate={{ opacity: 1, height: "auto" }}
-                              exit={{ opacity: 0, height: 0 }}
-                              className="overflow-hidden"
-                            >
-                              <div className="mt-4 pt-4 border-t border-destructive/20 space-y-3">
-                                <p className="text-xs text-foreground/80 leading-relaxed">
-                                  Live mode places <span className="font-normal text-destructive">real orders with real money</span> at
-                                  your broker for every engine fill — entries, targets, and stops. Position sizes follow your
-                                  capital settings. To confirm, type{" "}
-                                  <span className="font-mono font-normal text-foreground select-all">{tradingModeQuery.data?.armPhrase}</span> below.
-                                </p>
-                                <input
-                                  type="text"
-                                  value={armPhraseInput}
-                                  onChange={(e) => setArmPhraseInput(e.target.value)}
-                                  placeholder={tradingModeQuery.data?.armPhrase}
-                                  spellCheck={false}
-                                  autoComplete="off"
-                                  className="w-full bg-transparent text-sm font-mono text-foreground outline-none border-b border-destructive/30 focus:border-destructive px-0 py-2 transition-colors placeholder:text-muted-foreground/30"
-                                />
-                                <div className="flex gap-3 pt-1">
-                                  <button
-                                    onClick={() => setModeMutation.mutate({ mode: "LIVE", confirmationPhrase: armPhraseInput })}
-                                    disabled={armPhraseInput !== tradingModeQuery.data?.armPhrase || setModeMutation.isPending}
-                                    className={cn(
-                                      "text-[10px] font-normal px-4 py-1.5 rounded uppercase tracking-[0.1em] transition-colors border",
-                                      armPhraseInput === tradingModeQuery.data?.armPhrase && !setModeMutation.isPending
-                                        ? "text-white bg-destructive border-destructive hover:bg-destructive/90"
-                                        : "text-muted-foreground border-foreground/10 opacity-50 cursor-not-allowed"
-                                    )}
-                                  >
-                                    {setModeMutation.isPending ? "Arming..." : "Confirm — Go Live"}
-                                  </button>
-                                  <button
-                                    onClick={() => { setArmingLive(false); setArmPhraseInput(""); }}
-                                    className="text-[10px] font-normal text-muted-foreground hover:text-foreground border border-foreground/10 hover:border-foreground/20 px-4 py-1.5 rounded uppercase tracking-[0.1em] transition-colors"
-                                  >
-                                    Cancel
-                                  </button>
-                                </div>
-                              </div>
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
                       </div>
 
                       <div className="flex flex-col">
@@ -773,11 +613,6 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
             {/* Global Alerts inside Modal */}
             <div className="absolute bottom-[80px] right-8 flex flex-col gap-2 pointer-events-none z-[100]">
               <AnimatePresence>
-                {tokenSavedToast && (
-                  <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-bull/20 text-bull border border-bull/30 px-4 py-2 text-[10px] font-normal rounded shadow-xl backdrop-blur-md pointer-events-auto">
-                    Admin token saved locally.
-                  </motion.div>
-                )}
                 {saveSuccessMessage && (
                   <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-bull/20 text-bull border border-bull/30 px-4 py-2 text-[10px] font-normal rounded shadow-xl backdrop-blur-md pointer-events-auto">
                     {saveSuccessMessage}
@@ -798,11 +633,7 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
               </button>
               
               <div className="flex items-center gap-6">
-                {tradingModeQuery.data?.mode === "LIVE" ? (
-                  <div className="text-[10px] font-normal text-destructive animate-pulse tracking-[0.1em] flex items-center gap-1.5"><div className="w-1.5 h-1.5 bg-destructive rounded-full"/>LIVE BROKER EXECUTION</div>
-                ) : (
-                  <div className="text-[10px] font-normal text-bull tracking-[0.1em] flex items-center gap-1.5"><div className="w-1.5 h-1.5 bg-bull rounded-full"/>PAPER TRADING (SAFE)</div>
-                )}
+                <div className="text-[10px] font-normal text-bull tracking-[0.1em] flex items-center gap-1.5"><div className="w-1.5 h-1.5 bg-bull rounded-full"/>PAPER-ONLY SIGNAL ENGINE</div>
                 <div className="flex gap-3">
                   <button onClick={onClose} className="text-[10px] font-normal text-muted-foreground hover:text-foreground outline-none ring-0 border border-foreground/10 hover:border-foreground/20 bg-transparent px-4 py-1.5 rounded uppercase tracking-[0.1em] transition-colors">
                     Cancel

@@ -89,23 +89,46 @@ const DEFAULT_RETRY_CONFIG: RetryConfig = {
  * 
  * DESIGN NOTE: Priority requests are always dequeued before non-priority ones.
  * This means sustained high-priority traffic can starve non-priority requests
- * until they time out (maxWaitMs). This is an accepted tradeoff — real-time
- * tick data and live trade execution take precedence over background scans.
- * Non-priority timeouts are logged at warn level for observability.
+ * until they time out (maxWaitMs). This is an accepted tradeoff — fresh market
+ * data for signal evaluation takes precedence over background scans. Mimir is
+ * paper-only, so no order-placement priority exists.
+ */
+type ApiVersion = "v2" | "v3";
+type QueuedRequest = {
+  version: ApiVersion;
+  resolve: () => void;
+  reject: (err: Error) => void;
+  enqueueTime: number;
+  priority: boolean;
+};
+
+type RateWindow = { windowMs: number; limit: number };
+
+/**
+ * Global rolling-window limiter for every Upstox request in this process.
+ *
+ * The official market-data limits are 50/sec, 500/minute, and 2,000/30
+ * minutes. We intentionally budget 45/sec, 450/minute, and 1,800/30 minutes
+ * to leave headroom for clock skew, retries, and other clients sharing the
+ * same Upstox user/API identity. Caching and request deduplication remain the
+ * first line of defense; this limiter is the final quota guard.
  */
 class GlobalRateLimiter {
-  private queue: { version: "v2" | "v3", resolve: () => void, reject: (err: Error) => void, enqueueTime: number, priority: boolean }[] = [];
+  private queue: QueuedRequest[] = [];
   private processing = false;
-  private reqsInLastSecondV2 = 0;
-  private reqsInLastSecondV3 = 0;
-  private intervalStarted = Date.now();
-  private maxWaitMs = 30000;
+  private requestTimes: number[] = [];
+  private readonly windows: RateWindow[] = [
+    { windowMs: 1_000, limit: 45 },
+    { windowMs: 60_000, limit: 450 },
+    { windowMs: 30 * 60_000, limit: 1_800 },
+  ];
+  private readonly maxWaitMs = 30_000;
 
-  async wait(version: "v2" | "v3" = "v2", priority: boolean = false): Promise<void> {
+  async wait(version: ApiVersion = "v2", priority = false): Promise<void> {
     return new Promise((resolve, reject) => {
-      const item = { version, resolve, reject, enqueueTime: Date.now(), priority };
+      const item: QueuedRequest = { version, resolve, reject, enqueueTime: Date.now(), priority };
       if (priority) {
-        const idx = this.queue.findIndex(i => !i.priority);
+        const idx = this.queue.findIndex((queued) => !queued.priority);
         if (idx === -1) this.queue.push(item);
         else this.queue.splice(idx, 0, item);
       } else {
@@ -115,59 +138,72 @@ class GlobalRateLimiter {
     });
   }
 
+  private prune(now: number): number[] {
+    const cutoff = now - this.windows[this.windows.length - 1]!.windowMs;
+    this.requestTimes = this.requestTimes.filter((timestamp) => timestamp > cutoff);
+    return this.requestTimes;
+  }
+
+  private available(now: number): boolean {
+    const timestamps = this.prune(now);
+    return this.windows.every(({ windowMs, limit }) => {
+      const cutoff = now - windowMs;
+      let count = 0;
+      for (let i = timestamps.length - 1; i >= 0 && timestamps[i]! > cutoff; i -= 1) count += 1;
+      return count < limit;
+    });
+  }
+
+  private nextAvailableDelay(now: number): number {
+    const timestamps = this.prune(now);
+    let delay = 1_000;
+    for (const { windowMs, limit } of this.windows) {
+      const cutoff = now - windowMs;
+      const inWindow = timestamps.filter((timestamp) => timestamp > cutoff);
+      if (inWindow.length >= limit) {
+        const oldest = inWindow[inWindow.length - limit]!;
+        delay = Math.max(delay, oldest + windowMs - now + 1);
+      }
+    }
+    return Math.max(1, delay);
+  }
+
   private process() {
     if (this.processing) return;
     this.processing = true;
 
     const tick = () => {
-      if (this.queue.length === 0) {
-        this.processing = false;
-        return;
-      }
-      
       const now = Date.now();
-      
-      // Clear expired items
-      while (this.queue.length > 0 && now - this.queue[0]!.enqueueTime > this.maxWaitMs) {
-        const item = this.queue.shift()!;
-        const waitMs = now - item.enqueueTime;
-        logger.warn({ waitMs, queueDepth: this.queue.length, wasPriority: item.priority }, 
-          'RateLimiter: request timed out waiting in queue');
-        item.reject(new Error(`RateLimiter timeout: Waited in queue for over ${this.maxWaitMs}ms`));
+      const pending: QueuedRequest[] = [];
+      for (const item of this.queue) {
+        if (now - item.enqueueTime > this.maxWaitMs) {
+          const waitMs = now - item.enqueueTime;
+          logger.warn({ waitMs, queueDepth: this.queue.length, wasPriority: item.priority }, "RateLimiter: request timed out waiting in queue");
+          item.reject(new Error(`RateLimiter timeout: Waited in queue for over ${this.maxWaitMs}ms`));
+        } else {
+          pending.push(item);
+        }
       }
-      
+      this.queue = pending;
+
       if (this.queue.length === 0) {
         this.processing = false;
         return;
       }
 
-      if (now - this.intervalStarted >= 1000) {
-        this.reqsInLastSecondV2 = 0;
-        this.reqsInLastSecondV3 = 0;
-        this.intervalStarted = now;
-      }
-      
-      const safeLimit = 9; // Upstox limit is 10 req/sec per version, using 9 for safety margin
-
-      // Find the first item in queue that can be processed
-      const idx = this.queue.findIndex(item => {
-        if (item.version === "v2") return this.reqsInLastSecondV2 < safeLimit;
-        if (item.version === "v3") return this.reqsInLastSecondV3 < safeLimit;
-        return false;
-      });
-
+      const idx = this.queue.findIndex(() => this.available(now));
       if (idx !== -1) {
         const item = this.queue.splice(idx, 1)[0]!;
-        if (item.version === "v2") this.reqsInLastSecondV2++;
-        if (item.version === "v3") this.reqsInLastSecondV3++;
+        this.requestTimes.push(now);
         item.resolve();
         setImmediate(tick);
-      } else {
-        const delay = 1000 - (now - this.intervalStarted);
-        setTimeout(tick, delay);
+        return;
       }
+
+      const delay = this.nextAvailableDelay(now);
+      setTimeout(tick, delay);
     };
-    
+
     tick();
   }
 }
@@ -341,8 +377,16 @@ function mapV2IntervalToV3(
  */
 export function createUpstoxClient(options?: {
   cacheTimeMs?: number;
+  ltpCacheTimeMs?: number;
+  quoteCacheTimeMs?: number;
+  intradayCacheTimeMs?: number;
 }): UpstoxApiClient {
-  const cacheTimeMs = options?.cacheTimeMs ?? 5 * 60 * 1000; // 5 minutes default
+  const historicalCacheTimeMs = options?.cacheTimeMs ?? 5 * 60 * 1000;
+  // Fast signals must not wait behind stale data, while the short TTLs still
+  // coalesce duplicate callers and keep Upstox usage below the safe limiter.
+  const ltpCacheTimeMs = options?.ltpCacheTimeMs ?? Math.min(historicalCacheTimeMs, 1000);
+  const quoteCacheTimeMs = options?.quoteCacheTimeMs ?? Math.min(historicalCacheTimeMs, 2000);
+  const intradayCacheTimeMs = options?.intradayCacheTimeMs ?? Math.min(historicalCacheTimeMs, 5000);
   const ltpCache = new Cache<string, number>();
   const candleCache = new Cache<string, unknown[][]>();
   const ltpDeduplicator = new RequestDeduplicator<
@@ -420,7 +464,7 @@ export function createUpstoxClient(options?: {
       }
     }
     
-    quoteCache.set(cacheKey, result, cacheTimeMs);
+    quoteCache.set(cacheKey, result, quoteCacheTimeMs);
     return result;
     });
   }
@@ -437,7 +481,7 @@ export function createUpstoxClient(options?: {
 
     // Deduplicate by joining keys
     const keySet = new Set(keys);
-    const uniqueKeys = Array.from(keySet);
+    const uniqueKeys = Array.from(keySet).map(normalizeInstrumentKey).sort();
     const cacheKey = JSON.stringify(uniqueKeys);
 
     return ltpDeduplicator.execute(cacheKey, async () => {
@@ -513,7 +557,7 @@ export function createUpstoxClient(options?: {
                 : tokenKey || mapNorm;
           if (!canonical) continue;
           result[canonical] = price;
-          ltpCache.set(canonical, price, cacheTimeMs);
+          ltpCache.set(canonical, price, ltpCacheTimeMs);
         }
       }
 
@@ -534,7 +578,7 @@ export function createUpstoxClient(options?: {
     token: string,
     priority: boolean = false,
   ): Promise<unknown[][]> {
-    const cacheKey = `${instrumentKey}|${interval}|${toDate}|${fromDate}`;
+    const cacheKey = `${normalizeInstrumentKey(instrumentKey)}|${interval}|${toDate}|${fromDate}`;
 
     // Check memory cache
     const cached = candleCache.get(cacheKey);
@@ -558,8 +602,8 @@ export function createUpstoxClient(options?: {
         // Support both legacy arrays and new { data, ts } envelopes
         const diskData = Array.isArray(envelope) ? envelope : envelope.data;
         const cachedAt = Array.isArray(envelope) ? 0 : (envelope.ts as number) || 0;
-        if (Array.isArray(diskData) && diskData.length > 0 && (Date.now() - cachedAt) < cacheTimeMs) {
-          candleCache.set(cacheKey, diskData, cacheTimeMs);
+        if (Array.isArray(diskData) && diskData.length > 0 && (cachedAt === 0 || (Date.now() - cachedAt) < historicalCacheTimeMs)) {
+          candleCache.set(cacheKey, diskData, historicalCacheTimeMs);
           recordHistoricalCacheHit(diskData.length);
           return diskData;
         }
@@ -697,7 +741,7 @@ export function createUpstoxClient(options?: {
 
       // Cache and return
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      candleCache.set(cacheKey, data as any[][], cacheTimeMs);
+      candleCache.set(cacheKey, data as any[][], historicalCacheTimeMs);
       
       try {
         fs.writeFileSync(diskCachePath, JSON.stringify({ data, ts: Date.now() }));
@@ -717,7 +761,7 @@ export function createUpstoxClient(options?: {
    * short TTL (the data is a rolling snapshot of the live session); a closed
    * market day resolves to an empty array rather than an error.
    */
-  const INTRADAY_CACHE_TIME_MS = Math.min(cacheTimeMs, 5 * 60 * 1000);
+  const INTRADAY_CACHE_TIME_MS = intradayCacheTimeMs;
 
   async function fetchIntradayCandles(
     instrumentKey: string,

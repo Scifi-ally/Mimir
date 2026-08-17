@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, RefreshCw, Calendar, ChevronLeft, ChevronRight, Sparkles } from "lucide-react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api } from "@/lib/api";
 import { FADE_FAST, FADE_SLOW } from "@/lib/motion";
@@ -24,33 +24,33 @@ interface DailyReport {
 }
 
 // Custom borderless, boxless markdown renderers
-const borderlessMarkdownComponents = {
-  h1: ({ children }: any) => (
+const borderlessMarkdownComponents: Components = {
+  h1: ({ children }) => (
     <h1 className="text-2xl font-bold tracking-tight text-slate-200 mt-2 mb-6 m-0 flex items-center gap-3">
       {children}
     </h1>
   ),
-  h3: ({ children }: any) => (
+  h3: ({ children }) => (
     <div className="flex items-center gap-2.5 mt-8 mb-3 pb-1 border-b border-border/10">
       <span className="w-1.5 h-1.5 rounded-full bg-slate-400 shrink-0" />
       <h3 className="text-xs font-mono tracking-wider uppercase text-slate-400 font-bold m-0">{children}</h3>
     </div>
   ),
-  table: ({ children }: any) => (
+  table: ({ children }) => (
     <div className="my-4 overflow-x-auto">
       <table className="w-full text-left text-xs font-mono border-collapse">{children}</table>
     </div>
   ),
-  thead: ({ children }: any) => (
+  thead: ({ children }) => (
     <thead className="border-b border-border/15 text-[10px] uppercase font-mono tracking-wider text-slate-400">{children}</thead>
   ),
-  tr: ({ children }: any) => (
+  tr: ({ children }) => (
     <tr className="border-b border-border/5 last:border-0 hover:bg-foreground/[0.02] transition-colors">{children}</tr>
   ),
-  th: ({ children }: any) => (
+  th: ({ children }) => (
     <th className="py-2.5 pr-6 font-semibold">{children}</th>
   ),
-  td: ({ children }: any) => {
+  td: ({ children }) => {
     const text = String(children || "");
     const isPos = text.includes("+") || (text.includes("Cr") && !text.includes("-"));
     const isNeg = text.includes("-");
@@ -66,16 +66,16 @@ const borderlessMarkdownComponents = {
       </td>
     );
   },
-  blockquote: ({ children }: any) => (
+  blockquote: ({ children }) => (
     <div className="my-6 pl-4 border-l-2 border-slate-500 py-1.5 text-foreground/90 font-mono text-sm flex items-center gap-3">
       <Sparkles className="w-4 h-4 text-slate-400 shrink-0" />
       <div className="font-medium">{children}</div>
     </div>
   ),
-  ul: ({ children }: any) => (
+  ul: ({ children }) => (
     <ul className="my-3 space-y-2 pl-0 list-none">{children}</ul>
   ),
-  li: ({ children }: any) => (
+  li: ({ children }) => (
     <li className="flex items-start gap-2.5 py-1 text-xs font-sans text-foreground/80">
       <span className="w-1.5 h-1.5 rounded-full bg-slate-500/80 mt-1.5 shrink-0" />
       <div className="flex-1 min-w-0">{children}</div>
@@ -212,7 +212,7 @@ export function ReportsLibrary({ isOpen, onClose }: ReportsLibraryProps) {
     },
   });
 
-  const reports: DailyReport[] = reportsQuery.data ?? [];
+  const reports = useMemo<DailyReport[]>(() => reportsQuery.data ?? [], [reportsQuery.data]);
 
   // Index reports by date (normalized YYYY-MM-DD)
   const reportsByDate = useMemo(() => {

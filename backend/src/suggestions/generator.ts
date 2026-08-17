@@ -36,6 +36,7 @@ import { createUpstoxClient } from "../lib/upstox-client";
 import { getISTDateStr, getNextTradingDayStr, todayStartUTC } from "../lib/ist-time";
 import { beginWorkflow, endWorkflow } from "../workflow/coordinator";
 import { calculateSuggestionTiming } from "./timing";
+import { evaluateSignalFreshness } from "./signal_freshness";
 
 // ── Create optimized API client (reused across calls) ────────────────────────
 
@@ -185,7 +186,7 @@ function summarizeRejections(rejectionCounts: Record<string, number>): Record<st
       add("capacity_gate", count);
       continue;
     }
-    if (["signal_cooldown", "downtrend_vix_long_block", "uptrend_short_block", "fno_ban", "corporate_action", "market_internals"].includes(reason)) {
+    if (["signal_cooldown", "downtrend_vix_long_block", "uptrend_short_block", "fno_ban", "corporate_action", "market_internals", "stale_signal", "signal_timestamp_invalid"].includes(reason)) {
       add("execution_guard", count);
       continue;
     }
@@ -712,7 +713,7 @@ export async function generateSuggestionsFromWatchlist(options?: {
     // driven by empirical win rates, not raw model confidence. ingestSignal is
     // told the blend already happened (it is not idempotent).
     for (const signal of pipelineResult.signals) {
-      const tradeType = isIntradayCandidate(signal.symbol) ? "INTRADAY" : "SWING";
+      const tradeType: "INTRADAY" | "SWING" = isIntradayCandidate(signal.symbol) ? "INTRADAY" : "SWING";
       const { confidence: calibratedConfidence, empirical } = await calibrateConfidence(
         signal.confidence,
         signal.setupType,
@@ -776,10 +777,12 @@ export async function generateSuggestionsFromWatchlist(options?: {
         continue;
       }
 
+      const tradeType: "INTRADAY" | "SWING" = isIntradayCandidate(signal.symbol) ? "INTRADAY" : "SWING";
       const rejectionReason = await ingestSignal(signal, ltp, {
         scanSessionId: options?.scanSessionId,
         source: options?.source,
-        isIntraday: isIntradayCandidate(signal.symbol),
+        tradeType,
+        isIntraday: tradeType === "INTRADAY",
         minRequiredRR,
         confidenceCalibrated: true,
       });
@@ -883,6 +886,7 @@ export async function ingestSignal(
     scanSessionId?: string;
     source?: string;
     isIntraday?: boolean;
+    tradeType?: "INTRADAY" | "SWING";
     minRequiredRR?: number;
     /** Set when the caller already applied calibrateConfidence (batch path). */
     confidenceCalibrated?: boolean;
@@ -1061,8 +1065,24 @@ export async function ingestSignal(
     signal.riskReward = Number(liveRR.toFixed(2));
   }
 
-  const isIntraday = options?.isIntraday ?? false;
-  const tradeType = isIntraday ? "INTRADAY" : "SWING";
+  const tradeType: "INTRADAY" | "SWING" = options?.tradeType
+    ?? (options?.isIntraday ? "INTRADAY" : "SWING");
+  const freshness = evaluateSignalFreshness({ generatedAt: signal.timestamp, tradeType });
+  if (!freshness.accepted) {
+    logger.info(
+      {
+        symbol: signal.symbol,
+        source: options?.source,
+        tradeType,
+        signalTimestamp: signal.timestamp,
+        ageMinutes: freshness.ageMinutes,
+        maxAgeMinutes: freshness.maxAgeMinutes,
+        reason: freshness.reason,
+      },
+      "Discarding suggestion: signal is not fresh enough for ingestion",
+    );
+    return freshness.reason === "stale_signal" ? "stale_signal" : "signal_timestamp_invalid";
+  }
 
   // Overnight gap risk: don't open new swing positions into a HIGH-risk
   // overnight setup (big implied gap or INR shock) — the stop math is void
@@ -1222,7 +1242,7 @@ export async function ingestSignal(
         technicalScore: signal.technicalScore,
         sentimentScore: signal.sentimentScore,
         rankingMode: signal.rankingProvider,
-        reasoning: `[SENTIMENT: ${signal.sentimentScore > 60 ? "BULLISH" : signal.sentimentScore < 40 ? "BEARISH" : "NEUTRAL"}] ${signal.reasoning} Confluence: ${signal.confluence.slice(0, 2).join(", ")}.`,
+        reasoning: `[SENTIMENT: ${signal.sentimentScore == null ? "UNAVAILABLE" : signal.sentimentScore > 60 ? "BULLISH" : signal.sentimentScore < 40 ? "BEARISH" : "NEUTRAL"}] ${signal.reasoning} Confluence: ${signal.confluence.slice(0, 2).join(", ")}.`,
         validityTill: timing.validityTill,
         expectedHoldMinutes: timing.expectedHoldMinutes,
         expiresAt: timing.expiresAt,

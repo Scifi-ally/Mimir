@@ -25,6 +25,8 @@ export interface BucketStats {
   avgLossR: number | null;
   expectancyR: number | null;
   totalPnlInr: number;
+  avgNetPnlInr: number | null;
+  maxDrawdownInr: number;
   profitFactor: number | null;
 }
 
@@ -47,13 +49,14 @@ interface TradeR {
   setupType: string;
   regime: string;
   direction: string;
+  closedAtMs: number;
 }
 
 function emptyBucket(): BucketStats {
   return {
     trades: 0, wins: 0, losses: 0, scratches: 0,
     winRatePct: null, avgWinR: null, avgLossR: null,
-    expectancyR: null, totalPnlInr: 0, profitFactor: null,
+    expectancyR: null, totalPnlInr: 0, avgNetPnlInr: null, maxDrawdownInr: 0, profitFactor: null,
   };
 }
 
@@ -65,6 +68,9 @@ function computeBucket(trades: TradeR[]): BucketStats {
   let lossSumR = 0;
   let grossProfit = 0;
   let grossLoss = 0;
+  let equity = 0;
+  let peakEquity = 0;
+  let maxDrawdownInr = 0;
 
   for (const t of trades) {
     b.trades++;
@@ -80,6 +86,9 @@ function computeBucket(trades: TradeR[]): BucketStats {
     }
     if (t.pnlInr > 0) grossProfit += t.pnlInr;
     else grossLoss += Math.abs(t.pnlInr);
+    equity += t.pnlInr;
+    peakEquity = Math.max(peakEquity, equity);
+    maxDrawdownInr = Math.max(maxDrawdownInr, peakEquity - equity);
   }
 
   const decided = b.wins + b.losses;
@@ -88,6 +97,8 @@ function computeBucket(trades: TradeR[]): BucketStats {
   b.avgLossR = b.losses > 0 ? Math.round((lossSumR / b.losses) * 100) / 100 : null;
   b.expectancyR = Math.round((trades.reduce((s, t) => s + t.r, 0) / trades.length) * 1000) / 1000;
   b.totalPnlInr = Math.round(b.totalPnlInr * 100) / 100;
+  b.avgNetPnlInr = Math.round((b.totalPnlInr / b.trades) * 100) / 100;
+  b.maxDrawdownInr = Math.round(maxDrawdownInr * 100) / 100;
   b.profitFactor = grossLoss > 0 ? Math.round((grossProfit / grossLoss) * 100) / 100 : null;
   return b;
 }
@@ -103,7 +114,7 @@ function verdictFor(overall: BucketStats): string {
   if (overall.expectancyR > 0) {
     return `MARGINAL (+${overall.expectancyR}R/trade). Edge is thin — tighten filters (check bySetup for negative cells to disable) before adding size.`;
   }
-  return `NEGATIVE (${overall.expectancyR}R/trade). Do NOT trade this live. Disable the worst setups in bySetup/byRegime and re-measure on paper.`;
+  return `NEGATIVE (${overall.expectancyR}R/trade). Keep the system paper-only and disable the worst setups in bySetup/byRegime before re-measuring.`;
 }
 
 export async function buildExpectancyReport(windowDays = 60): Promise<ExpectancyReport> {
@@ -145,8 +156,13 @@ export async function buildExpectancyReport(windowDays = 60): Promise<Expectancy
       setupType: row.setupType || "UNKNOWN",
       regime: row.marketRegime || "UNKNOWN",
       direction: row.direction || "UNKNOWN",
+      closedAtMs: row.closedAt?.getTime() ?? row.generatedAt.getTime(),
     });
   }
+
+  // Drawdown is path-dependent; use realized close order rather than database
+  // return order so every bucket reports a reproducible equity-curve statistic.
+  trades.sort((a, b) => a.closedAtMs - b.closedAtMs);
 
   const groupBy = (key: (t: TradeR) => string): Record<string, BucketStats> => {
     const groups = new Map<string, TradeR[]>();

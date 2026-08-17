@@ -121,7 +121,11 @@ function getPresentedToken(req: Request): string | null {
 }
 
 export function requireAdmin(req: Request, res: Response, next: NextFunction): void {
-  if (req.path === "/healthz" || req.path === "/system/auth-callback" || isLocalRequest(req)) {
+  const remoteAuthDisabled =
+    process.env.NODE_ENV !== "production" &&
+    (process.env.DISABLE_REMOTE_API_AUTH === "true" || process.env.DISABLE_REMOTE_API_AUTH === "1");
+
+  if (req.path === "/healthz" || req.path === "/system/auth-callback" || isLocalRequest(req) || remoteAuthDisabled) {
     next();
     return;
   }
@@ -230,6 +234,14 @@ export function logSecurityMode(): void {
   if (!secretKey || secretKey === "replace_with_a_long_random_secret") {
     logger.error("CRITICAL: UPSTOXBOT_SECRET_KEY is missing or insecure. Refusing to start.");
     process.exit(1);
+  }
+
+  const remoteAuthDisabled =
+    process.env.NODE_ENV !== "production" &&
+    (process.env.DISABLE_REMOTE_API_AUTH === "true" || process.env.DISABLE_REMOTE_API_AUTH === "1");
+  if (remoteAuthDisabled) {
+    logger.warn("Remote admin-token authentication disabled for the local paper-only development service");
+    return;
   }
 
   const token = process.env["UPSTOXBOT_ADMIN_TOKEN"]?.trim();

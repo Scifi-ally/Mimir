@@ -10,6 +10,7 @@ import { ScreenerTargetsStack } from "@/components/ScreenerTargetsStack";
 import { DetailPanel } from "@/components/DetailPanel";
 import { ScanClockPanel } from "@/components/ScanClockPanel";
 import { StatusBar } from "@/components/StatusBar";
+import { ScrapeverseCollectorPanel } from "@/components/ScrapeverseCollectorPanel";
 
 const SuggestionsSlider = lazy(() => import("@/components/SuggestionsSlider").then(m => ({ default: m.SuggestionsSlider })));
 const PaperTradingPanel = lazy(() => import("@/components/PaperTradingPanel").then(m => ({ default: m.PaperTradingPanel })));
@@ -223,7 +224,7 @@ export default function Dashboard() {
   const suggestions = suggestionsQuery.data ?? [];
   const hasNoStocks = watchlistItems.length === 0 && suggestions.length === 0 && activeSymbols.size === 0;
   const showClock = isScanActive || hasNoStocks;
-  const positions = positionsQuery.data ?? [];
+  const positions = useMemo(() => positionsQuery.data ?? [], [positionsQuery.data]);
   const regime = regimeQuery.data;
   const monitoring = monitoringQuery.data;
   // Null fields render "N/A" — never show fabricated macro numbers as real
@@ -586,9 +587,9 @@ export default function Dashboard() {
             </div>
 
             {/* Right Column: Detail Panel */}
-            <div className="flex flex-col w-[35%] xl:w-[28%] min-w-0 h-full pl-2">
+            <div className="flex flex-col w-[35%] xl:w-[28%] min-w-0 h-full pl-2 gap-3 overflow-y-auto">
               <motion.div 
-                className="h-full w-full min-h-0 min-w-0 rounded-2xl relative z-10 overflow-hidden"
+                className="min-h-[560px] w-full min-w-0 rounded-2xl relative z-10 overflow-hidden"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={FADE_FAST}
@@ -600,6 +601,7 @@ export default function Dashboard() {
                   isScanActive={isScanActive}
                 />
               </motion.div>
+              <ScrapeverseCollectorPanel />
             </div>
           </div>
           ) : (
@@ -665,6 +667,9 @@ export default function Dashboard() {
                 real height to breathe; 400px crushed the ladder + matrix. */}
             <div className="h-[600px] shrink-0 px-1">
               <DetailPanel suggestions={suggestions} selectedSymbol={activeSymbol} session={session} isScanActive={isScanActive} />
+            </div>
+            <div className="shrink-0 px-1">
+              <ScrapeverseCollectorPanel />
             </div>
           </div>
           )}

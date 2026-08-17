@@ -1,6 +1,6 @@
 import { KeyRound, Moon, Sun, Play, BarChart2, Wallet, Plus, Loader2, FileText, Bell, Settings, CheckCircle2, AlertCircle, Zap } from "lucide-react";
 import { useState, useEffect, memo, useRef } from "react";
-import { useQueryClient, useQuery } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { flushSync } from "react-dom";
 import { cn, toFixed } from "@/lib/format";
@@ -49,13 +49,6 @@ export const TopBar = memo(function TopBar({
   const [startingScan, setStartingScan] = useState(false);
   const [stoppingScan, setStoppingScan] = useState(false);
   const queryClient = useQueryClient();
-  const { data: tradingMode } = useQuery({
-    queryKey: ["trading-mode"],
-    queryFn: api.tradingMode,
-    refetchInterval: 30000,
-    staleTime: 15000,
-  });
-  const isLiveTrading = tradingMode?.mode === "LIVE";
   const isDualKeyConfigured = Boolean(status?.useDualApiKeys);
   const authorizedKeysCount = (status?.upstoxFeedAuthenticated ? 1 : 0) + (status?.upstoxDataAuthenticated ? 1 : 0);
 
@@ -285,18 +278,10 @@ export const TopBar = memo(function TopBar({
               variant="ghost"
               size="icon"
               onClick={onOpenPaperTrading}
-              className={cn(
-                "h-7 w-7 p-0 flex items-center justify-center transition-all duration-200 rounded-lg relative",
-                isLiveTrading
-                  ? "text-destructive hover:bg-destructive/10"
-                  : "text-foreground/60 hover:bg-foreground/[0.06] hover:text-foreground"
-              )}
-              title={isLiveTrading ? "Open Live Trading (REAL ORDERS)" : "Open Paper Trading"}
+              className="h-7 w-7 p-0 flex items-center justify-center transition-all duration-200 rounded-lg relative text-foreground/60 hover:bg-foreground/[0.06] hover:text-foreground"
+              title="Open paper trading — broker orders permanently disabled"
             >
               <Wallet strokeWidth={3} className="h-3.5 w-3.5" />
-              {isLiveTrading && (
-                <span className="absolute top-0.5 right-0.5 w-2 h-2 rounded-full bg-destructive animate-pulse" />
-              )}
             </Button>
             </motion.div>
 

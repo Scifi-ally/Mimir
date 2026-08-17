@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "check": "tsc -b --pretty false",
+    "lint": "eslint src",
     "preview": "vite preview",
     "test": "vitest run",
     "test:ui": "playwright test tests/ui",

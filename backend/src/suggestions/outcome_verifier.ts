@@ -7,18 +7,11 @@ import { createUpstoxClient } from "../lib/upstox-client";
 import { getAccessToken } from "../upstox/auth";
 import { findStockBySymbol } from "../analysis/stock_scanner";
 import { getISTDateStr } from "../lib/ist-time";
+import { calculateNetPnl } from "../trading/trade_economics";
 
 // Dedicated client: outcome verification runs off the hot path, so a longer
 // candle cache is fine and keeps us from re-hitting Upstox for the same window.
 const verifierClient = createUpstoxClient({ cacheTimeMs: 10 * 60 * 1000 });
-
-// Same flat round-trip cost model as accuracy_tracker.netPnl, duplicated here to
-// avoid importing the polling module (which pulls in the tick distribution).
-const COST_RATE_PER_SIDE = 0.0005;
-function netPnl(entry: number, exit: number, qty: number, gross: number): number {
-  const costs = (entry + exit) * qty * COST_RATE_PER_SIDE;
-  return gross - costs;
-}
 
 interface Candle {
   ts: number;
@@ -172,7 +165,15 @@ export async function verifyExpiredOutcomes(limit = 50): Promise<number> {
       }
 
       const gross = isBuy ? (exitPrice - entry) * qty : (entry - exitPrice) * qty;
-      const pnl = Math.round(netPnl(entry, exitPrice, qty, gross) * 100) / 100;
+      const tradeType = row.tradeType === "SWING" ? "SWING" : "INTRADAY";
+      const pnl = Math.round(calculateNetPnl({
+        entryPrice: entry,
+        exitPrice,
+        quantity: qty,
+        direction: isBuy ? "BUY" : "SELL",
+        tradeType,
+        grossPnl: gross,
+      }).netPnl * 100) / 100;
 
       const highs = candles.map((c) => c.high);
       const lows = candles.map((c) => c.low);

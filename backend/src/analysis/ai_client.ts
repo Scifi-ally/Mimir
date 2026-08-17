@@ -31,17 +31,18 @@ export interface BatchResult {
     forecast_return_pct: number;
     source: string;
   };
-  /** 0-100 news sentiment (Python's -1..1 is normalized at the parse boundary). */
-  sentiment_score: number;
+  /** 0-100 news sentiment (Python's -1..1 is normalized at the parse boundary); null when unavailable. */
+  sentiment_score: number | null;
   world_sentiment_score?: number;
   composite_score: number;
   components?: Record<string, number>;
   /** Calibrated P(target1 before stop) from the learned ranker; null/undefined
    *  when the ranker is unavailable and the composite score should drive ranking. */
   win_probability?: number | null;
-  /** False when the Python service hit a per-candidate exception and returned a
-   *  neutral 50 placeholder rather than a real blended score. Such a candidate
-   *  must not be treated as a genuine mid-strength setup. */
+    /** False when the Python service hit a per-candidate exception and returned
+   * an unscored result rather than a real blended score. Such a candidate must
+   * not be treated as a genuine mid-strength setup. */
+
   scored?: boolean;
   /** Recommended P(win) gate + whether the learned ranker served this batch.
    *  Stamped onto every result from the batch-level response so the ranking
@@ -256,14 +257,17 @@ export async function batchInference(
           // engine itself failed (its bullish_probability is the primary driver).
           // Chronos degradation is still visible to consumers via `chronos.source`.
           // Treat as fallback when the pattern engine errored OR when Python
-          // explicitly flagged the candidate as unscored (per-candidate exception
-          // → neutral 50 placeholder). Either way the AI contribution is unusable
+          // explicitly flagged the candidate as unscored (per-candidate exception).
+          // Either way the AI contribution is unusable
           // and the signal generator must revert to pure-technical confidence.
           const isFallback = res.technicalRanking?.source === "error" || (res as BatchResult).scored === false;
           // Python emits sentiment_score on a -1.0..1.0 scale; normalize to the
-          // 0-100 scale consumers expect (matching the native fallback below),
-          // with a missing score mapping to neutral 50.
-          const sentiment_score = Math.max(0, Math.min(100, ((res.sentiment_score ?? 0) + 1) * 50));
+          // 0-100 scale consumers expect. Missing or invalid sentiment remains
+          // null so it cannot masquerade as neutral evidence.
+          const rawSentiment = res.sentiment_score;
+          const sentiment_score = typeof rawSentiment === "number" && Number.isFinite(rawSentiment)
+            ? Math.max(0, Math.min(100, (rawSentiment + 1) * 50))
+            : null;
           // Stamp the batch-level ranker metadata onto each result so the signal
           // generator can apply the learned-probability gate per candidate without
           // threading a separate return value.
@@ -487,9 +491,8 @@ export async function batchInference(
         forecast_return_pct,
         source: "Indicator-Driven TS",
       },
-      // The native fallback has no news data — report neutral 50, never a
-      // price-derived number masquerading as news sentiment.
-      sentiment_score: 50,
+      // The native fallback has no news data; preserve the missing provenance.
+      sentiment_score: null,
       composite_score,
     });
   }

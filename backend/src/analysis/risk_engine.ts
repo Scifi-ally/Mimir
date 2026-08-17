@@ -23,10 +23,13 @@ import { getConfig } from "../config";
 import { logger } from "../lib/logger";
 import type { SetupCandidate, TechnicalSnapshot } from "./technical";
 import type { FeatureVector } from "./feature_engine";
-import { getGlobalMacroState } from "./global_macro";
 import { getAutoTunedRiskParams } from "./learning_engine";
 import { fetchFIIDIIData } from "../market_data/fii_dii";
 import { fetchOptionChainData } from "../market_data/option_chain";
+import { computeSafeQuantity } from "../trading/trade_economics";
+import { buildIndiaMarketContext, evaluateIndiaTradeability } from "./india_market_state";
+import { getGlobalMacroState } from "./global_macro";
+import { getMarketState } from "../market_data/market_state";
 
 // ── Risk assessment output ───────────────────────────────────────────────────
 
@@ -63,6 +66,13 @@ import { paperPositionsTable } from "../../db/src/schema/paper_trading";
 import { and, gte, eq } from "drizzle-orm";
 import { todayStartUTC } from "../lib/ist-time";
 import { STOCK_SECTOR_MAP } from "./stock_scanner";
+
+async function resolveMarketData<T>(promise: Promise<T>, timeoutMs = 800): Promise<T | null> {
+  return Promise.race([
+    promise,
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs)),
+  ]).catch(() => null);
+}
 
 // ── Open position tracking (in-memory for fast checks) ───────────────────────
 
@@ -201,7 +211,6 @@ export function fractionalKellyRiskPct(
   return Math.min(maxRiskPct, optimizedKellyFraction * 100);
 }
 
-import Decimal from "decimal.js";
 
 function computePositionSize(
   capital: number,
@@ -211,52 +220,28 @@ function computePositionSize(
   direction: "BUY" | "SELL",
   kelly?: { winProbability: number; payoffRatio: number },
 ): { quantity: number; maxRiskInr: number; investmentAmount: number; riskPct: number } {
-  const dEntry = new Decimal(entryPrice);
-  const dStop = new Decimal(stopLoss);
-  const dRiskPerShare = direction === "BUY" ? dEntry.minus(dStop) : dStop.minus(dEntry);
-  const riskPerShare = dRiskPerShare.toNumber();
-
-  if (riskPerShare <= 0) {
-    return { quantity: 0, maxRiskInr: 0, investmentAmount: 0, riskPct: 0 };
-  }
-
-  // Size the risk budget. With a calibrated win probability we scale it by
-  // quarter-Kelly (edge-proportional); without one we use the flat configured
-  // max (graceful degradation — identical to the previous behaviour).
   const effectiveRiskPct = kelly
     ? fractionalKellyRiskPct(kelly.winProbability, kelly.payoffRatio, maxRiskPct)
     : maxRiskPct;
-
   if (effectiveRiskPct <= 0) {
     return { quantity: 0, maxRiskInr: 0, investmentAmount: 0, riskPct: 0 };
   }
 
-  const dCapital = new Decimal(capital);
-  const maxRiskInr = dCapital.times(effectiveRiskPct).dividedBy(100).toNumber();
-  let quantity = new Decimal(maxRiskInr).dividedBy(dRiskPerShare).floor().toNumber();
-
-  // Cap position to 20% of capital
-  const maxPositionValue = dCapital.times(0.20).toNumber();
-  const positionValue = new Decimal(quantity).times(dEntry).toNumber();
-  if (positionValue > maxPositionValue) {
-    quantity = new Decimal(maxPositionValue).dividedBy(dEntry).floor().toNumber();
-  }
-
-  // Fail closed: NaN (e.g. from a malformed auto-tuned risk param) must size to
-  // zero — `NaN < 1` is false, so the naive guard would let NaN through.
-  if (!(quantity >= 1)) {
+  const sized = computeSafeQuantity({
+    capital,
+    riskPct: effectiveRiskPct,
+    entryPrice,
+    stopLoss,
+    direction,
+  });
+  if (sized.rejected) {
     return { quantity: 0, maxRiskInr: 0, investmentAmount: 0, riskPct: 0 };
   }
-
-  const actualRiskInr = new Decimal(quantity).times(dRiskPerShare).toNumber();
-  const investmentAmount = new Decimal(quantity).times(dEntry).toNumber();
-  const riskPct = capital > 0 ? new Decimal(actualRiskInr).times(100).dividedBy(dCapital).toNumber() : 0;
-
   return {
-    quantity,
-    maxRiskInr: Math.round(actualRiskInr * 100) / 100,
-    investmentAmount: Math.round(investmentAmount * 100) / 100,
-    riskPct: Math.round(riskPct * 100) / 100,
+    quantity: sized.quantity,
+    maxRiskInr: Math.round(sized.actualRiskInr * 100) / 100,
+    investmentAmount: Math.round(sized.investmentAmount * 100) / 100,
+    riskPct: Math.round(sized.riskPct * 100) / 100,
   };
 }
 
@@ -275,6 +260,22 @@ export async function assessRisk(
   const warnings: string[] = [];
 
   const { entryPrice, stopLoss, target1, target2, riskReward, direction } = setup;
+  const indiaContext = buildIndiaMarketContext(undefined, getGlobalMacroState());
+  const sectorChangePct = getMarketState().topSectors.find((item) => item.name === sector)?.changePct;
+  const indiaTradeability = evaluateIndiaTradeability({
+    price: snap.close,
+    avgDailyVolume: snap.avgDailyVolume,
+    atrPct: snap.close > 0 ? (snap.atr14 / snap.close) * 100 : 0,
+    volumeRatio: snap.volumeRatio,
+    sectorChangePct,
+  }, indiaContext, {
+    minDailyVolume: cfg.minDailyVolume,
+    minDailyTurnoverInr: cfg.minDailyTurnoverInr,
+  });
+  warnings.push(...indiaTradeability.warnings.map((warning) => `India market: ${warning}`));
+  if (!indiaTradeability.accepted) {
+    rejections.push(...indiaTradeability.reasons.map((reason) => `India tradeability: ${reason}`));
+  }
 
   // ── Check 1: Risk-Reward ratio ────────────────────────────────────────
   const turnoverInr = snap.avgDailyVolume * snap.close;
@@ -353,8 +354,10 @@ export async function assessRisk(
   }
 
   // ── Check 9: Indian Market Institutional Constraints ────────────────────
-  const fiiDii = await fetchFIIDIIData();
-  const optionChain = await fetchOptionChainData();
+  const [fiiDii, optionChain] = await Promise.all([
+    resolveMarketData(fetchFIIDIIData()),
+    resolveMarketData(fetchOptionChainData()),
+  ]);
 
   if (fiiDii) {
     if (direction === "BUY" && fiiDii.fiiNetInr < -3000) {
@@ -373,7 +376,10 @@ export async function assessRisk(
   }
 
   // ── Position Sizing Calculation ───────────────────────────────────────────────────
-  const effectiveMaxRiskPct = Math.min(cfg.maxRiskPerTradePct, autoRisk.maxRiskPerTradePct);
+  const effectiveMaxRiskPct = Math.min(
+    cfg.maxRiskPerTradePct,
+    autoRisk.maxRiskPerTradePct,
+  ) * indiaTradeability.riskMultiplier;
   // Edge-proportional sizing: when the learned ranker gave a calibrated win
   // probability, size via quarter-Kelly on the setup's own payoff ratio. Without
   // one, fall back to the flat configured max (unchanged behaviour).
@@ -390,14 +396,10 @@ export async function assessRisk(
     kelly,
   );
 
-  // Dynamic Macro Risk Adjustment
-  const macro = getGlobalMacroState();
-  if (macro.eventRiskActive && quantity > 0) {
-    warnings.push("Halving position size due to elevated global macro event risk (Yields/DXY)");
-    quantity = Math.floor(quantity * 0.5);
-    maxRiskInr = maxRiskInr * 0.5;
-    investmentAmount = investmentAmount * 0.5;
-    riskPct = riskPct * 0.5;
+  // India event/geopolitical risk is already applied exactly once through the
+  // shared tradeability risk multiplier above; do not apply a second haircut.
+  if (indiaTradeability.riskMultiplier < 1 && quantity > 0) {
+    warnings.push(`India market risk multiplier applied: ${(indiaTradeability.riskMultiplier * 100).toFixed(0)}% of normal risk`);
   }
 
   if (quantity === 0) {

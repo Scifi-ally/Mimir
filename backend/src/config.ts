@@ -39,10 +39,9 @@ export interface TradingConfig {
   weeklyLossLimitPct: number;
   rollingDrawdownPct: number;
   maxDeployedCapitalPct: number;
+  // Mimir is permanently signal-only: all fills are simulated and broker order
+  // placement is disabled. These fields remain for database/API compatibility.
   paperTradingEnabled: boolean;
-  // "PAPER" (default) — fills simulated only. "LIVE" — every engine fill is
-  // mirrored to the broker as a real order. Both flags must agree for live:
-  // tradingMode === "LIVE" AND paperTradingEnabled === false.
   tradingMode: "PAPER" | "LIVE";
   upstoxApiKey: string;
   upstoxApiSecret: string;
@@ -112,7 +111,9 @@ export function getConfig(): TradingConfig {
 }
 
 function applyConfig(partial: Partial<TradingConfig>): TradingConfig {
-  _config = { ..._config, ...partial };
+  // Keep the compatibility fields deterministic while preventing any caller,
+  // UI setting, or stale database value from arming real order execution.
+  _config = { ..._config, ...partial, paperTradingEnabled: true, tradingMode: "PAPER" };
   return _config;
 }
 
@@ -157,8 +158,9 @@ function rowToConfig(row: typeof tradingConfigTable.$inferSelect): TradingConfig
     weeklyLossLimitPct: numberOrDefault(row.weeklyLossLimitPct, defaultConfig.weeklyLossLimitPct),
     rollingDrawdownPct: numberOrDefault(row.rollingDrawdownPct, defaultConfig.rollingDrawdownPct),
     maxDeployedCapitalPct: numberOrDefault(row.maxDeployedCapitalPct, defaultConfig.maxDeployedCapitalPct),
-    paperTradingEnabled: row.paperTradingEnabled ?? defaultConfig.paperTradingEnabled,
-    tradingMode: row.tradingMode === "LIVE" ? "LIVE" : "PAPER",
+    // Ignore stale database/UI live flags. Mimir is paper-only by design.
+    paperTradingEnabled: true,
+    tradingMode: "PAPER",
     upstoxApiKey: row.upstoxApiKey ?? defaultConfig.upstoxApiKey,
     // MEDIUM FIX (Issue #23): Handle empty strings properly when revealing secrets
     upstoxApiSecret: row.upstoxApiSecret && row.upstoxApiSecret.length > 0 ? revealSecret(row.upstoxApiSecret) : defaultConfig.upstoxApiSecret,

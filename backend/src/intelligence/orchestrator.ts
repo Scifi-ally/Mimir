@@ -16,6 +16,8 @@ import { TelemetryEngine, type ModelDecayTelemetry } from "./telemetry_engine";
 import { intelligenceWorkerPools } from "./worker_pool";
 import { detectAlerts } from "../analysis/alerts";
 import { getCompositeMarketContext } from "../analysis/composite_context";
+import { getConfig } from "../config";
+import { computeSafeQuantity } from "../trading/trade_economics";
 import type { OHLCV } from "../analysis/technical";
 import type {
   IntelligenceSnapshot,
@@ -179,6 +181,18 @@ class ScannerOrchestrator {
 
             // Generate suggestions for top 5 ranked opportunities
             for (const opportunity of ranked.slice(0, 5)) {
+              const rtConfig = getConfig();
+              const rtSizing = computeSafeQuantity({
+                capital: rtConfig.tradingCapital,
+                riskPct: rtConfig.maxRiskPerTradePct,
+                entryPrice: opportunity.entry,
+                stopLoss: opportunity.stopLoss,
+                direction: opportunity.direction,
+              });
+              if (rtSizing.rejected) {
+                logger.debug({ symbol: opportunity.symbol, reason: rtSizing.rejectionReason }, "Realtime candidate rejected by shared risk sizing");
+                continue;
+              }
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               const signal: any = {
                 symbol: opportunity.symbol,
@@ -190,29 +204,41 @@ class ScannerOrchestrator {
                 target1: opportunity.target,
                 target2: null,
                 riskReward: opportunity.riskReward,
-                aiScore: opportunity.aiScore ?? 50,
+                aiScore: opportunity.aiScore ?? null,
                 confidence: Math.round(opportunity.compositeScore * 10),
-                patternScore: 50,
-                chronosScore: 50,
-                technicalScore: 50,
-                sentimentScore: 50,
+                // The realtime opportunity contract does not contain pattern,
+                // Chronos, or sentiment features. Preserve them as unavailable;
+                // zero would be interpreted as a measured negative score.
+                patternScore: null,
+                chronosScore: null,
+                technicalScore: Math.round(Math.max(0, Math.min(10, opportunity.score)) * 10),
+                sentimentScore: null,
                 sector: "Unknown",
                 regime: this.breadth.getSnapshot()?.regime ?? "UNKNOWN",
-                positionSize: 1,
-                maxRiskInr: Math.abs(opportunity.entry - opportunity.stopLoss),
+                positionSize: rtSizing.quantity,
+                maxRiskInr: rtSizing.actualRiskInr,
                 stopDistancePct: (Math.abs(opportunity.entry - opportunity.stopLoss) / opportunity.entry) * 100,
-                featureVector: { atr14: (Math.abs(opportunity.entry - opportunity.stopLoss) / 1.5) },
+                // No full point-in-time feature vector exists for this realtime
+                // worker yet. Do not persist a skeletal vector as if it were a
+                // complete training observation.
+                featureVector: null,
                 reasoning: opportunity.rankReasoning ? opportunity.rankReasoning.join("; ") : "",
                 confluence: [],
                 rankingProvider: "AI Ranking",
-                signalFactors: null,
+                signalFactors: {
+                  source: "realtime_ranker",
+                  featureCompleteness: "technical_only",
+                  modelFieldsMissing: ["pattern", "chronos", "sentiment", "sector"],
+                },
+                timestamp: new Date().toISOString(),
+                signalId: crypto.randomUUID(),
               };
 
               const { ingestSignal, fetchLTPForSymbols } = await import("../suggestions/generator");
               const liveLtp = this.tickEngine.getState(opportunity.instrumentKey)?.ltp;
               const ltpMap = liveLtp ? { [opportunity.symbol]: liveLtp } : await fetchLTPForSymbols([opportunity.symbol]);
               // ingestSignal returns null on success, or a rejection-reason string.
-              const rejectionReason = await ingestSignal(signal, ltpMap[opportunity.symbol] ?? opportunity.entry, { isIntraday: true, source: "realtime" });
+              const rejectionReason = await ingestSignal(signal, ltpMap[opportunity.symbol] ?? opportunity.entry, { tradeType: "INTRADAY", isIntraday: true, source: "realtime" });
               if (rejectionReason) {
                 logger.debug({ symbol: opportunity.symbol, rejectionReason }, "Realtime suggestion rejected by ingest gates");
               } else {
@@ -465,6 +491,8 @@ export async function startMarketIntelligence(): Promise<void> {
     const { customScreenerRunsTable } = await import("../../db/src/schema/custom_screener");
     const { eq, and } = await import("drizzle-orm");
     const { runCustomScreener } = await import("../analysis/custom_screener_engine");
+    const { ensureScanRunTable } = await import("../workflow/scan_persistence");
+    await ensureScanRunTable();
 
     // 1. Mark ghost RUNNING scans as FAILED
     await db.update(customScreenerRunsTable)

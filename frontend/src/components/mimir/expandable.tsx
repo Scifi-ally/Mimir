@@ -11,6 +11,8 @@ interface ExpandableContextType {
 
 const ExpandableContext = createContext<ExpandableContextType | undefined>(undefined);
 
+// The hook intentionally shares the component's private context; keep it colocated.
+// eslint-disable-next-line react-refresh/only-export-components
 export function useExpandable() {
   const context = useContext(ExpandableContext);
   if (!context) {

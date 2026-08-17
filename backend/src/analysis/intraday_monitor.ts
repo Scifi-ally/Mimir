@@ -855,7 +855,9 @@ async function generateIntraDaySuggestion(
       patternScore: 0,
       chronosScore: 0,
       technicalScore: setup.score,
-      sentimentScore: 50,
+      // This monitor path is technical-only; do not represent unavailable
+      // sentiment as a neutral 50 because it contaminates later attribution.
+      sentimentScore: 0,
 
       sector,
       regime: regimeOutput?.regime ?? "UNKNOWN",
@@ -910,6 +912,7 @@ async function generateIntraDaySuggestion(
     // intelligenceBus publish.
     const rejectionReason = await ingestSignal(signal, currentPrice, {
       source: "intraday_monitor",
+      tradeType: "INTRADAY",
       isIntraday: true,
     });
 

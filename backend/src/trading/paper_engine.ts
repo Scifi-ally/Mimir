@@ -12,10 +12,10 @@ import type { SuggestionTriggeredEvent, MarketTickEvent } from "../intelligence/
 import { todayStartUTC } from "../lib/ist-time";
 import { broadcast } from "../ws/websocket_server";
 import { createServerEvent } from "../ws/events";
-import { isLiveModeActive, placeLiveOrder } from "./broker_orders";
 import { stateStore } from "../lib/redis_state";
 import { getCalibration, ensureFresh } from "../analysis/calibration_engine";
 import Decimal from "decimal.js";
+import { computeSafeQuantity, calculateNetPnl, type TradeType } from "./trade_economics";
 
 let engineActive = false;
 
@@ -87,7 +87,7 @@ export async function initPaperEngine() {
   intelligenceBus.subscribe("suggestionTriggered", async (event: SuggestionTriggeredEvent) => {
     try {
       const config = getConfig();
-      if (!config.paperTradingEnabled && config.tradingMode !== "LIVE") {
+      if (!config.paperTradingEnabled) {
         logger.warn({ suggestionId: event.suggestionId }, "PaperEngine: suggestion triggered but engine is disabled — no trade taken");
         return;
       }
@@ -114,6 +114,7 @@ export async function initPaperEngine() {
         aiScore: sugRow.aiScore,
         patternScore: sugRow.patternScore,
         technicalScore: sugRow.technicalScore,
+        tradeType: sugRow.tradeType === "SWING" ? "SWING" : "INTRADAY",
       };
 
       logger.info({ symbol: suggestion.symbol, confidence: suggestion.confidence, fillPrice: event.fillPrice }, "PaperEngine: Processing suggestionTriggered event");
@@ -203,8 +204,7 @@ export async function initPaperEngine() {
       // usually cover it; this makes sizing not depend on scheduler health).
       const KELLY_MIN_SAMPLES = 30;
       await ensureFresh();
-      const isSwingTrade = Boolean(suggestion.setup?.toLowerCase().includes("swing") || suggestion.setup?.toLowerCase().includes("cnc"));
-      const tradeCategory = isSwingTrade ? "SWING" : "INTRADAY";
+      const tradeCategory = suggestion.tradeType;
       const cal = getCalibration(suggestion.setup, tradeCategory);
       if (cal && cal.samples >= KELLY_MIN_SAMPLES && suggestion.riskReward > 0) {
         const p = cal.winRate;
@@ -217,8 +217,13 @@ export async function initPaperEngine() {
         riskPct = riskPct * (1 - w) + Math.min(optimizedKellyPct, maxRiskCap) * w;
       }
 
-      // Ensure within bounds
-      riskPct = Math.min(Math.max(riskPct, 0.20), maxRiskCap);
+      // Never force a minimum risk allocation. A non-positive empirical edge
+      // must not be converted into a live-sized trade by a floor.
+      riskPct = Math.min(Math.max(riskPct, 0), maxRiskCap);
+      if (riskPct <= 0) {
+        logger.warn({ symbol: suggestion.symbol, riskPct }, "PaperEngine: Non-positive edge — trade rejected");
+        return;
+      }
       const riskAmount = balance.mul(riskPct).div(100);
       
       logger.info({ 
@@ -295,8 +300,18 @@ export async function initPaperEngine() {
         return;
       }
 
-      // Calculate quantity, but guarantee at least 1 share if margin allows it
-      let quantity = Decimal.max(1, riskAmount.div(stopDistance).floor()).toNumber();
+      const sized = computeSafeQuantity({
+        capital: balance.toNumber(),
+        riskPct,
+        entryPrice: entry.toNumber(),
+        stopLoss: stopLoss.toNumber(),
+        direction: isBuy ? "BUY" : "SELL",
+      });
+      if (sized.rejected) {
+        logger.warn({ symbol: suggestion.symbol, reason: sized.rejectionReason }, "PaperEngine: Trade rejected because one unit exceeds the risk budget");
+        return;
+      }
+      let quantity = sized.quantity;
 
       // Proper trader intraday MIS leverage on NSE (5x leverage -> 20% margin required per share)
       const intradayLeverage = new Decimal(5);
@@ -405,39 +420,6 @@ export async function initPaperEngine() {
         mode: "OPEN",
       }));
 
-      // LIVE mode: mirror the entry to the broker. The internal book is the
-      // strategy's source of truth; the broker order is the real-money mirror.
-      if (isLiveModeActive()) {
-        const orderResult = await placeLiveOrder({
-          suggestionId: suggestion.id,
-          symbol: suggestion.symbol,
-          direction: suggestion.direction as "BUY" | "SELL",
-          quantity,
-          orderType: "ENTRY",
-          tradeType: isSwingTrade ? "SWING" : "INTRADAY",
-          referencePrice: entry.toNumber(),
-        });
-
-        if (!orderResult.ok) {
-          logger.error({ symbol: suggestion.symbol, error: orderResult.error }, "PaperEngine: Live broker order failed — reverting internal DB position");
-          await db.transaction(async (tx) => {
-            await tx.update(paperPositionsTable)
-              .set({ status: "REJECTED" })
-              .where(sql`${paperPositionsTable.suggestionId} = ${suggestion.id} AND ${paperPositionsTable.status} = 'OPEN'`);
-            
-            await tx.update(paperAccountsTable)
-              .set({ allocatedMargin: sql`GREATEST(0, allocated_margin - ${requiredMargin.toFixed(2)})` })
-              .where(eq(paperAccountsTable.id, account.id));
-          });
-        }
-
-        broadcast(createServerEvent.systemAlert({
-          message: orderResult.ok
-            ? `LIVE order placed: ${suggestion.direction} ${quantity} ${suggestion.symbol}`
-            : `LIVE order FAILED: ${suggestion.symbol} — ${orderResult.error} (Position reverted)`,
-          severity: orderResult.ok ? "info" : "error",
-        }), "system");
-      }
 
     } catch (err) {
       logger.error({ err }, "PaperEngine: Failed to process suggestion");
@@ -452,7 +434,7 @@ export async function initPaperEngine() {
     const nextLock = lock.then(async () => {
       try {
         const config = getConfig();
-        if (!config.paperTradingEnabled && config.tradingMode !== "LIVE") return;
+        if (!config.paperTradingEnabled) return;
 
         const positionsForSymbol = await db.select().from(paperPositionsTable)
           .where(and(
@@ -478,6 +460,7 @@ export async function initPaperEngine() {
       for (const pos of positionsForSymbol) {
         const suggestion = sugMap.get(pos.suggestionId!);
         if (!suggestion) continue;
+        const tradeType: TradeType = suggestion.tradeType === "SWING" ? "SWING" : "INTRADAY";
 
         const ltp = new Decimal(tick.ltp);
         const entryPrice = new Decimal(pos.avgEntryPrice);
@@ -583,7 +566,14 @@ export async function initPaperEngine() {
               // Force exit with wider slippage (0.5% instead of 0.05%)
               const ltpAtTrigger = new Decimal(tick.ltp || pos.avgEntryPrice); // Fallback to entry if no LTP
               const slippedLtp = isBuy ? ltpAtTrigger.mul(0.995) : ltpAtTrigger.mul(1.005);
-              const realizedPnl = isBuy ? slippedLtp.minus(entryPrice).mul(qty) : entryPrice.minus(slippedLtp).mul(qty);
+              const economics = calculateNetPnl({
+                entryPrice: entryPrice.toNumber(),
+                exitPrice: slippedLtp.toNumber(),
+                quantity: qty.toNumber(),
+                direction: isBuy ? "BUY" : "SELL",
+                tradeType,
+              });
+              const realizedPnl = new Decimal(economics.netPnl);
               
               // Create exit with circuit limit flag
               const account = await getAccount();
@@ -614,7 +604,8 @@ export async function initPaperEngine() {
                   status: "EXECUTED"
                 });
 
-                const releasedMargin = qty.mul(entryPrice).div(5);
+                const exitLeverage = suggestion.tradeType === "SWING" ? 1 : 5;
+                const releasedMargin = qty.mul(entryPrice).div(exitLeverage);
                 await tx.update(paperAccountsTable)
                   .set({ 
                     allocatedMargin: sql`GREATEST(0, allocated_margin - ${releasedMargin.toFixed(2)})`,
@@ -626,17 +617,6 @@ export async function initPaperEngine() {
               circuitLimitTracker.delete(pos.symbol);
               logger.warn({ symbol: pos.symbol, realizedPnl: realizedPnl.toNumber() }, "PaperEngine: Forced exit during circuit limit");
 
-              if (isLiveModeActive()) {
-                await placeLiveOrder({
-                  suggestionId: pos.suggestionId,
-                  symbol: pos.symbol,
-                  direction: isBuy ? "SELL" : "BUY",
-                  quantity: qty.toNumber(),
-                  orderType: "CIRCUIT_LIMIT_EXIT",
-                  tradeType: "INTRADAY",
-                  referencePrice: slippedLtp.toNumber(),
-                });
-              }
               continue;
             }
             
@@ -676,16 +656,16 @@ export async function initPaperEngine() {
             slippedLtp = ltpAtTrigger.mul(1 + exitSlipFrac);
           }
           
-          const grossPnl = isBuy ? slippedLtp.minus(entryPrice).mul(qty) : entryPrice.minus(slippedLtp).mul(qty);
-          const brokeragePerOrder = new Decimal(getConfig().brokeragePerOrderInr ?? 20);
-          const totalBrokerage = brokeragePerOrder.mul(2); // Entry + Exit orders
-          const sellValue = isBuy ? slippedLtp.mul(qty) : entryPrice.mul(qty);
-          const sttTax = sellValue.mul(0.00025); // 0.025% STT on sell leg for intraday equity
-          const totalCharges = totalBrokerage.add(sttTax);
-          const realizedPnl = grossPnl.minus(totalCharges);
+          const economics = calculateNetPnl({
+            entryPrice: entryPrice.toNumber(),
+            exitPrice: slippedLtp.toNumber(),
+            quantity: qty.toNumber(),
+            direction: isBuy ? "BUY" : "SELL",
+            tradeType,
+          });
+          const realizedPnl = new Decimal(economics.netPnl);
 
-          const isSwingExit = pos.symbol.includes("-SWING");
-          const exitLeverage = isSwingExit ? 1 : 5;
+          const exitLeverage = tradeType === "SWING" ? 1 : 5;
           const releasedMargin = qty.mul(entryPrice).div(exitLeverage);
 
           const account = await getAccount();
@@ -737,44 +717,6 @@ export async function initPaperEngine() {
             mode: "CLOSED",
           }));
 
-          if (isLiveModeActive()) {
-            const exitOrder = await placeLiveOrder({
-              suggestionId: pos.suggestionId,
-              symbol: pos.symbol,
-              direction: isBuy ? "SELL" : "BUY",
-              quantity: qty.toNumber(),
-              orderType: exitReason,
-              tradeType: isSwingExit ? "SWING" : "INTRADAY",
-              referencePrice: slippedLtp.toNumber(),
-            });
-
-            if (!exitOrder.ok) {
-              logger.error({ symbol: pos.symbol, error: exitOrder.error }, "PaperEngine: LIVE exit order failed — reverting internal position to OPEN");
-              await db.transaction(async (tx) => {
-                await tx.update(paperPositionsTable)
-                  .set({
-                    status: "OPEN",
-                    realizedPnl: "0.00",
-                    closedAt: null
-                  })
-                  .where(eq(paperPositionsTable.id, pos.id));
-
-                await tx.update(paperAccountsTable)
-                  .set({
-                    allocatedMargin: sql`allocated_margin + ${releasedMargin.toFixed(2)}`,
-                    balance: sql`balance - ${realizedPnl.toFixed(2)}`
-                  })
-                  .where(eq(paperAccountsTable.id, account.id));
-              });
-            }
-
-            broadcast(createServerEvent.systemAlert({
-              message: exitOrder.ok
-                ? `LIVE exit placed: ${isBuy ? "SELL" : "BUY"} ${qty.toNumber()} ${pos.symbol} (${exitReason})`
-                : `LIVE exit FAILED: ${pos.symbol} — ${exitOrder.error}. Position reverted to OPEN for safety!`,
-              severity: exitOrder.ok ? "info" : "error",
-            }), "system");
-          }
         } else {
           if (!newTrailingStop.equals(currentStop) || unrealized.toFixed(2) !== pos.unrealizedPnl) {
             await db.update(paperPositionsTable)

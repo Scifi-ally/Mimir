@@ -16,6 +16,7 @@ import { computeATR, computeMACD, computeBollingerBands } from "./technical";
 import { getMarketState } from "../market_data/market_state";
 import { getLastRegimeOutput } from "./regime_detector";
 import { logger } from "../lib/logger";
+import { buildIndiaMarketContext, evaluateIndiaTradeability } from "./india_market_state";
 
 // ── Feature vector interface ─────────────────────────────────────────────────
 
@@ -82,6 +83,14 @@ export interface FeatureVector {
   bidAskImbalance: number;   // -1.0 to 1.0 (sellers vs buyers)
   optionsOiChangeRate: number; // % change in OI
   fiiDiiNetFlowLag: number;  // lagged net flow figure
+
+  // India market-state metadata. These are deliberately excluded from the
+  // learned ranker until point-in-time historical snapshots are available.
+  indiaTradeabilityScore?: number;
+  indiaEstimatedImpactBps?: number;
+  indiaCapacityInr?: number;
+  indiaRiskMultiplier?: number;
+  indiaDataQuality?: "FULL" | "PARTIAL" | "UNAVAILABLE";
 
   // Set true by builders that cannot populate the full candle-history feature
   // set (e.g. the tick path's buildMonitorFeatureVector, which hardcodes ~15
@@ -424,6 +433,14 @@ export function computeFeatureVector(
   const trendScore = computeTrendScore(snap, emaAlignment, trendConsistency);
   const volatilityScore = computeVolatilityScore(snap, closes);
   const riskRewardScore = computeRiskRewardScore(riskReward);
+  const indiaContext = buildIndiaMarketContext(marketState);
+  const indiaTradeability = evaluateIndiaTradeability({
+    price: snap.close,
+    avgDailyVolume: snap.avgDailyVolume,
+    atrPct,
+    volumeRatio: snap.volumeRatio,
+    sectorChangePct: sectorStrength,
+  }, indiaContext);
 
   // VPVR Point of Control distance
   const pocDistancePct = snap.vpvrPOC > 0
@@ -513,6 +530,15 @@ export function computeFeatureVector(
     bidAskImbalance,
     optionsOiChangeRate,
     fiiDiiNetFlowLag,
+
+    // India market-state metadata is persisted for attribution and risk, but
+    // excluded from RANKER_FEATURE_KEYS until historical point-in-time data is
+    // available for training without look-ahead or train/serve skew.
+    indiaTradeabilityScore: indiaTradeability.score,
+    indiaEstimatedImpactBps: indiaTradeability.estimatedImpactBps,
+    indiaCapacityInr: indiaTradeability.capacityInr,
+    indiaRiskMultiplier: indiaTradeability.riskMultiplier,
+    indiaDataQuality: indiaTradeability.dataQuality,
     rankerIncomplete,
   };
 
