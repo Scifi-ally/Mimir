@@ -185,8 +185,12 @@ export async function checkAIHealth(): Promise<HealthResponse> {
       ranking_provider: "Native Rankings",
       uptime_seconds: process.uptime(),
       models: {
-        technicalRanking: { loaded: false, healthy: false },
-        chronos: { loaded: false, healthy: false }
+        technical_engine: { loaded: false, healthy: false, fallback_active: true },
+        chronos: { loaded: false, healthy: false, fallback_active: true },
+        ranker: { loaded: false, healthy: false, fallback_active: true },
+        sentiment: { loaded: false, healthy: false, fallback_active: true, fallback_mode: "keyword_or_neutral" },
+        confluence: { loaded: false, healthy: false, fallback_active: true },
+        rl_inference: { loaded: false, healthy: false, fallback_active: true },
       },
       hardware: { type: "Node.js Fallback" },
       diagnostics: { latency: "0ms", error: "FastAPI unreachable" }

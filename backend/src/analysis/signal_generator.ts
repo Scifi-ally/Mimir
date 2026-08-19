@@ -16,7 +16,7 @@
 import { logger } from "../lib/logger";
 import { detectRegime, getLastRegimeOutput, type MarketRegime, type RegimeOutput } from "./regime_detector";
 import { getScannerActivation, isScannerEnabled, setupTypeToScannerType } from "./scanner_activation";
-import { computeFeatureVector, toRankerFeatureArray, type FeatureVector } from "./feature_engine";
+import { computeFeatureVector, type FeatureVector } from "./feature_engine";
 import { assessRisk, syncRiskEngineState } from "./risk_engine";
 import { getConfig } from "../config";
 import type { TechnicalSnapshot, OHLCV } from "./technical";
@@ -28,6 +28,8 @@ import { stateStore, type RealtimeFeatures } from "../lib/redis_state";
 import { db, learningAnalyticsTable, symbolScoresTable, learningMetricsTable } from "../../db/src";
 import { eq } from "drizzle-orm";
 import { getISTDateStr } from "../lib/ist-time";
+import { createAnalysisTrace, recordAnalysisStage, runAnalysisStage, type AnalysisTrace } from "./analysis_contracts";
+import { toBatchInferenceCandidates } from "./inference_payload";
 
 export interface AdaptiveWeights {
   tech: number;
@@ -166,6 +168,7 @@ export interface DecisionTrace {
   rejectionValue?: number | string | boolean | string[] | null;
   threshold?: number;
   shap_values?: Record<string, number>;
+  analysisTraceId?: string;
 }
 
 export interface PipelineResult {
@@ -183,6 +186,7 @@ export interface PipelineResult {
   aiMode: "Rule Mode" | "AI Mode" | "Fallback Mode";
   rankingProvider: "Technical Ranking" | "AI Ranking";
   timestamp: string;
+  analysisTrace: AnalysisTrace;
 }
 
 // ── Confidence formula ───────────────────────────────────────────────────────
@@ -245,17 +249,27 @@ export async function runIntelligencePipeline(
   snapshotCache?: Map<string, TechnicalSnapshot>,
 ): Promise<PipelineResult> {
   const pipelineStart = Date.now();
+  const analysisTrace = createAnalysisTrace();
   const cfg = getConfig();
-  
-  const adaptiveWeights = await getAdaptiveWeights();
+
+  const adaptiveWeights = await runAnalysisStage(
+    analysisTrace,
+    "configuration",
+    getAdaptiveWeights,
+    { source: "adaptive_weights" },
+  );
 
   // ── Step 0: Sync risk engine state with the database (Single Source of Truth) ──
-  await syncRiskEngineState();
+  await runAnalysisStage(analysisTrace, "risk_state", syncRiskEngineState, { source: "risk_engine" });
 
   // ── Step 1: Update market regime ──────────────────────────────────────
   detectRegime();
   const regime = getLastRegimeOutput()!;
   const activation = getScannerActivation();
+  recordAnalysisStage(analysisTrace, "market_context", "ok", pipelineStart, {
+    source: "regime_detector",
+    metadata: { regime: regime.regime, confidence: regime.confidence },
+  });
 
   // Fetch learning metrics for current regime
   const learningMetricsRows = await db
@@ -292,6 +306,11 @@ export async function runIntelligencePipeline(
     { total: scanResults.length, afterActivation: activatedResults.length },
     "Candidates after scanner activation filter",
   );
+  recordAnalysisStage(analysisTrace, "candidate_activation", "ok", pipelineStart, {
+    candidateCount: activatedResults.length,
+    source: "scanner_activation",
+    metadata: { inputCount: scanResults.length },
+  });
 
   // ── Step 2.5: Calculate Candidate Breadth ──────────────────────────────
   let advancingCandidates = 0;
@@ -393,41 +412,59 @@ export async function runIntelligencePipeline(
     candidates.push({ result, features, candles, snap });
   }
 
+  recordAnalysisStage(analysisTrace, "feature_engineering", "ok", scanEnd, {
+    candidateCount: candidates.length,
+    source: "feature_engine",
+    metadata: { rankerContract: "32-feature" },
+  });
+
   // ── Step 4: AI Intelligence Layer ─────────────────────────────────────
   const aiStart = Date.now();
   let aiResults = new Map<string, BatchResult>();
 
+  const healthStart = Date.now();
   const health = await checkAIHealth();
+  recordAnalysisStage(analysisTrace, "ai_health", health.status === "healthy" ? "ok" : "degraded", healthStart, {
+    source: health.ranking_provider || "ai_service",
+    reason: health.status === "healthy" ? undefined : health.ai_mode,
+    metadata: {
+      status: health.status,
+      rankingProvider: health.ranking_provider,
+      modelKeys: Object.keys(health.models ?? {}),
+    },
+  });
 
+  const modelInferenceStart = Date.now();
   if (health.status !== "unavailable" && candidates.length > 0) {
-    aiResults = await batchInference(
-      candidates.map(c => ({
-        symbol: c.result.symbol,
-        ohlcv: c.candles.map((candle) => [
-          candle.open,
-          candle.high,
-          candle.low,
-          candle.close,
-          candle.volume,
-        ]),
-        // Project the feature vector onto the shared ranker contract so the AI
-        // service's LightGBM ranker sees exactly the features it trained on, in
-        // the same order. Sent alongside the full feature dict the composite
-        // path already consumes. Incomplete vectors (stale realtime data) skip
-        // ranker projection — toRankerFeatureArray throws on them, and one bad
-        // symbol must not kill the whole batch.
-        features: {
-          ...c.features,
-          ranker_features: c.features.rankerIncomplete ? null : toRankerFeatureArray(c.features),
-        },
-      })),
-    );
+    aiResults = await batchInference(toBatchInferenceCandidates(candidates.map(c => ({
+      symbol: c.result.symbol,
+      candles: c.candles,
+      features: c.features,
+    }))));
+    const fallbackOnly = aiResults.size === 0 || Array.from(aiResults.values()).every(result => result.isFallback);
+    recordAnalysisStage(analysisTrace, "model_inference", fallbackOnly ? "degraded" : "ok", modelInferenceStart, {
+      candidateCount: candidates.length,
+      source: fallbackOnly ? "native_fallback" : "python_ai",
+      reason: fallbackOnly ? "No usable model result returned" : undefined,
+      metadata: { resultCount: aiResults.size },
+    });
     logger.info(
-      { candidateCount: candidates.length, aiStatus: health.status },
+      { candidateCount: candidates.length, aiStatus: health.status, resultCount: aiResults.size },
       "AI batch inference completed",
     );
   } else if (candidates.length > 0) {
+    recordAnalysisStage(analysisTrace, "model_inference", "degraded", modelInferenceStart, {
+      candidateCount: candidates.length,
+      source: "native_fallback",
+      reason: "AI service unavailable",
+    });
     logger.warn("AI service unavailable — using fallback confidence scoring");
+  } else {
+    recordAnalysisStage(analysisTrace, "model_inference", "skipped", modelInferenceStart, {
+      candidateCount: 0,
+      source: "none",
+      reason: "No activated candidates with valid features",
+    });
   }
 
   const aiEnd = Date.now();
@@ -437,8 +474,9 @@ export async function runIntelligencePipeline(
   const rejectedSignals: IntelligenceSignal[] = [];
   let rejectedByRisk = 0;
   let rejectedByAI = 0;
-
+  const decisionStageStart = Date.now();
   for (const candidate of candidates) {
+
     const { result, features, snap } = candidate;
     const aiResult = aiResults.get(result.symbol);
     // AI contributes when the Python service returned a real pattern-engine
@@ -544,7 +582,8 @@ export async function runIntelligencePipeline(
         rejectionGate: gate,
         rejectionValue: value,
         threshold: thresholdVal,
-        shap_values: aiResult?.shap_values
+        shap_values: aiResult?.shap_values,
+        analysisTraceId: analysisTrace.traceId
       };
       
       return {
@@ -692,7 +731,7 @@ export async function runIntelligencePipeline(
 
     const dynamicReasoning = aiContributing
       ? `[LEARNING ENABLED] Reasons: Relative Strength +${rsCont.toFixed(1)}, Sector Rank +${sectorCont.toFixed(1)}, Volume Expansion +${features.volumeRatio ? ((features.volumeRatio - 1) * 100).toFixed(0) : "0"}%, Nifty50GPT Pattern Score +${patternCont.toFixed(1)}, Chronos Forecast Score +${chronosCont.toFixed(1)}, Total Composite Score ${confidence}. Contributions: Tech Quality +${techCont.toFixed(1)}, RS +${rsCont.toFixed(1)}, Sector +${sectorCont.toFixed(1)}, Nifty50GPT +${patternCont.toFixed(1)}, Chronos +${chronosCont.toFixed(1)}, Regime +${regimeCont.toFixed(1)}.`
-      : `[LEARNING ENABLED] Reasons: Relative Strength +${rsCont.toFixed(1)}, Sector Rank +${sectorCont.toFixed(1)}, Volume Expansion +${features.volumeRatio ? ((features.volumeRatio - 1) * 100).toFixed(0) : "0"}%, Technical Score ${technicalScore}, Total Composite Score ${confidence}. Contributions: Tech Quality +${techCont.toFixed(1)}, RS +${rsCont.toFixed(1)}, Sector +${sectorCont.toFixed(1)}, Regime +${regimeCont.toFixed(1)}.`;
+      : `[LEARNING DISABLED] Reasons: Relative Strength +${rsCont.toFixed(1)}, Sector Rank +${sectorCont.toFixed(1)}, Volume Expansion +${features.volumeRatio ? ((features.volumeRatio - 1) * 100).toFixed(0) : "0"}%, Technical Score ${technicalScore}, Total Composite Score ${confidence}. Contributions: Tech Quality +${techCont.toFixed(1)}, RS +${rsCont.toFixed(1)}, Sector +${sectorCont.toFixed(1)}, Regime +${regimeCont.toFixed(1)}.`;
 
     // ── Confidence threshold check ────────────────────────────────────
     let minConfidence = aiContributing ? cfg.minAutoConfidencePct : Math.min(55, cfg.minAutoConfidencePct);
@@ -867,12 +906,24 @@ export async function runIntelligencePipeline(
         bullish_probability: aiResult?.technicalRanking?.bullish_probability,
         confidencePath: usedConfluence ? "python_confluence" : "native_math_fallback",
         rankerBlendApplied: !!(aiResult?.ranker_loaded && typeof aiResult?.win_probability === "number"),
-        shap_values: aiResult?.shap_values
+        shap_values: aiResult?.shap_values,
+        analysisTraceId: analysisTrace.traceId
       }
     };
 
     signals.push(signal);
   }
+
+  recordAnalysisStage(analysisTrace, "decision_gates", "ok", decisionStageStart, {
+    candidateCount: candidates.length,
+    source: "signal_generator",
+    metadata: { signals: signals.length, rejectedByAI, rejectedByRisk },
+  });
+  recordAnalysisStage(analysisTrace, "risk_assessment", "ok", decisionStageStart, {
+    candidateCount: candidates.length,
+    source: "risk_engine",
+    metadata: { rejectedByRisk, accepted: signals.length },
+  });
 
   // Sort by confidence descending — surface highest quality first
   signals.sort((a, b) => b.confidence - a.confidence);
@@ -908,6 +959,7 @@ export async function runIntelligencePipeline(
     aiMode: signals.length > 0 ? signals[0]!.aiMode : (health.status === "unavailable" || health.status === "degraded") ? "Fallback Mode" : "AI Mode",
     rankingProvider: signals.length > 0 ? signals[0]!.rankingProvider : (health.status === "unavailable" || health.status === "degraded") ? "Technical Ranking" : "AI Ranking",
     timestamp: new Date().toISOString(),
+    analysisTrace,
     rejectedSignals
   };
 }

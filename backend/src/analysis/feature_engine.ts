@@ -16,6 +16,7 @@ import { computeATR, computeMACD, computeBollingerBands } from "./technical";
 import { getMarketState } from "../market_data/market_state";
 import { getLastRegimeOutput } from "./regime_detector";
 import { logger } from "../lib/logger";
+export { RANKER_FEATURE_KEYS, toRankerFeatureArray, type RankerFeatureKey } from "./ranker_contract";
 
 // ── Feature vector interface ─────────────────────────────────────────────────
 
@@ -92,79 +93,7 @@ export interface FeatureVector {
   rankerIncomplete?: boolean;
 }
 
-// ── Ranker feature contract ──────────────────────────────────────────────────
-// The single source of truth for WHICH features (and in what order) the learned
-// ranker consumes, shared by the training extractor and the serving path so the
-// two can never drift (train/serve skew is the #1 cause of a good backtest that
-// loses live money).
-//
-// Deliberately EXCLUDES the three live-only fields — `regimeScore`,
-// `sectorStrength`, `marketStrength` — which depend on getLastRegimeOutput() /
-// getMarketState() and cannot be reconstructed point-in-time in a candle
-// backtest. Feeding them would poison training with look-ahead / zeroed values.
-// Regime and sector already act as separate gates upstream in the pipeline, so
-// the ranker focuses purely on the setup's own candle-derived structure.
-export const RANKER_FEATURE_KEYS = [
-  "rsi14",
-  "atr14",
-  "atrPct",
-  "adx14",
-  "volumeRatio",
-  "vwapDistance",
-  "ema20Dist",
-  "ema50Dist",
-  "ema200Dist",
-  "emaAlignment",
-  "trendConsistency",
-  "rsVsNifty60d",
-  "rsVsSector60d",
-  "pocDistancePct",
-  "bbWidthPct",
-  "vcpContraction",
-  "momentumScore",
-  "trendScore",
-  "volatilityScore",
-  "riskRewardScore",
-  "priceRoc5",
-  "priceRoc10",
-  "priceRoc20",
-  "bodyRatio",
-  "upperWickRatio",
-  "lowerWickRatio",
-  "closeLocation",
-  "realizedVol5",
-  "realizedVol20",
-  "volOfVol",
-  "cprWidthPct",
-  "fiiDiiNetFlowLag",
-] as const satisfies readonly (keyof FeatureVector)[];
 
-export type RankerFeatureKey = (typeof RANKER_FEATURE_KEYS)[number];
-
-/**
- * Projects a FeatureVector onto the ordered numeric array the ranker expects.
- * Non-finite values are coerced to 0 so the model never sees NaN. The returned
- * array's index order matches RANKER_FEATURE_KEYS exactly — the model's feature
- * importances and any SHAP output line up with these names.
- */
-export function toRankerFeatureArray(fv: FeatureVector): number[] {
-  // Guard against scoring a vector that was built without the full candle
-  // history. Feeding placeholder columns (trendConsistency/momentumScore/ROC/
-  // realizedVol = constant defaults) to the ranker is train/serve skew: the
-  // model saw real values in training and would produce a meaningless P(win).
-  // Fail loudly rather than silently ranking on garbage.
-  if (fv.rankerIncomplete) {
-    throw new Error(
-      `toRankerFeatureArray: refusing to score ranker-incomplete feature vector ` +
-      `for ${fv.symbol} (tick-derived / placeholder features). Use the full ` +
-      `candle-history feature engine before ranking.`,
-    );
-  }
-  return RANKER_FEATURE_KEYS.map((k) => {
-    const v = fv[k];
-    return typeof v === "number" && Number.isFinite(v) ? v : 0;
-  });
-}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
