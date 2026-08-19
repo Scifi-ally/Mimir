@@ -104,3 +104,23 @@ def test_ranker_graceful_degradation(monkeypatch):
     assert ranker_service.predict_batch([]) == []
     # No model -> no gate.
     assert ranker_service.recommended_threshold() is None
+
+
+def test_sentiment_deduplicates_headlines_and_exposes_status(monkeypatch):
+    import sentiment
+
+    items = [
+        {"title": "  RBI cuts rates  ", "pub_date": ""},
+        {"title": "rbi   cuts rates", "pub_date": ""},
+        {"title": "Market opens higher", "pub_date": ""},
+    ]
+    unique = sentiment._deduplicate_headlines(items)
+    assert [item["title"] for item in unique] == ["  RBI cuts rates  ", "Market opens higher"]
+
+    monkeypatch.setattr(sentiment, "sentiment_pipeline", None)
+    status = sentiment.get_status()
+    assert status["model"] == "ProsusAI/finbert"
+    assert status["fallback_active"] is True
+    assert status["fallback_mode"] == "keyword_or_neutral"
+    assert "failure_count" in status
+    assert "last_error" in status

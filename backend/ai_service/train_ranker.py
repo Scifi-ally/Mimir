@@ -69,14 +69,24 @@ META_PATH = os.path.join(HERE, "ranker_meta.json")
 def load_rows(path: str) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     with open(path, "r", encoding="utf-8") as fh:
-        for line in fh:
+        for line_no, line in enumerate(fh, start=1):
             line = line.strip()
             if not line:
                 continue
             try:
-                rows.append(json.loads(line))
+                row = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            features = row.get("features")
+            if not isinstance(features, list) or len(features) != len(FEATURE_KEYS):
+                raise ValueError(
+                    f"Training row {line_no} has feature width "
+                    f"{len(features) if isinstance(features, list) else 'invalid'}, "
+                    f"expected {len(FEATURE_KEYS)}"
+                )
+            if not row.get("resolutionTs"):
+                raise ValueError(f"Training row {line_no} is missing resolutionTs")
+            rows.append(row)
     # Chronological order is essential for a walk-forward split.
     rows.sort(key=lambda r: r.get("ts", ""))
     return rows
@@ -262,7 +272,9 @@ def main() -> int:
     ap.add_argument("--embargo-hours", type=float, default=24.0,
                     help="Additional gap after each train/calibration window; overlapping trade outcomes are always purged.")
     ap.add_argument("--threshold", default="auto",
-                    help="'auto' picks the prob threshold maximising TEST expectancy, or a float")
+                    help="'auto' picks the prob threshold maximising CALIB expectancy, or a float")
+    ap.add_argument("--min-eval-rows", type=int, default=100,
+                    help="Minimum rows required in both calibration and test slices")
     ap.add_argument("--force", action="store_true",
                     help="Skip the champion-challenger gate and deploy if it beats take-all (first deploy / manual retrain)")
     ap.add_argument("--walk-forward", action="store_true",
@@ -283,7 +295,11 @@ def main() -> int:
         print("Run: npx tsx backend/scripts/extract_training_data.ts first.")
         return 2
 
-    rows = load_rows(args.data)
+    try:
+        rows = load_rows(args.data)
+    except (OSError, ValueError) as exc:
+        print(f"ERROR: invalid training data: {exc}")
+        return 2
     if len(rows) < args.min_rows:
         print(f"ERROR: only {len(rows)} rows (< min-rows {args.min_rows}). Need more history/scans.")
         return 2
@@ -306,8 +322,11 @@ def main() -> int:
         f"embargo={args.embargo_hours:g}h)"
     )
     print(f"Base win rate — train {y_tr.mean():.3f} | calib {y_ca.mean():.3f} | test {y_te.mean():.3f}")
-    if len(X_ca) < 30 or len(X_te) < 30:
-        print("ERROR: calib/test slice too small for a trustworthy evaluation.")
+    if len(X_ca) < args.min_eval_rows or len(X_te) < args.min_eval_rows:
+        print(
+            f"ERROR: calib/test slice too small for a trustworthy evaluation "
+            f"(need >= {args.min_eval_rows} rows each; got calib={len(X_ca)}, test={len(X_te)})."
+        )
         return 2
 
     if args.walk_forward and run_harness:
@@ -378,6 +397,8 @@ def main() -> int:
 
     test_auc = auc(y_te, raw_te)
     test_brier = brier(y_te, cal_te)
+
+    print(f"Evaluation minimum: {args.min_eval_rows} rows per calibration/test slice")
 
     # Choose the decision threshold on the CALIB slice, then freeze it. Selecting
     # it on TEST and reporting that maximum would be selection bias: the live gate

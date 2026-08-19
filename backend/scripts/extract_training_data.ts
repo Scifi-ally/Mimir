@@ -20,7 +20,7 @@
  * Output: JSONL, one row per decided trade (NO_FILL rows are dropped — they
  * never became positions). Each row:
  *   { ts, symbol, setupType, direction, tradeType, features:[...], label, retPct }
- * where label = 1 if the trade hit target1 before stop (a WIN), else 0.
+ * where label = 1 only if the trade hit target1 before stop (a WIN), else 0.
  *
  * Run: npx tsx backend/scripts/extract_training_data.ts \
  *        [--days 420] [--holdBars 5] [--out data/ranker_train.jsonl]
@@ -185,6 +185,7 @@ export interface ExtractResult {
   rows: number;
   wins: number;
   losses: number;
+  timeouts: number;
   featureDim: number;
   instruments: number;
 }
@@ -230,12 +231,13 @@ export async function extractTrainingData(opts?: {
     .where(and(eq(candlesTable.interval, "day"), gte(candlesTable.timestamp, since)));
 
   if (instruments.length === 0) {
-    return { outPath, rows: 0, wins: 0, losses: 0, featureDim: 0, instruments: 0 };
+    return { outPath, rows: 0, wins: 0, losses: 0, timeouts: 0, featureDim: 0, instruments: 0 };
   }
 
   const lines: string[] = [];
   let wins = 0;
   let losses = 0;
+  let timeouts = 0;
 
   for (const { instrumentKey } of instruments) {
     const meta = keyToMeta.get(instrumentKey);
@@ -287,12 +289,14 @@ export async function extractTrainingData(opts?: {
         );
         const features = toRankerFeatureArray(fv);
 
-        // Label: 1 = target hit before stop. TIMEOUT is labelled by realized sign
-        // (a timed-out trade that drifted positive net of costs is a soft win),
-        // which teaches the ranker to prefer setups that at least don't bleed.
-        const label = labeled.outcome === "WIN" ? 1 : labeled.outcome === "LOSS" ? 0 : labeled.retPct > 0 ? 1 : 0;
+        // Label: 1 = target1 hit before stop; every other resolved outcome,
+        // including TIMEOUT, is 0. This keeps the supervised target aligned with
+        // the serving contract: calibrated P(target1 before stop). Timeout return
+        // remains available in retPct for separate expectancy analysis.
+        const label = labeled.outcome === "WIN" ? 1 : 0;
         if (labeled.outcome === "WIN") wins++;
         else if (labeled.outcome === "LOSS") losses++;
+        else if (labeled.outcome === "TIMEOUT") timeouts++;
 
         lines.push(
           JSON.stringify({
@@ -314,7 +318,7 @@ export async function extractTrainingData(opts?: {
   writeFileSync(outPath, lines.join("\n") + (lines.length ? "\n" : ""), "utf8");
 
   const featureDim = lines.length ? (JSON.parse(lines[0]!).features as number[]).length : 0;
-  return { outPath, rows: lines.length, wins, losses, featureDim, instruments: instruments.length };
+  return { outPath, rows: lines.length, wins, losses, timeouts, featureDim, instruments: instruments.length };
 }
 
 async function main() {
@@ -333,7 +337,7 @@ async function main() {
     process.exit(0);
   }
   console.log(`\nWrote ${r.rows} labelled rows to ${r.outPath}`);
-  console.log(`Hard outcomes: ${r.wins} WIN / ${r.losses} LOSS (win rate ${r.wins + r.losses ? ((r.wins / (r.wins + r.losses)) * 100).toFixed(1) : "—"}%)`);
+  console.log(`Hard outcomes: ${r.wins} WIN / ${r.losses} LOSS / ${r.timeouts} TIMEOUT (target-hit rate ${r.rows ? ((r.wins / r.rows) * 100).toFixed(1) : "—"}%)`);
   console.log(`Feature dim: ${r.featureDim}`);
   process.exit(0);
 }

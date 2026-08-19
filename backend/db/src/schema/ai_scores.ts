@@ -13,7 +13,7 @@ export const aiScoresTable = pgTable("ai_scores", {
   id: uuid("id").primaryKey().defaultRandom(),
   suggestionId: uuid("suggestion_id").references(() => suggestionsTable.id, { onDelete: "cascade" }),
   symbol: varchar("symbol", { length: 20 }).notNull(),
-  modelName: varchar("model_name", { length: 50 }).notNull().default("NeoQuasar/Kronos-small"),
+  modelName: varchar("model_name", { length: 50 }).notNull().default("mimir-analysis-ensemble"),
   modelVersion: varchar("model_version", { length: 20 }).notNull().default("1.0.0"),
   kronosScore: decimal("kronos_score", { precision: 5, scale: 2 }).notNull(),
   chronosScore: decimal("chronos_score", { precision: 5, scale: 2 }).notNull(),

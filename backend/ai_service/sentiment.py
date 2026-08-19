@@ -22,6 +22,8 @@ _pipeline_call_lock = threading.Lock()
 # Wall-clock time of the most recent runtime FinBERT inference failure, used
 # to shorten cache lifetimes for results scored while inference was broken.
 _finbert_last_failure_ts = 0.0
+_finbert_failure_count = 0
+_finbert_last_error: Optional[str] = None
 
 # In-memory cache: symbol -> (timestamp, result_dict)
 _sentiment_cache: Dict[str, Tuple[float, Dict[str, float]]] = {}
@@ -140,12 +142,19 @@ def init_models():
             sentiment_pipeline = None
 
 
-def get_status() -> Dict[str, bool]:
-    """Health snapshot for the sentiment component."""
+def get_status() -> Dict[str, object]:
+    """Health snapshot for the sentiment component and its degradation mode."""
     return {
+        "model": "ProsusAI/finbert",
         "loaded": sentiment_pipeline is not None,
-        "healthy": sentiment_pipeline is not None,
+        "healthy": sentiment_pipeline is not None and _finbert_last_failure_ts == 0.0,
         "initialized": _sentiment_initialized,
+        "fallback_active": sentiment_pipeline is None or _finbert_last_failure_ts > 0.0,
+        "fallback_mode": "finbert" if sentiment_pipeline is not None and _finbert_last_failure_ts == 0.0 else "keyword_or_neutral",
+        "failure_count": _finbert_failure_count,
+        "last_error": _finbert_last_error,
+        "cache_ttl_sec": CACHE_TTL_SEC,
+        "failure_cache_ttl_sec": FAILURE_CACHE_TTL_SEC,
     }
 
 
@@ -284,16 +293,31 @@ def _score_geopolitical_impact(headline: str) -> float:
     return max(-1.0, min(1.0, score))
 
 
+def _deduplicate_headlines(items: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    """Remove repeated stories while preserving the first-seen feed ordering."""
+    seen = set()
+    unique: List[Dict[str, str]] = []
+    for item in items:
+        title = re.sub(r"\s+", " ", item.get("title", "").strip().lower())
+        if not title or title in seen:
+            continue
+        seen.add(title)
+        unique.append(item)
+    return unique
+
+
 def _score_headlines_advanced(items: List[Dict[str, str]], apply_geopolitical: bool = False) -> float:
-    """Score headlines with recency weighting and optional geopolitical amplification."""
+    """Score de-duplicated headlines with recency weighting and optional geopolitical amplification."""
+    items = _deduplicate_headlines(items)
     if not items:
         return 0.0
 
-    headlines = [item["title"] for item in items[:15]]
-    pub_dates = [item.get("pub_date", "") for item in items[:15]]
+    items = items[:15]
+    headlines = [item["title"] for item in items]
+    pub_dates = [item.get("pub_date", "") for item in items]
 
     # FinBERT scoring
-    global _finbert_last_failure_ts
+    global _finbert_last_failure_ts, _finbert_failure_count, _finbert_last_error
     finbert_scores: List[float] = []
     finbert_ok = sentiment_pipeline is not None
     if sentiment_pipeline is not None:
@@ -309,8 +333,12 @@ def _score_headlines_advanced(items: List[Dict[str, str]], apply_geopolitical: b
                     finbert_scores.append(-score)
                 else:
                     finbert_scores.append(0.0)
+            _finbert_last_failure_ts = 0.0
+            _finbert_last_error = None
         except Exception as e:
             _finbert_last_failure_ts = time.time()
+            _finbert_failure_count += 1
+            _finbert_last_error = str(e)
             logger.warning(f"FinBERT scoring failed: {e}")
             finbert_scores = [0.0] * len(headlines)
             finbert_ok = False

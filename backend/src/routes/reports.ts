@@ -1,14 +1,12 @@
 import { Router } from "express";
 import { db } from "../../db/src";
 import { dailyReportsTable } from "../../db/src/schema/reports";
-import { desc } from "drizzle-orm";
+import { eq, desc } from "drizzle-orm";
 import { logger } from "../lib/logger";
 import { buildExpectancyReport } from "../suggestions/expectancy";
 import { generateDailyReport } from "../analysis/post_market_report";
 
 const router = Router();
-
-import { eq, desc } from "drizzle-orm";
 
 router.get("/", async (_req, res) => {
   try {

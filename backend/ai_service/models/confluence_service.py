@@ -28,6 +28,17 @@ class ConfluenceService:
                     
         logger.info(f"Loaded confluence models for regimes: {list(self.models.keys())}")
 
+    def get_status(self) -> dict:
+        """Return explicit artifact and fallback state for health diagnostics."""
+        return {
+            "model": "regime-confluence-lightgbm",
+            "loaded": bool(self.models),
+            "healthy": True,
+            "fallback_active": not bool(self.models),
+            "loaded_regimes": sorted(self.models.keys()),
+            "artifact_count": len(self.models),
+        }
+
     def get_score(self, regime: str, features: dict) -> float:
         # Default fallback if no model exists for this regime
         if regime not in self.models:

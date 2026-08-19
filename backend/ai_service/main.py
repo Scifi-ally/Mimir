@@ -1,7 +1,7 @@
 """
 AI Inference Microservice — FastAPI on port 8001.
 
-• Loads Technical Pattern Engine and Chronos-Bolt-Tiny **once** at startup.
+• Loads Technical Pattern Engine and Chronos-Bolt-Small **once** at startup.
 • Provides batch and single-model inference endpoints.
 • Graceful degradation: if a model fails to load the service still starts
   and returns rule-based fallback scores.
@@ -84,11 +84,16 @@ class RuntimeDiagnostics:
 
     @classmethod
     def collect(cls) -> Dict[str, Any]:
-        import torch
+        try:
+            import torch
+            torch_available = True
+        except Exception:
+            torch = None
+            torch_available = False
 
-        cuda_available = torch.cuda.is_available()
+        cuda_available = bool(torch_available and torch.cuda.is_available())
         device_count = torch.cuda.device_count() if cuda_available else 0
-        cuda_version = torch.version.cuda or None
+        cuda_version = (torch.version.cuda or None) if torch_available else None
         gpu_model = torch.cuda.get_device_name(0) if cuda_available and device_count > 0 else None
 
         vram_total_gb = 0.0
@@ -154,6 +159,7 @@ class RuntimeDiagnostics:
             "onnx_providers": onnx_providers,
             "onnx_gpu_available": onnx_gpu_available,
             "tensorrt_ready": tensorrt_ready,
+            "pytorch_available": torch_available,
             "pytorch_cuda": cuda_available,
             "inference_device": inference_device,
             "system_memory_used_mb": system_memory_used_mb,
@@ -163,17 +169,36 @@ class RuntimeDiagnostics:
 def _build_health_snapshot() -> Dict[str, Any]:
     technical_engine_status = technical_pattern_engine.get_status()
     chronos_status = chronos_service.get_status()
+    ranker_status = ranker_service.get_status()
+    sentiment_status = sentiment_module.get_status()
+    confluence_status = confluence_service.get_status()
+    rl_status = rl_lifecycle_manager.get_status()
+    rl_inference_status = rl_agent_service.get_status()
     runtime = RuntimeDiagnostics.collect()
 
-    ai_enabled = bool(
+    core_ready = bool(
         technical_engine_status.get("loaded")
         and technical_engine_status.get("healthy")
         and chronos_status.get("loaded")
         and chronos_status.get("healthy")
     )
-    ai_mode = "AI Mode" if ai_enabled else "Fallback Mode"
-    ranking_provider = "AI Ranking" if ai_enabled else "Technical Ranking"
-    status = "healthy" if ai_enabled else "degraded"
+    degraded_components = []
+    if not core_ready:
+        degraded_components.append("core_forecasting")
+    if sentiment_status.get("fallback_active"):
+        degraded_components.append("sentiment")
+    if not ranker_status.get("loaded"):
+        degraded_components.append("ranker")
+    if confluence_status.get("fallback_active"):
+        degraded_components.append("confluence")
+    if not rl_agent_service.is_loaded:
+        degraded_components.append("rl")
+
+    ai_mode = "AI Mode" if core_ready else "Fallback Mode"
+    if degraded_components:
+        ai_mode += " (degraded: " + ", ".join(degraded_components) + ")"
+    ranking_provider = "AI Ranking" if ranker_status.get("loaded") else "Technical Ranking"
+    status = "healthy" if core_ready else "degraded"
 
     model_load_times = [
         value
@@ -203,13 +228,16 @@ def _build_health_snapshot() -> Dict[str, Any]:
         "models": {
             "technical_engine": technical_engine_status,
             "chronos": chronos_status,
+            "ranker": ranker_status,
+            "confluence": confluence_status,
             # Report BOTH the training lifecycle (READY/TRAINING) and whether an
             # RL model is actually loaded for inference. A service with no
             # rl_model.zip would otherwise show READY while silently serving the
             # no_model fallback.
-            "rl_model": rl_lifecycle_manager.get_status(),
+            "rl_model": rl_status,
+            "rl_inference": rl_inference_status,
             "rl_inference_loaded": rl_agent_service.is_loaded,
-            "sentiment": sentiment_module.get_status(),
+            "sentiment": sentiment_status,
         },
         "hardware": runtime,
         "diagnostics": diagnostics,
@@ -311,7 +339,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Mimir AI Inference Service",
     version="1.0.0",
-    description="Financial AI inference using Kronos and Chronos-Bolt models.",
+    description="Financial AI inference using Technical Pattern Engine, Chronos-Bolt-Small, FinBERT, and optional learned rankers.",
     lifespan=lifespan,
 )
 

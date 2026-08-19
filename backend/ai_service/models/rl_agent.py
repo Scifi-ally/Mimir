@@ -61,6 +61,19 @@ class RLAgentService:
         else:
             logger.info(f"RL model not found at {model_path}. Using fallback/mock mode until trained.")
 
+    def get_status(self) -> Dict[str, Any]:
+        """Return runtime status without exposing the model object."""
+        model_path = os.getenv("RL_MODEL_PATH", os.path.join(os.path.dirname(__file__), "..", "rl_model.zip"))
+        return {
+            "model": "stable-baselines3-ppo",
+            "policy": "MlpPolicy",
+            "artifact_path": model_path,
+            "artifact_present": os.path.exists(model_path),
+            "loaded": self.is_loaded,
+            "healthy": self.is_loaded,
+            "fallback_active": not self.is_loaded,
+        }
+
     def reload_model(self):
         """Reloads the model from disk (used after training)."""
         model_path = os.getenv("RL_MODEL_PATH", os.path.join(os.path.dirname(__file__), "..", "rl_model.zip"))
