@@ -6,7 +6,7 @@ Mimir is an advanced algorithmic trading terminal and market intelligence scanne
 
 **Tech Stack:**
 *   **Backend:** Node.js, TypeScript, `node:events`, `worker_threads`, Redis, PostgreSQL (Drizzle ORM).
-*   **AI Service:** Python, FastAPI, HuggingFace Transformers, PyTorch, XGBoost.
+*   **AI Service:** Python, FastAPI, HuggingFace Transformers, PyTorch, LightGBM, and optional Stable-Baselines3 PPO.
 *   **Frontend Data:** WebSockets for real-time updates, Redis for fast hydration.
 
 ```mermaid
@@ -31,7 +31,10 @@ graph TD
     subgraph Intelligence/ML Layer (FastAPI)
         H --> J[Chronos-Bolt-Small]
         H --> K[FinBERT Sentiment]
-        H --> L[XGBoost Ranker]
+        H --> L[LightGBM Learned Ranker]
+        H --> O[Technical Pattern Engine]
+        L -. optional .-> P[Regime Confluence]
+        L -. optional .-> Q[PPO RL Endpoint]
     end
 
     subgraph Execution
@@ -91,7 +94,9 @@ The Python AI service (FastAPI) provides the predictive edge.
 
 *   **Chronos-Bolt-Small (`amazon/chronos-bolt-small`):** A lightweight time-series forecasting model. It predicts the probabilistic price trajectory based strictly on the sequence of closing prices.
 *   **FinBERT Sentiment (`ProsusAI/finbert`):** Evaluates news headlines and macroeconomic keywords to produce a sentiment score (-1.0 to 1.0). Due to HuggingFace pipeline thread-safety constraints, this runs serially under a `_pipeline_call_lock`.
-*   **XGBoost Learned Ranker:** A classical ML model trained on historical setups. It consumes the `FeatureVector` to predict the probability of hitting the target before the stop-loss (`P(target1 before stop)`).
+*   **LightGBM Learned Ranker:** A classical ML model trained on historical setups. It consumes the ordered 32-feature ranker contract and predicts calibrated `P(target1 before stop)`. The committed model is loaded from `ranker_model.txt` with isotonic calibration; it degrades to the composite formula when unavailable.
+*   **Technical Pattern Engine:** A deterministic rule-based analyzer covering candlestick patterns, momentum, volume, ADX, Stochastic RSI, ATR, RSI, MACD, VPVR, Bollinger width, and VCP contraction.
+*   **Optional Regime Confluence and PPO:** Regime-specific LightGBM confluence artifacts and the Stable-Baselines3 PPO endpoint are implemented but require serialized artifacts before they become active.
 *   **Rule-Based Regime Detection:** Determines the overarching market environment (e.g., Bullish, Volatile, Bearish) using technical breadth and stochastic heuristics.
 
 ---

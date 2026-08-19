@@ -70,7 +70,7 @@ Mimir is a decoupled, event-driven system: a Node/TypeScript backend that owns t
 ### High-Level System Architecture
 
 * **Backend**: Node.js, TypeScript, `node:events`, `worker_threads`, Redis, PostgreSQL (Drizzle ORM).
-* **AI Service**: Python, FastAPI, HuggingFace Transformers, PyTorch, XGBoost / LightGBM.
+* **AI Service**: Python, FastAPI, HuggingFace Transformers, PyTorch, LightGBM, and optional Stable-Baselines3 PPO.
 * **Frontend Data**: WebSockets for real-time updates, Redis for fast hydration.
 
 ```mermaid
@@ -92,10 +92,13 @@ graph TD
         G <-->|Offload| I[Worker Pools]
     end
 
-    subgraph Intelligence/ML Layer (FastAPI)
+        subgraph Intelligence/ML Layer (FastAPI)
         H --> J[Chronos-Bolt-Small]
         H --> K[FinBERT Sentiment]
-        H --> L[XGBoost / LightGBM Ranker]
+        H --> L[LightGBM Learned Ranker]
+        H --> O[Technical Pattern Engine]
+        L -. optional .-> P[Regime Confluence]
+        L -. optional .-> Q[PPO RL Endpoint]
     end
 
     subgraph Execution
