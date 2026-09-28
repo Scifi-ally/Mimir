@@ -7,7 +7,12 @@ edition = "2021"
 
 [lib]
 name = "mimir_lib"
-crate-type = ["lib", "cdylib", "staticlib"]
+# `cdylib` is a MOBILE-only target: it must export every symbol so the mobile
+# runtime can resolve them. On desktop that pushes the export table past PE's
+# 65535-ordinal cap and the link fails with "too many exported symbols
+# (got 95528, max 65535)" / "export ordinal too large". The desktop binary
+# links the plain `lib` (rlib) target instead, so nothing is lost here.
+crate-type = ["lib", "staticlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

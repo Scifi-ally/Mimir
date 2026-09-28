@@ -15,8 +15,9 @@ const SuggestionsSlider = lazy(() => import("@/components/SuggestionsSlider").th
 const PaperTradingPanel = lazy(() => import("@/components/PaperTradingPanel").then(m => ({ default: m.PaperTradingPanel })));
 const ReportsLibrary = lazy(() => import("@/components/ReportsLibrary").then(m => ({ default: m.ReportsLibrary })));
 const SettingsDialog = lazy(() => import("@/components/SettingsDialog").then(m => ({ default: m.SettingsDialog })));
-
-import { UpstoxHeadlessLogin } from "@/components/UpstoxHeadlessLogin";
+// Only rendered when the user actually starts an Upstox login, so it does not
+// belong in the initial bundle.
+const UpstoxHeadlessLogin = lazy(() => import("@/components/UpstoxHeadlessLogin").then(m => ({ default: m.UpstoxHeadlessLogin })));
 import { Loader2 } from "lucide-react";
 import { useWebSocket, subscribeWsSymbols } from "@/hooks/useWebSocket";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
@@ -381,13 +382,20 @@ export default function Dashboard() {
         subtitle: "Sign in securely via Headless Auth",
         hideCancel: true,
         content: (
-          <UpstoxHeadlessLogin 
-            type={type} 
-            onSuccess={() => {
-              queryClient.invalidateQueries({ queryKey: ["status"] });
-              showIsland({ forceOverride: true, title: "", subtitle: "", showSuccessOnly: true });
-            }} 
-          />
+          // Its own boundary: this renders inside the DynamicIsland portal,
+          // which sits outside the page-level Suspense below.
+          <Suspense fallback={<Loader2 className="h-5 w-5 animate-spin text-foreground/50" />}>
+            <UpstoxHeadlessLogin 
+              type={type} 
+              onSuccess={() => {
+                queryClient.invalidateQueries({ queryKey: ["status"] });
+                // Queries that stood down while Upstox was unauthorized must
+                // resume now that the feed is authenticated.
+                queryClient.invalidateQueries();
+                showIsland({ forceOverride: true, title: "", subtitle: "", showSuccessOnly: true });
+              }} 
+            />
+          </Suspense>
         )
       });
     } catch (error) {

@@ -13,7 +13,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { cn, fmtNum, fmtPct } from "@/lib/format";
 import { Card, CardHeader, CardContent } from "@/components/mimir/card";
-import { api } from "@/lib/api";
+import { api, stopPollingWhenBroken } from "@/lib/api";
 import { marketDataStore } from "@/providers/MarketDataProvider";
 import type { Candle, SymbolForecast, Suggestion } from "@/types/api";
 import { SPRING_SNAPPY } from "@/lib/motion";
@@ -93,7 +93,7 @@ export const PriceChart = memo(function PriceChart({ symbol, chartMode, onChartM
     enabled: Boolean(symbol),
     staleTime: 10000,
     gcTime: 60000 * 15, // 15 minutes
-    refetchInterval: 15000,
+    refetchInterval: stopPollingWhenBroken(15000),
   });
 
   const { data: forecastData } = useQuery<SymbolForecast>({
@@ -101,7 +101,7 @@ export const PriceChart = memo(function PriceChart({ symbol, chartMode, onChartM
     queryFn: () => api.forecast(symbol),
     enabled: Boolean(symbol),
     retry: false,
-    refetchInterval: 60000,
+    refetchInterval: stopPollingWhenBroken(60000),
   });
 
   const candles = useMemo(() => {

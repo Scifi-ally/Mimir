@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "./App";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { isPermanentFailure } from "./lib/api";
 import "./index.css";
 
 const queryClient = new QueryClient({
@@ -10,7 +11,13 @@ const queryClient = new QueryClient({
     queries: {
       staleTime: 10 * 1000, // 10 seconds (Dashboard needs fresh data)
       gcTime: 5 * 60 * 1000, // 5 minutes
-      retry: 1,
+      // Do not retry a 4xx. Upstox endpoints return 401 until OAuth completes,
+      // and the dashboard polls them continuously — retrying those produced a
+      // permanent request storm that also burned CPU on the render loop.
+      retry: (failureCount, error) => {
+        if (isPermanentFailure(error)) return false;
+        return failureCount < 1;
+      },
       refetchOnWindowFocus: false,
     },
   },

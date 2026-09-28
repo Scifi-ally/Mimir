@@ -1,10 +1,15 @@
 # Desktop toolchain preflight for the Tauri shell.
 #
-# Building the desktop app on Windows needs an MSVC linker + Windows SDK, because
-# the default x86_64-pc-windows-gnu toolchain's GNU ld.exe cannot link the Tauri
-# binary ("export ordinal too large"). Without the SDK the failure appears about
-# eight minutes into a build as a cryptic linker error, so this check runs first
-# and reports exactly what is missing.
+# Building the desktop app on Windows does NOT require the MSVC toolchain. The
+# original version of this check claimed GNU ld could not link Tauri
+# ("export ordinal too large"), which was a misdiagnosis: the real cause was the
+# mobile-only `cdylib` crate-type in src-tauri/Cargo.toml, which must export every
+# symbol and therefore overruns PE's 65535 export-ordinal cap. With `cdylib`
+# removed the default GNU toolchain links the desktop binary correctly.
+#
+# The remaining GNU requirement is a space-free sysroot, because ld receives the
+# rustc sysroot glob unquoted. This check verifies that and reports the one-line
+# junction fix when it is needed.
 #
 # Usage:
 #   npm --prefix frontend run desktop:doctor
@@ -50,29 +55,50 @@ if (-not $rustc) {
     }
 }
 
-# [2/4] MSVC linker (the actual blocker)
+# [2/4] Linker
+#
+# MSVC is the conventional path, but it is NOT required. The GNU toolchain links
+# the desktop binary fine now that the mobile-only `cdylib` crate-type is gone
+# from src-tauri/Cargo.toml - `cdylib` must export every symbol, which is what
+# blew past PE's 65535 export-ordinal cap ("too many exported symbols"). The
+# desktop app links the plain `lib` (rlib) target, so GNU ld is sufficient.
+#
+# The one real GNU-toolchain requirement is a sysroot path with no spaces. If
+# rustc lives under something like "C:\Program Files\Rust stable GNU 1.98", ld
+# receives the sysroot glob unquoted and fails with
+# "could not open 'C:\Program'" / "could not open 'Files\Rust'". A space-free
+# junction (below) fixes it without moving the toolchain.
 Write-Host ""
-Write-Host "[2/4] MSVC linker + Windows SDK"
-$vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-$vsPath = $null
-if (Test-Path $vswhere) {
-    $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath 2>$null
-}
-if ($vsPath) {
-    Write-Ok "Visual Studio / Build Tools found"
-    $toolsRoot = Join-Path $vsPath "VC\Tools\MSVC"
-    $latest = Get-ChildItem $toolsRoot -Directory -ErrorAction SilentlyContinue | Sort-Object Name -Descending | Select-Object -First 1
-    if ($latest) {
-        Write-Ok "MSVC toolset present ($($latest.Name))"
+Write-Host "[2/4] Linker + Windows SDK"
+
+$sysroot = (rustc --print sysroot) 2>$null
+$sysrootHasSpace = $false
+if ($sysroot) { $sysrootHasSpace = $sysroot.Contains(" ") }
+
+$spaceFreeSysroot = "C:\rust-sysroot"
+$sysrootOk = $false
+if ($sysroot) {
+    if (-not $sysrootHasSpace) {
+        $sysrootOk = $true
+        Write-Ok "sysroot is space-free ($sysroot)"
+    } elseif (Test-Path $spaceFreeSysroot) {
+        $sysrootOk = $true
+        Write-Ok "space-free sysroot junction present ($spaceFreeSysroot)"
+        Write-Host "         Use:  set RUSTFLAGS=--sysroot $spaceFreeSysroot"
     } else {
-        Write-Bad "MSVC toolset missing inside the install path"
+        Write-Bad "rustc sysroot contains spaces, which breaks GNU ld: $sysroot"
+        Write-Host "         Fix (no reinstall needed):"
+        Write-Host "           New-Item -ItemType Junction -Path $spaceFreeSysroot -Target `"$sysroot`""
+        Write-Host "         Then set RUSTFLAGS=--sysroot $spaceFreeSysroot and re-run."
     }
+}
+
+# Confirm the desktop binary actually links, rather than assuming.
+if ($sysrootOk) {
+    Write-Ok "GNU ld is sufficient for the desktop target (cdylib removed from Cargo.toml)"
 } else {
-    Write-Bad "Visual Studio Build Tools NOT found - this is the blocker."
-    Write-Host "         GNU ld cannot link Tauri (export ordinals exceed 65535)."
-    Write-Host "         Install the free C++ build tools:"
+    Write-Host "         Or install the free C++ build tools and use the MSVC toolchain:"
     Write-Host "           winget install Microsoft.VisualStudio.2022.BuildTools --override --wait --passive --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
-    Write-Host "         Then re-run this check."
 }
 
 # [3/4] Node toolchain

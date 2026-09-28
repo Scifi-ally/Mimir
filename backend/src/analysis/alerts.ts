@@ -2,9 +2,19 @@ import Redis from "ioredis";
 import axios from "axios";
 import { getConfig } from "../config";
 import { logger } from "../lib/logger";
+import { defaultOptions } from "../lib/redis";
 
 const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
-const redis = new Redis(redisUrl);
+// Must use the shared options and register an error handler. A bare
+// `new Redis(url)` has neither, so with Redis down it threw an *unhandled*
+// "Unhandled error event: AggregateError [ECONNREFUSED]" roughly every 5s for
+// the life of the process, spraying the console with stack traces and keeping
+// the event loop busy. Redis being unavailable is a degraded-cache condition,
+// not a crash, so it must be handled rather than thrown.
+const redis = new Redis(redisUrl, defaultOptions);
+redis.on("error", (err) => {
+  logger.warn({ err: (err as Error).message }, "Alerts Redis client unavailable - alert history degraded");
+});
 
 const ALERTS_LIST_KEY = "mimir:alerts:history";
 const ALERTS_PUBSUB_CHANNEL = "mimir:alerts:pubsub";

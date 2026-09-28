@@ -1,6 +1,6 @@
 import React, { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { api, stopPollingWhenBroken } from "@/lib/api";
 import { calculateSRLevels, type SRLevel } from "@/lib/technicalAnalysis";
 import { useSymbolDataSelector } from "@/providers/MarketDataProvider";
 import { fmtNum } from "@/lib/format";
@@ -21,7 +21,7 @@ export const SupportResistancePanel = React.memo(function SupportResistancePanel
     queryKey: ["candles", selectedSymbol, "day", 15],
     queryFn: () => api.candles(selectedSymbol, "day", 15),
     enabled: Boolean(selectedSymbol.trim()),
-    refetchInterval: 30000,
+    refetchInterval: stopPollingWhenBroken(30000),
     staleTime: 15000,
   });
 

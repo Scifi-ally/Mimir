@@ -7,12 +7,66 @@ export function hasAdminToken(): boolean {
   return Boolean(localStorage.getItem("mimir_admin_token")?.trim());
 }
 
+/**
+ * A 4xx (other than 408/429) will not fix itself on retry: it means the request
+ * is unauthorized, forbidden, malformed, or missing. Upstox endpoints answer
+ * 401 until the user completes OAuth, and the dashboard polls them every 10-30s
+ * — so a naive retry turns "not authorized yet" into a permanent request storm
+ * that also retries the failure on every poll interval.
+ *
+ * React Query's `retry` is a function of (failureCount, error), so it can read
+ * the HTTP status we attach here and bail out immediately on a permanent
+ * failure while still retrying genuine transients.
+ */
+export class ApiHttpError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiHttpError";
+    this.status = status;
+  }
+}
+
+/** True when the status will never succeed on a retry. */
+export function isPermanentFailure(error: unknown): boolean {
+  if (error instanceof ApiHttpError) {
+    return error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429;
+  }
+  return false;
+}
+
+/**
+ * A `refetchInterval` that stops polling once the query has failed permanently.
+ *
+ * React Query keeps honouring `refetchInterval` after the last attempt errored,
+ * so an unauthenticated 401 still produced a request every 10-30s, forever. Once
+ * the user completes OAuth the queries are invalidated and restart, so nothing
+ * is lost by standing down in the meantime.
+ *
+ * Use in place of a raw number: refetchInterval: stopPollingWhenBroken(30000)
+ */
+export function stopPollingWhenBroken(intervalMs: number) {
+  return (query: { state: { error: unknown } }): number | false =>
+    isPermanentFailure(query.state.error) ? false : intervalMs;
+}
+
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const token = localStorage.getItem("mimir_admin_token");
   const headers = new Headers(init?.headers);
-  if (!headers.has("Content-Type")) {
+
+  // Only send Content-Type when there is actually a body.
+  //
+  // Setting `Content-Type: application/json` on a bodyless GET makes it a
+  // non-simple CORS request, so the browser must send an OPTIONS preflight
+  // before EVERY call - doubling request count and round-trips. That was 223
+  // preflights for 244 real requests. `application/json` is also the wrong
+  // Content-Type for a request with no body.
+  const hasBody = init?.body != null && init.body !== "";
+  if (hasBody && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
+  // x-admin-token is likewise a custom header that forces a preflight, so send
+  // it only when one is actually configured.
   if (token) {
     headers.set("x-admin-token", token);
   }
@@ -45,12 +99,17 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
       return (body as { fallback: T }).fallback;
     }
     const typedBody = body as { error?: string; message?: string } | null;
+    // Carry the status so the query layer can distinguish a permanent 4xx from
+    // a transient 5xx and stop retrying the former.
     if (typedBody?.error || typedBody?.message) {
-      throw new Error(typedBody.error || typedBody.message);
+      throw new ApiHttpError(res.status, typedBody.error || typedBody.message!);
     }
     // No structured error from server — keep it human, log the raw text for debugging
     console.error(`API ${res.status} ${path}:`, text.slice(0, 200));
-    throw new Error(res.status >= 500 ? "Server error — retrying shortly" : `Request failed (${res.status})`);
+    throw new ApiHttpError(
+      res.status,
+      res.status >= 500 ? "Server error — retrying shortly" : `Request failed (${res.status})`,
+    );
   }
 
   return body as T;
@@ -64,19 +123,37 @@ async function apiFetchSoft<T>(path: string, fallback: T): Promise<T> {
 
     const baseUrl = getBackendOrigin();
     const res = await fetch(`${baseUrl}${path}`, { credentials: "include", headers });
-    
+
     if (!res.ok) {
-      console.error(`Soft API fetch failed for ${path}: HTTP ${res.status}`);
+      // Log each distinct failure once. These are polled every 10-30s, so an
+      // unconditional console.error per poll buried the console in the same
+      // "Upstox authentication required" line forever and made real errors
+      // invisible.
+      logFetchFailureOnce(`${res.status} ${path}`);
       return { ...fallback, available: false } as T;
     }
-    
+
     const body = await res.json().catch(() => null);
-    if (!body) return { ...fallback, available: false } as T;
+    if (!body) {
+      logFetchFailureOnce(`unparseable ${path}`);
+      return { ...fallback, available: false } as T;
+    }
     return body as T;
   } catch (err) {
-    console.error(`Soft API fetch failed for ${path}:`, err);
+    logFetchFailureOnce(`${path} ${String(err)}`);
     return fallback;
   }
+}
+
+/** Deduplicated soft-fetch logging: one line per unique failure, not per poll. */
+const softFailureKeys = new Set<string>();
+function logFetchFailureOnce(key: string): void {
+  if (softFailureKeys.has(key)) return;
+  // Bound the set so a long session with many distinct failures cannot grow it
+  // without limit.
+  if (softFailureKeys.size > 50) softFailureKeys.clear();
+  softFailureKeys.add(key);
+  console.warn(`[api] soft fetch unavailable (${key}) — further occurrences of this failure are suppressed`);
 }
 
 export function normalizeMonitoringPayload(

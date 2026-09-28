@@ -14,19 +14,36 @@ export function prefetchSymbol(queryClient: QueryClient, symbol: string) {
   const trimmed = symbol?.trim();
   if (!trimmed) return;
 
-  void queryClient
-    .ensureQueryData({
-      queryKey: ["symbol-insights", trimmed],
-      queryFn: () => api.symbolInsights(trimmed),
-      staleTime: 60000,
-    })
-    .catch(() => {});
+  // Hover-prefetch fired on every pointer-enter, so moving down a watchlist list
+  // queued a request per row. Coalesce per symbol within a short window: only the
+  // most recent hover for a given symbol actually needs warming, and the cache
+  // absorbs the rest.
+  schedulePrefetch(queryClient, trimmed);
+}
 
-  void queryClient
-    .ensureQueryData({
-      queryKey: ["candles", trimmed, "day", 15],
-      queryFn: () => api.candles(trimmed, "day", 15),
-      staleTime: 5 * 60 * 1000,
-    })
-    .catch(() => {});
+const prefetchTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const PREFETCH_DEBOUNCE_MS = 120;
+
+function schedulePrefetch(queryClient: QueryClient, symbol: string) {
+  const existing = prefetchTimers.get(symbol);
+  if (existing) clearTimeout(existing);
+
+  prefetchTimers.set(symbol, setTimeout(() => {
+    prefetchTimers.delete(symbol);
+    void queryClient
+      .ensureQueryData({
+        queryKey: ["symbol-insights", symbol],
+        queryFn: () => api.symbolInsights(symbol),
+        staleTime: 60000,
+      })
+      .catch(() => {});
+
+    void queryClient
+      .ensureQueryData({
+        queryKey: ["candles", symbol, "day", 15],
+        queryFn: () => api.candles(symbol, "day", 15),
+        staleTime: 5 * 60 * 1000,
+      })
+      .catch(() => {});
+  }, PREFETCH_DEBOUNCE_MS));
 }

@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
 import { Flame, ChevronLeft, Copy, Check, Crosshair, Layers } from "lucide-react";
 import { cn, fmtNum, fmtPct } from "@/lib/format";
-import { api } from "@/lib/api";
+import { api, stopPollingWhenBroken } from "@/lib/api";
 import { Tooltip } from "@/components/mimir/tooltip";
 import { Sparkline } from "@/components/Sparkline";
 import { SupportResistancePanel } from "@/components/SupportResistancePanel";
@@ -63,7 +63,7 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
     queryFn: () => api.symbolInsights(selectedSymbol),
     enabled: Boolean(selectedSymbol && typeof selectedSymbol === "string" && selectedSymbol.trim()),
     retry: false,
-    refetchInterval: 30000,
+    refetchInterval: stopPollingWhenBroken(30000),
     staleTime: 60000,
     gcTime: 300000,
     placeholderData: (prev) => prev,
