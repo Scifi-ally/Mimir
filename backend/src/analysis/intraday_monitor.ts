@@ -53,6 +53,9 @@ const MONITORING_CYCLE_CONCURRENCY = Math.max(
 const INTRADAY_STOP_DISTANCE_PCT = 1.0;
 const INTRADAY_MIN_RR = 1.9;
 const INTRADAY_TARGET2_RR = 2.8;
+// Sector-relative strength is a learned ranker feature, so it must be real. This
+// bounds the peer scans it costs on a per-tick path.
+const MAX_SECTOR_PEERS = 8;
 
 interface WatchlistSeed {
   symbol: string;
@@ -568,6 +571,7 @@ export async function resolveSnapshotForSymbol(
   snap: TechnicalSnapshot;
   source: "live_scan" | "tick_derived";
   rsVsNifty: number | null;
+  rsVsSector: number | null;
   scanFeatures: FeatureVector | null;
 }> {
   const now = Date.now();
@@ -598,6 +602,7 @@ async function _resolveSnapshotUncached(
   snap: TechnicalSnapshot;
   source: "live_scan" | "tick_derived";
   rsVsNifty: number | null;
+  rsVsSector: number | null;
   scanFeatures: FeatureVector | null;
 }> {
   try {
@@ -610,6 +615,7 @@ async function _resolveSnapshotUncached(
           snap: { ...scanResult.snapshot, close: currentPrice },
           source: "live_scan",
           rsVsNifty: scanResult.rs60,
+          rsVsSector: await resolveSectorRelativeStrength(symbol, scanResult.rs60),
           scanFeatures: null,
         };
       }
@@ -624,8 +630,49 @@ async function _resolveSnapshotUncached(
     }),
     source: "tick_derived",
     rsVsNifty: null,
+    rsVsSector: null,
     scanFeatures: null,
   };
+}
+
+/**
+ * Sector-relative strength: the stock's RS divided by its sector's average RS.
+ *
+ * Mirrors the batch path (signal_generator.ts), which accumulates per-sector RS
+ * sums across the scan. Here the sector peers are resolved on demand. Returns
+ * null when the sector average is unavailable, so callers can distinguish
+ * "not computable" from a genuine neutral reading.
+ */
+async function resolveSectorRelativeStrength(
+  symbol: string,
+  rsVsNifty: number | null,
+): Promise<number | null> {
+  if (rsVsNifty == null || !Number.isFinite(rsVsNifty)) return null;
+  const sector = STOCK_SECTOR_MAP[symbol];
+  if (!sector) return null;
+  try {
+    // Derive peers from the sector map itself, bounded: this runs on a
+    // per-tick path, so scanning an entire sector is not acceptable.
+    const peers = Object.keys(STOCK_SECTOR_MAP)
+      .filter((s) => STOCK_SECTOR_MAP[s] === sector && s !== symbol)
+      .slice(0, MAX_SECTOR_PEERS);
+    if (peers.length === 0) return null;
+
+    const niftyCandles = await fetchNiftyDailyCandles(70);
+    const values: number[] = [];
+    for (const peer of peers) {
+      const stock = await findStockBySymbol(peer).catch(() => null);
+      if (!stock) continue;
+      const r = await scanStock(stock, niftyCandles).catch(() => null);
+      if (r && Number.isFinite(r.rs60)) values.push(r.rs60);
+    }
+    if (values.length === 0) return null;
+    const avg = values.reduce((a: number, b: number) => a + b, 0) / values.length;
+    return avg > 0 ? rsVsNifty / avg : rsVsNifty;
+  } catch (err) {
+    logger.debug({ err, symbol }, "Sector RS unavailable");
+    return null;
+  }
 }
 
 async function resolveTechnicalSnapshot(
@@ -636,6 +683,7 @@ async function resolveTechnicalSnapshot(
   snap: TechnicalSnapshot;
   source: "live_scan" | "tick_derived";
   rsVsNifty: number | null;
+  rsVsSector: number | null;
   scanFeatures: FeatureVector | null;
 }> {
   const resolved = await resolveSnapshotForSymbol(symbol, currentPrice, {
@@ -784,6 +832,7 @@ function buildMonitorFeatureVector(
   snap: TechnicalSnapshot,
   riskReward: number,
   rsVsNifty: number | null,
+  rsVsSector: number | null = null,
   scanFeatures?: FeatureVector | null,
 ): FeatureVector {
   if (scanFeatures) {
@@ -817,7 +866,14 @@ function buildMonitorFeatureVector(
     trendConsistency: 50,
 
     rsVsNifty60d: rsVsNifty ?? 1,
-    rsVsSector60d: 1,
+    // Sector-relative strength. Previously hardcoded to 1 (the neutral value),
+    // but the ranker treats this as one of its most informative features (7th
+    // by importance in the shipped model), so a constant made its contribution
+    // meaningless on the intraday path. Computed the same way the batch path
+    // does it: the stock's RS divided by its sector's average RS. When the
+    // sector average is unavailable the stock's own RS is the honest fallback
+    // rather than a fabricated neutral.
+    rsVsSector60d: rsVsSector ?? (rsVsNifty ?? 1),
 
     pocDistancePct: pctFrom(snap.vpvrPOC),
     bbWidthPct: 0,
@@ -925,14 +981,14 @@ async function generateIntraDaySuggestion(
       confluence: [monitored.watchlistEntry.category],
     };
 
-    const { snap, source: indicatorSource, rsVsNifty, scanFeatures } = await resolveTechnicalSnapshot(
+    const { snap, source: indicatorSource, rsVsNifty, rsVsSector, scanFeatures } = await resolveTechnicalSnapshot(
       symbol,
       currentPrice,
       monitored,
     );
 
     const sector = STOCK_SECTOR_MAP[symbol] ?? "Other";
-    const featureVector = buildMonitorFeatureVector(symbol, snap, setup.riskReward, rsVsNifty, scanFeatures);
+    const featureVector = buildMonitorFeatureVector(symbol, snap, setup.riskReward, rsVsNifty, rsVsSector, scanFeatures);
     const riskAssessment = await assessRisk(setup, snap, sector, featureVector);
 
     if (!riskAssessment.passed) {
