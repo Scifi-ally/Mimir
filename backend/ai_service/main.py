@@ -218,6 +218,12 @@ def _build_health_snapshot() -> Dict[str, Any]:
         degraded_components.append("sentiment")
     if not ranker_status.get("loaded"):
         degraded_components.append("ranker")
+    # A loaded ranker is not the same as an ACTIVE ranker. A feature-width
+    # mismatch or a candidate without ranker features yields a null
+    # win_probability, and the caller then skips the hard P(win) < threshold
+    # veto entirely. Flag that explicitly rather than reporting "healthy".
+    elif ranker_status.get("width_mismatch_rows") or ranker_status.get("without_features_rows"):
+        degraded_components.append("ranker_contract_mismatch")
     if confluence_status.get("fallback_active"):
         degraded_components.append("confluence")
     if not rl_agent_service.is_loaded:
@@ -777,6 +783,9 @@ async def infer_batch(req: BatchRequest):
     ranker_rows = [
         (cand.features or {}).get("ranker_features") or [] for cand in req.candidates
     ]
+    # Rows with no ranker features are classified and counted inside
+    # predict_batch, which is the single source of truth for gate coverage.
+    # Do not also count them here or the counters double-count.
     ranker_probs = await asyncio.to_thread(ranker_service.predict_batch, ranker_rows)
     win_prob_by_id = {
         id(cand): ranker_probs[i] for i, cand in enumerate(req.candidates)

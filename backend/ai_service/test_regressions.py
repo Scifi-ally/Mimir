@@ -396,6 +396,116 @@ def test_sentiment_cache_is_bounded():
 
 
 # ---------------------------------------------------------------------------
+# Ranker gate visibility: a silent veto disarm must be detectable
+# ---------------------------------------------------------------------------
+
+def test_ranker_reports_gate_coverage_and_mismatch_counts(monkeypatch):
+    """
+    A null `win_probability` makes signal_generator SKIP the hard
+    `P(win) < threshold` veto entirely — it does not degrade the decision, it
+    removes the only calibrated risk gate the system has. That must be visible in
+    status, continuously, rather than as a one-shot warning buried in the
+    service log.
+    """
+    from models import ranker_service as rs
+
+    monkeypatch.setattr(rs, "_rows_predicted_count", 10, raising=False)
+    monkeypatch.setattr(rs, "_width_mismatch_count", 5, raising=False)
+    monkeypatch.setattr(rs, "_rows_without_features", 5, raising=False)
+    monkeypatch.setattr(rs, "_loaded", True, raising=False)
+    monkeypatch.setattr(rs, "_feature_keys", ["f"] * 32, raising=False)
+
+    st = rs.get_status()
+    for key in (
+        "gate_active",
+        "rows_predicted",
+        "width_mismatch_rows",
+        "without_features_rows",
+        "gate_coverage",
+    ):
+        assert key in st, f"ranker status missing {key}"
+
+    assert st["gate_active"] is True
+    assert st["rows_predicted"] == 10
+    assert st["width_mismatch_rows"] == 5
+    assert st["without_features_rows"] == 5
+    # 10 of 20 candidates were actually scored; the other 10 bypassed the veto.
+    assert st["gate_coverage"] == pytest.approx(0.5)
+
+
+def test_ranker_gate_coverage_is_none_before_any_prediction():
+    """No coverage claim should be made before the model has been consulted."""
+    from models import ranker_service as rs
+
+    rs._rows_predicted_count = 0
+    rs._width_mismatch_count = 0
+    rs._rows_without_features = 0
+    assert rs.get_status()["gate_coverage"] is None
+
+
+def test_width_mismatch_is_counted_continuously_not_latched_once():
+    """
+    The original code warned once via `_width_warned` and then went silent. A
+    recurring contract mismatch must keep accumulating so the disarm is visible
+    in status rather than disappearing after the first occurrence.
+    """
+    from models import ranker_service as rs
+
+    rs.load_model()
+    if not rs.is_loaded():
+        pytest.skip("no ranker artifact available")
+
+    expected = len(rs._feature_keys)
+    bad_row = [0.0] * max(1, expected - 1)  # deliberately wrong width
+    good_row = [0.0] * expected
+
+    rs._width_mismatch_count = 0
+    rs._rows_predicted_count = 0
+
+    out = rs.predict_batch([bad_row, good_row])
+    # The malformed row must not receive a fabricated probability.
+    assert out[0] is None
+    assert out[1] is not None
+    assert rs._width_mismatch_count == 1
+
+    rs.predict_batch([bad_row])
+    assert rs._width_mismatch_count == 2, "mismatch count stopped accumulating"
+    assert rs.get_status()["width_mismatch_rows"] == 2
+
+
+def test_rows_without_features_are_counted_separately_from_width_mismatch():
+    """
+    An empty row is a missing feature vector, not contract drift. Counting it in
+    both buckets inflates width_mismatch_rows and makes gate_coverage meaningless.
+    """
+    from models import ranker_service as rs
+
+    rs.load_model()
+    if not rs.is_loaded():
+        pytest.skip("no ranker artifact available")
+
+    expected = len(rs._feature_keys)
+    good = [0.0] * expected
+    empty = []
+    wrong = [0.0] * (expected - 1)
+
+    rs._rows_predicted_count = 0
+    rs._width_mismatch_count = 0
+    rs._rows_without_features = 0
+
+    out = rs.predict_batch([good, empty, wrong])
+    assert out[0] is not None
+    assert out[1] is None
+    assert out[2] is None
+
+    st = rs.get_status()
+    assert st["rows_predicted"] == 1
+    assert st["without_features_rows"] == 1, "empty row misclassified"
+    assert st["width_mismatch_rows"] == 1, "empty row double-counted as mismatch"
+    assert st["gate_coverage"] == pytest.approx(1 / 3, abs=1e-3)  # status rounds to 4dp
+
+
+# ---------------------------------------------------------------------------
 # riskRewardScore units: a 0-100 score must never be read as an R multiple
 # ---------------------------------------------------------------------------
 

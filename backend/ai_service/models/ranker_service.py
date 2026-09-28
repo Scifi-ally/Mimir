@@ -28,6 +28,12 @@ logger = logging.getLogger("ai_service.ranker")
 
 # Latch so the feature-width mismatch warning fires once, not per batch.
 _width_warned = False
+# Continuous visibility into whether the ranker is actually participating.
+# A None result makes the caller skip the hard P(win) < threshold veto, so a
+# contract/model mismatch silently disarms the only calibrated risk gate.
+_rows_predicted_count = 0
+_width_mismatch_count = 0
+_rows_without_features = 0
 
 try:
     import lightgbm as lgb  # noqa: F401
@@ -157,6 +163,23 @@ def recommended_threshold() -> Optional[float]:
 
 
 def get_status() -> Dict[str, Any]:
+    """
+    Status, plus whether the ranker is actually participating in decisions.
+
+    `gate_active` is the field that matters operationally. A None `win_probability`
+    makes the caller skip the hard P(win) < threshold veto, so a contract/model
+    mismatch does not degrade quality - it removes the only calibrated risk gate
+    the system has. Surfacing that explicitly prevents a silent disarm.
+    """
+    # Read all three counters atomically, otherwise gate_coverage can be
+    # computed from a torn snapshot (predicted updated, mismatch not yet) and
+    # report a coverage that never actually occurred.
+    with _lock:
+        predicted = _rows_predicted_count
+        mismatched = _width_mismatch_count
+        no_features = _rows_without_features
+    total = predicted + mismatched + no_features
+    coverage = (predicted / total) if total else None
     return {
         "model": "lightgbm-ranker",
         "available": _LGB_AVAILABLE,
@@ -166,6 +189,13 @@ def get_status() -> Dict[str, Any]:
         "trained_at": _trained_at,
         "recommended_threshold": _recommended_threshold,
         "metrics": _metrics,
+        "gate_active": _loaded,
+        "rows_predicted": predicted,
+        "width_mismatch_rows": mismatched,
+        "without_features_rows": no_features,
+        # Fraction of candidate rows that received a real calibrated P(win).
+        # Below 1.0 means some candidates bypassed the veto entirely.
+        "gate_coverage": round(coverage, 4) if coverage is not None else None,
     }
 
 
@@ -188,7 +218,7 @@ def predict_batch(feature_rows: List[List[float]]) -> List[Optional[float]]:
     if not _loaded or _booster is None or n == 0:
         return [None] * n
 
-    global _width_warned
+    global _width_warned, _rows_predicted_count, _width_mismatch_count, _rows_without_features
     expected = len(_feature_keys)
     try:
         # A row whose width != expected is train/serve skew (someone changed
@@ -199,17 +229,32 @@ def predict_batch(feature_rows: List[List[float]]) -> List[Optional[float]]:
         # probability — a fabricated signal that can gate real trades. Per the
         # contract in this function's docstring, such rows return None so the
         # caller falls back to the composite score. Only well-formed rows are
-        # predicted. Warn once when we see a mismatch.
+        # predicted. Warn once when we see a mismatch, but keep counting.
+        # Classify every row into exactly one bucket so the counters stay exact.
+        # An empty row is "no features", NOT a "width mismatch": it is a missing
+        # upstream feature vector, not train/serve contract drift. Counting it
+        # as both would inflate the mismatch count and make gate_coverage
+        # meaningless.
         valid_idx = [i for i, r in enumerate(feature_rows) if len(r) == expected]
-        if len(valid_idx) != n and not _width_warned:
-            bad = next(len(r) for r in feature_rows if len(r) != expected)
+        no_features_idx = [i for i, r in enumerate(feature_rows) if len(r) == 0]
+        mismatched_idx = [
+            i for i, r in enumerate(feature_rows)
+            if len(r) not in (0, expected)
+        ]
+
+        # Every row falls into exactly one of these three buckets, so the
+        # counts always sum to n. Count unconditionally; there is nothing to
+        # condition on.
+        with _lock:
+            _width_mismatch_count += len(mismatched_idx)
+            _rows_without_features += len(no_features_idx)
+        if mismatched_idx and not _width_warned:
             logger.warning(
                 "Ranker feature width mismatch: got %d, expected %d. This means the "
-                "TS feature contract and the trained model disagree, or a candidate "
-                "arrived without ranker features — those rows return None (composite "
-                "fallback) rather than a fabricated probability. Retrain or realign "
-                "RANKER_FEATURE_KEYS.",
-                bad, expected,
+                "TS feature contract and the trained model disagree — those rows return "
+                "None (composite fallback) rather than a fabricated probability. Retrain "
+                "or realign RANKER_FEATURE_KEYS.",
+                len(feature_rows[mismatched_idx[0]]), expected,
             )
             _width_warned = True
 
@@ -217,9 +262,13 @@ def predict_batch(feature_rows: List[List[float]]) -> List[Optional[float]]:
         if not valid_idx:
             return out
 
+        with _lock:
+            _rows_predicted_count += len(valid_idx)
+
         mat = np.zeros((len(valid_idx), expected), dtype=np.float64)
         for mi, i in enumerate(valid_idx):
             row = feature_rows[i]
+
             for j in range(expected):
                 v = row[j]
                 mat[mi, j] = v if isinstance(v, (int, float)) and np.isfinite(v) else 0.0
