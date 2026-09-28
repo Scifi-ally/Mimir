@@ -3,6 +3,7 @@ import axios from "axios";
 import { getRLPrediction, type RLPrediction } from "../../analysis/ai_client";
 import { buildSnapshot, type OHLCV } from "../../analysis/technical";
 import type { CandidateSignal, MarketState, TechnicalOpportunity, RankedOpportunity } from "../types";
+import { classifyBreadthRegime, counterTrendPenalty, isCounterTrend } from "../../analysis/regime_vocabulary";
 
 if (!parentPort) {
   process.exit(1);
@@ -318,15 +319,16 @@ async function rankAiOpportunities(
         const ranking = aiResult.technicalRanking ?? (aiResult as any).kronos;
         let aiScore = Math.min(10, aiResult.composite_score / 10);
         
-        // Regime-aware signal filtering
-        if (regime === "TRENDING_DOWN" || regime === "BEARISH") {
-          if (opp.direction === "BUY") {
-            aiScore -= 5; // Heavily penalize LONG signals in bear/down regime
-          }
-        } else if (regime === "TRENDING_UP" || regime === "BULLISH") {
-          if (opp.direction === "SELL") {
-            aiScore -= 5; // Heavily penalize SHORT signals in bull/up regime
-          }
+        // Regime-aware signal filtering.
+        //
+        // Previously compared against "TRENDING_DOWN"/"BEARISH" while the
+        // breadth engine emits "Bearish"/"Risk-On"/"Risk-Off", so this block
+        // never executed. classifyBreadthRegime normalizes every known spelling.
+        const regimeBias = classifyBreadthRegime(regime);
+        const counterTrend = isCounterTrend(regimeBias, opp.direction);
+        const regimePenalty = counterTrend ? counterTrendPenalty(regimeBias) : 0;
+        if (regimePenalty > 0) {
+          aiScore -= regimePenalty;
         }
         
         // Integrate RL Prediction if available.
@@ -368,6 +370,9 @@ async function rankAiOpportunities(
              `AI Score: ${aiResult.composite_score.toFixed(1)}`,
              `Technical Ranking Bullish: ${ranking?.bullish_probability != null ? `${(ranking.bullish_probability * 100).toFixed(1)}%` : "N/A"}`,
              `Chronos Trend: ${aiResult.chronos?.trend ?? "N/A"}`,
+             ...(counterTrend
+               ? [`Counter-trend in ${regime ?? "unknown"} regime (-${regimePenalty})`]
+               : []),
              ...(Array.isArray(opp?.reasoning) ? opp.reasoning : [])
           ],
         };
@@ -401,15 +406,11 @@ function deterministicFallback(opportunity: TechnicalOpportunity, regime?: strin
   const regimeBonus = reasoningList.some((r) => r && typeof r === "string" && r.includes("trend aligned")) ? 0.8 : 0;
   let aiScore = Math.min(10, (opportunity?.score || 0) + regimeBonus);
 
-  // Regime-aware signal filtering
-  if (regime === "TRENDING_DOWN" || regime === "BEARISH") {
-    if (opportunity?.direction === "BUY") {
-      aiScore -= 5;
-    }
-  } else if (regime === "TRENDING_UP" || regime === "BULLISH") {
-    if (opportunity?.direction === "SELL") {
-      aiScore -= 5;
-    }
+  // Regime-aware signal filtering — same normalization as the AI-backed path
+  // above, so the fallback cannot diverge from it.
+  const regimeBias = classifyBreadthRegime(regime);
+  if (isCounterTrend(regimeBias, opportunity?.direction)) {
+    aiScore -= counterTrendPenalty(regimeBias);
   }
 
   aiScore = Math.max(0, aiScore);
