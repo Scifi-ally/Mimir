@@ -405,13 +405,39 @@ def main() -> int:
     # and the shipped threshold would be optimistically overfit to one window.
     # TEST stays a true holdout used only to evaluate the frozen threshold.
     if args.threshold == "auto":
-        best_thr, sel_exp, sel_taken = 0.5, -1e9, 0
-        for thr in np.linspace(0.45, 0.75, 31):
+        # The candidate grid must follow the score distribution, not a fixed
+        # band. The label is "target1 hit before stop", whose base rate is only
+        # ~7%, so a well-calibrated model concentrates its mass near 0.07 and
+        # the best trades sit far below 0.5. A hardcoded [0.45, 0.75] grid can
+        # therefore never select a single trade, which silently reports
+        # expectancy n=0 and makes a genuinely skilful model look worthless.
+        # Quantile-derived candidates always cover the region where the mass
+        # actually is, at any base rate.
+        base_rate = float(cal_ca.mean()) if cal_ca.size else 0.0
+        grid = sorted({
+            round(float(q), 6)
+            for q in np.quantile(cal_ca, [0.50, 0.70, 0.80, 0.85, 0.90, 0.93,
+                                          0.95, 0.97, 0.98, 0.99])
+        })
+        # Keep a couple of absolute floors so a degenerate (all-equal) score
+        # vector still yields a usable, non-empty candidate set.
+        grid = sorted(set(grid) | {round(base_rate, 6), min(1.0, round(base_rate * 2, 6))})
+        grid = [t for t in grid if 0.0 < t <= 1.0]
+
+        best_thr, sel_exp, sel_taken = grid[0], -1e9, 0
+        for thr in grid:
             exp, taken = expectancy_at_threshold(cal_ca, ret_ca, float(thr))
             # Require a minimum sample so we don't pick a threshold that only
             # greenlights a few lucky trades.
             if taken >= max(20, len(X_ca) // 20) and exp > sel_exp:
                 best_thr, sel_exp, sel_taken = float(thr), exp, taken
+        if sel_taken == 0:
+            print(
+                "WARNING: no threshold in the auto grid selected a usable sample "
+                f"(calibration base rate {base_rate:.4f}); falling back to the "
+                "median score. The model likely has no usable ranking skill."
+            )
+            best_thr = float(np.quantile(cal_ca, 0.90)) if cal_ca.size else 0.5
     else:
         best_thr = float(args.threshold)
 

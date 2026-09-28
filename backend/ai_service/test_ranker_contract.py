@@ -13,17 +13,25 @@ These tests separate two different guarantees:
      feature list. Asserted strictly; all pass.
 
   2. TRAINING DATA COMPATIBILITY — the committed `ranker_train.jsonl` must be
-     wide enough to train the model. This is a real, currently-BROKEN condition
-     in this repository, marked `xfail(strict=True)` so the suite stays runnable
-     while the problem stays impossible to forget.
+     wide enough to train the model. This was a real, broken condition in this
+     repository and was marked `xfail(strict=True)` so the suite stayed runnable
+     while the problem stayed impossible to forget.
 
 Why (2) is not simply skipped: the data was generated 2026-07-25, the
 32-feature contract was introduced 2026-08-19 in commit 67e7816, and the data
-was never regenerated. `train_ranker.py` therefore raises on the first row
-("feature width 31, expected 32") and the model cannot be retrained or
-reproduced from anything in the repository. `strict=True` means that once the
-data is regenerated the test reports XPASS and FAILS, forcing the marker to be
+was never regenerated. `train_ranker.py` therefore raised on the first row
+("feature width 31, expected 32") and the model could not be retrained or
+reproduced from anything in the repository. `strict=True` meant that once the
+data was regenerated the test reported XPASS and FAILED, forcing the marker to be
 removed deliberately rather than lingering after the fix.
+
+That regeneration has now happened: 17,407 rows, all 32 wide, spanning
+2022-01-18..2026-08-31, produced by `scripts/backfill_training_candles.ts`
+followed by `npm run ranker:extract`. The marker has been removed and this is
+again a hard gate. Note the data is genuine: the 32-feature vector includes
+`fiiDiiNetFlowLag`, and because NSE publishes no free historical FII/DII cash
+data that one feature is constant zero across the historical window, so the
+model assigns it ~0 importance. It is a real column, not a fabricated value.
 """
 
 import json
@@ -125,31 +133,23 @@ def test_no_duplicate_features_in_any_source():
 
 
 # ---------------------------------------------------------------------------
-# 2. Training data compatibility (diagnostic — currently failing in-repo)
+# 2. Training data compatibility
 # ---------------------------------------------------------------------------
+# The xfail marker that used to live here was removed once the data was actually
+# regenerated: 17,407 rows, all 32 wide, covering 2022-01-18..2026-08-31, sourced
+# by scripts/backfill_training_candles.ts. The assertion below is now a plain,
+# hard gate - if the committed data ever drifts from the serve contract again,
+# this fails rather than quietly tolerating it.
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Committed training data predates the 32-feature contract (generated "
-        "2026-07-25; contract introduced 2026-08-19 in 67e7816) and was never "
-        "regenerated, so train_ranker.py rejects every row and the model cannot "
-        "be retrained from anything in this repository. Fix by running, with a "
-        "Postgres instance holding candles: "
-        "npm run ranker:extract && npm run ranker:train. "
-        "strict=True so that regenerating the data turns this into an XPASS "
-        "failure - the marker must then be removed deliberately."
-    ),
-)
 def test_committed_training_data_is_wide_enough_to_retrain():
     """
     The committed dataset must be trainable against the current contract.
 
-    Currently xfail: every row is 31 wide while the contract requires 32.
-    Left as a real assertion underneath (not a warning) because silently
-    tolerating incompatible training data is what allowed a 25-day
-    contract/data drift to go unnoticed and made the only trained model in the
-    system unreproducible.
+    This is a real assertion, not a warning: silently tolerating incompatible
+    training data is what allowed a 25-day contract/data drift to go unnoticed
+    and made the only trained model in the system unreproducible. It was
+    `xfail(strict=True)` while the data was 31 wide, and is a hard gate now that
+    the data has been regenerated at the correct width.
     """
     total, widths = _data_widths()
     if total == 0:
