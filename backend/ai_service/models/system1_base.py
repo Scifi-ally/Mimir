@@ -63,6 +63,44 @@ def get_safe_str(state: Dict[str, Any], keys: List[str], default: str) -> str:
     return default
 
 
+def resolve_risk_reward(state: Dict[str, Any], default: float = 1.5) -> float:
+    """
+    Return risk-reward as a true R multiple (e.g. 2.0), never as a 0-100 score.
+
+    `riskRewardScore` is NORMALIZED to 0-100 where 3.0 == 100 (see
+    `computeRiskRewardScore` in backend/src/analysis/feature_engine.ts).
+    Treating it as an R multiple is a units error with severe consequences: a
+    setup whose real R:R is 0.3 (risking 3x more than it can win) reports
+    riskRewardScore = 10, which read as `rr = 10` sails past the `rr < 1.2`
+    hard gate, contributes (10/3)*20 = 66.7 opportunity points, and is scored
+    as opportunity 100 / APPROVE / 1.25x — the maximum possible position size
+    for the worst possible setup. De-normalize instead.
+    """
+    for key in ("risk_reward_ratio", "riskReward", "rr", "riskRewardRatio"):
+        raw = state.get(key)
+        if raw is None:
+            continue
+        try:
+            f = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(f) and f > 0.0:
+            return f
+
+    # Only the normalized 0-100 score is available: convert it back to an R
+    # multiple (score 100 -> 3.0) rather than reading it as an R multiple.
+    raw = state.get("riskRewardScore")
+    if raw is not None:
+        try:
+            s = float(raw)
+        except (TypeError, ValueError):
+            s = float("nan")
+        if math.isfinite(s) and 0.0 < s <= 100.0:
+            return (s / 100.0) * 3.0
+
+    return default
+
+
 def _compute_calibrated_noul(
     direction: str,
     setup_type: str,
@@ -106,7 +144,7 @@ def check_hard_risk_gates(
     Enforces institutional risk constraints before neural forward pass.
     """
     direction = get_safe_str(state, ["direction"], "BUY").upper()
-    rr = get_safe_float(state, ["risk_reward_ratio", "riskReward", "riskRewardScore"], 1.5)
+    rr = resolve_risk_reward(state, default=1.5)
     ofi = get_safe_float(state, ["order_flow_imbalance_ratio", "ofi_ratio", "bidAskImbalance"], 0.0)
     fii_net = get_safe_float(state, ["fii_dii_net", "fiiNet", "fiiDiiNetFlowLag"], 0.0)
     vix = get_safe_float(state, ["india_vix", "vix"], 15.0)
@@ -210,7 +248,7 @@ def evaluate_deterministic_system1(
     direction = get_safe_str(state, ["direction"], "BUY").upper()
     setup_type = get_safe_str(state, ["setup_type", "setupType"], "PULLBACK").upper()
     tech_score = get_safe_float(state, ["technical_score", "technicalScore"], 50.0)
-    rr = get_safe_float(state, ["risk_reward_ratio", "riskReward", "riskRewardScore"], 1.5)
+    rr = resolve_risk_reward(state, default=1.5)
     ofi = get_safe_float(state, ["order_flow_imbalance_ratio", "ofi_ratio", "bidAskImbalance"], 0.0)
     fii_net = get_safe_float(state, ["fii_dii_net", "fiiNet", "fiiDiiNetFlowLag"], 0.0)
     vix = get_safe_float(state, ["india_vix", "vix"], 15.0)

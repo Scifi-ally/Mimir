@@ -393,3 +393,105 @@ def test_sentiment_cache_is_bounded():
         sentiment._prune_sentiment_cache(now)
         assert len(sentiment._sentiment_cache) <= sentiment._SENTIMENT_CACHE_MAX
     sentiment._sentiment_cache.clear()
+
+
+# ---------------------------------------------------------------------------
+# riskRewardScore units: a 0-100 score must never be read as an R multiple
+# ---------------------------------------------------------------------------
+
+def _normalize_rr_score(rr: float) -> int:
+    """Mirror of feature_engine.ts computeRiskRewardScore (3.0 == 100)."""
+    if rr <= 0:
+        return 0
+    if rr >= 3.0:
+        return 100
+    return round((rr / 3.0) * 100)
+
+
+def test_resolve_risk_reward_prefers_explicit_r_multiple():
+    from models.system1_base import resolve_risk_reward
+
+    assert resolve_risk_reward({"risk_reward_ratio": 2.4}) == 2.4
+    assert resolve_risk_reward({"riskReward": 1.9}) == 1.9
+    # Explicit value wins even when a normalized score is also present.
+    assert resolve_risk_reward({"risk_reward_ratio": 0.4, "riskRewardScore": 87}) == 0.4
+
+
+def test_resolve_risk_reward_denormalizes_score():
+    from models.system1_base import resolve_risk_reward
+
+    # score 100 -> 3.0 R ; score 10 -> 0.30 R (NOT 10 R)
+    assert resolve_risk_reward({"riskRewardScore": 100}) == pytest.approx(3.0)
+    assert resolve_risk_reward({"riskRewardScore": 10}) == pytest.approx(0.30, abs=1e-6)
+    assert resolve_risk_reward({"riskRewardScore": 33}) == pytest.approx(0.99, abs=1e-6)
+
+
+@pytest.mark.parametrize("bad", [0, -5, float("nan"), float("inf"), None, "abc"])
+def test_resolve_risk_reward_falls_back_on_unusable_input(bad):
+    from models.system1_base import resolve_risk_reward
+
+    if bad is None:
+        assert resolve_risk_reward({}) == 1.5
+        return
+    assert resolve_risk_reward({"risk_reward_ratio": bad, "riskRewardScore": bad}) == 1.5
+
+
+def test_resolve_risk_reward_passes_through_absurd_but_wellformed_value():
+    """
+    A large but finite R multiple is well-formed, so it is honoured rather than
+    silently clamped — clamping would hide genuine data problems. It saturates
+    the opportunity score at 100 through the existing clamp, which is the
+    intended behaviour for a very high-conviction setup.
+    """
+    from models.system1_base import resolve_risk_reward
+
+    assert resolve_risk_reward({"risk_reward_ratio": 1e9}) == 1e9
+
+
+def test_terrible_rr_cannot_buy_max_size_via_normalized_score():
+    """
+    Regression for a units bug that inverted the R:R safety gate.
+
+    A setup with a real R:R of 0.3 (risking 3x more than it can win) reports
+    riskRewardScore = 10. Read as an R multiple that is `rr = 10`, which:
+      * passed the `rr < 1.2` hard reject,
+      * added (10/3)*20 = 66.7 opportunity points,
+      * scored opportunity 100 / APPROVE / 1.25x — MAXIMUM position size for
+        the WORST possible setup.
+    """
+    from models.system1_base import (
+        check_hard_risk_gates,
+        evaluate_deterministic_system1,
+    )
+
+    base = {
+        "direction": "BUY",
+        "setup_type": "BREAKOUT",
+        "technical_score": 70,
+        "india_vix": 14.0,
+        "order_flow_imbalance_ratio": 0.25,
+        "market_regime": "BULL_TRENDING",
+        "chronos_trend": "bullish",
+        "fii_dii_net": 800,
+    }
+
+    for true_rr in (0.3, 0.5, 0.8, 1.0):
+        state = {**base, "riskRewardScore": _normalize_rr_score(true_rr)}
+        gate = check_hard_risk_gates(state, provider="jev", model_id="jev-1", source="t")
+        assert gate is not None, f"true R:R {true_rr} bypassed the hard gate via a 0-100 score"
+        assert gate.verdict == "REJECT" and gate.position_size_multiplier == 0.0
+
+        d = evaluate_deterministic_system1(
+            state, provider="jev", model_id="jev-1", source="t", check_gates=False
+        )
+        assert d.opportunity_score < 100.0, f"true R:R {true_rr} scored a perfect opportunity"
+
+    # A genuinely good R:R must still be approved and able to scale up.
+    good = {**base, "riskRewardScore": _normalize_rr_score(3.0)}
+    gate = check_hard_risk_gates(good, provider="jev", model_id="jev-1", source="t")
+    assert gate is None
+    d = evaluate_deterministic_system1(
+        good, provider="jev", model_id="jev-1", source="t", check_gates=False
+    )
+    assert d.verdict == "APPROVE"
+    assert d.position_size_multiplier == 1.25

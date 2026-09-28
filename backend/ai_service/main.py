@@ -43,6 +43,7 @@ _ENV_FILES_APPLIED = load_env_files(resolve_env_paths(os.path.dirname(os.path.ab
 from models import technical_pattern_engine, chronos_service
 from models import ranker_service
 from models.numeric_utils import finite_clamp, safe_div, sanitize_float
+from models.system1_base import resolve_risk_reward
 from models.confluence_service import confluence_service
 from models.jev_service import jev_service, JevDecision
 from models.laya_service import laya_service, LayaDecision
@@ -860,6 +861,12 @@ async def infer_batch(req: BatchRequest):
         cand_feats = cand.features or {}
         composite, components = _compute_composite_score(kr, cr, sentiment_dict, cand_feats)
 
+        # Risk-reward must be a true R multiple. `riskRewardScore` is a
+        # NORMALIZED 0-100 score (3.0 == 100) and reading it as an R multiple let
+        # a 0.3 R:R setup pass the `rr < 1.2` hard gate with a 100.0 opportunity
+        # score and 1.25x size. resolve_risk_reward de-normalizes it.
+        risk_reward_ratio = resolve_risk_reward(cand_feats, default=1.5)
+
         # Assemble the canonical System-1 state. Built here (not in a later
         # phase) because it needs the ranker, Chronos trend, and sentiment.
         system1_state = {
@@ -870,7 +877,7 @@ async def infer_batch(req: BatchRequest):
             "entry_price": cand_feats.get("entry_price") if cand_feats.get("entry_price") is not None else cand_feats.get("entryPrice", 0.0),
             "stop_loss": cand_feats.get("stop_loss") if cand_feats.get("stop_loss") is not None else cand_feats.get("stopLoss", 0.0),
             "target1": cand_feats.get("target1", 0.0),
-            "risk_reward_ratio": cand_feats.get("risk_reward_ratio") if cand_feats.get("risk_reward_ratio") is not None else (cand_feats.get("riskReward") if cand_feats.get("riskReward") is not None else cand_feats.get("riskRewardScore", 1.5)),
+            "risk_reward_ratio": risk_reward_ratio,
             "technical_score": round(kr.bullish_probability * 100.0, 2),
             "chronos_trend": cr.trend,
             "sentiment_score": sentiment_dict.get("symbol_specific_score", 0.0),
