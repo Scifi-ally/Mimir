@@ -178,15 +178,69 @@ class ScannerOrchestrator {
             );
 
             // Generate suggestions for top 5 ranked opportunities
+            //
+            // Modules are resolved once per batch, not per opportunity: this runs
+            // on a per-tick throttle and dynamic import inside the loop would
+            // repeat resolution for every candidate.
+            const { resolveSnapshotForSymbol } = await import("../analysis/intraday_monitor");
+            const { assessRisk } = await import("../analysis/risk_engine");
+            const { STOCK_SECTOR_MAP } = await import("../analysis/stock_scanner");
+
             for (const opportunity of ranked.slice(0, 5)) {
+              const entry = opportunity.entry;
+              const stopLoss = opportunity.stopLoss;
+              const stopDistanceAbs = Math.abs(entry - stopLoss);
+
+              // Run the real risk gates before fabricating a signal.
+              //
+              // This path previously skipped risk_engine.assessRisk entirely, so
+              // the liquidity floor (minDailyVolume / minDailyTurnoverInr), the
+              // ATR volatility band, the FII/PCR blocks, the macro halving and
+              // the capital caps were all absent here — a momentum expansion in
+              // an illiquid scrip could reach execution with no gate at all.
+              const { snap } = await resolveSnapshotForSymbol(
+                opportunity.symbol,
+                this.tickEngine.getState(opportunity.instrumentKey)?.ltp ?? entry,
+              );
+
+              const direction: "BUY" | "SELL" =
+                String(opportunity.direction).toUpperCase() === "SELL" ? "SELL" : "BUY";
+              // The realtime detector model exposes a single target, so
+              // target2 is unavailable on this path; 0 marks it absent rather
+              // than inventing a level.
+              const target2 = 0;
+
+              const setupCandidate = {
+                setupType: opportunity.setup,
+                direction,
+                entryPrice: entry,
+                stopLoss,
+                target1: opportunity.target,
+                target2,
+                score: opportunity.compositeScore,
+                riskReward: opportunity.riskReward,
+                reasoning: opportunity.rankReasoning ? opportunity.rankReasoning.join("; ") : "",
+                confluence: [] as string[],
+              };
+
+              const sector = STOCK_SECTOR_MAP[opportunity.symbol] ?? "Other";
+              const risk = await assessRisk(setupCandidate, snap, sector);
+              if (!risk.passed) {
+                logger.debug(
+                  { symbol: opportunity.symbol, reasons: risk.rejectionReasons },
+                  "Realtime opportunity rejected by risk engine",
+                );
+                continue;
+              }
+
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               const signal: any = {
                 symbol: opportunity.symbol,
                 name: opportunity.symbol,
                 signal: opportunity.direction,
                 setupType: opportunity.setup,
-                entryPrice: opportunity.entry,
-                stopLoss: opportunity.stopLoss,
+                entryPrice: entry,
+                stopLoss,
                 target1: opportunity.target,
                 target2: null,
                 riskReward: opportunity.riskReward,
@@ -196,12 +250,22 @@ class ScannerOrchestrator {
                 chronosScore: 50,
                 technicalScore: 50,
                 sentimentScore: 50,
-                sector: "Unknown",
+                sector,
                 regime: this.breadth.getSnapshot()?.regime ?? "UNKNOWN",
-                positionSize: 1,
-                maxRiskInr: Math.abs(opportunity.entry - opportunity.stopLoss),
-                stopDistancePct: (Math.abs(opportunity.entry - opportunity.stopLoss) / opportunity.entry) * 100,
-                featureVector: { atr14: (Math.abs(opportunity.entry - opportunity.stopLoss) / 1.5) },
+                // Size and max risk now come from the risk engine, not from
+                // hardcoded 1-share guesses. Previously `positionSize: 1` made
+                // every realtime trade a 1-share trade regardless of capital or
+                // risk budget, and `maxRiskInr` held a PER-SHARE number in a
+                // rupee field — which only coincided with the real value
+                // because the size was 1.
+                positionSize: risk.positionSize,
+                maxRiskInr: risk.maxRiskInr,
+                stopDistancePct: entry > 0 ? (stopDistanceAbs / entry) * 100 : 0,
+                // Do NOT synthesise a partial FeatureVector. The suggestions
+                // table persists this specifically so a model can later be
+                // trained on realized outcomes; a 1-field stand-in silently
+                // poisons that training set with 1 real column and N missing.
+                featureVector: null,
                 reasoning: opportunity.rankReasoning ? opportunity.rankReasoning.join("; ") : "",
                 confluence: [],
                 rankingProvider: "AI Ranking",

@@ -537,10 +537,63 @@ export function detectMomentumContinuation(
   }
 }
 
-async function resolveTechnicalSnapshot(
+/**
+ * Short-lived memo for resolved snapshots, keyed by symbol.
+ *
+ * Both tick-driven paths ask for the same symbol many times per second (the
+ * intraday monitor loops every 300 ms; the realtime orchestrator throttles to
+ * 500 ms per symbol). `scanStock` is the expensive part and its candle fetches
+ * are already cached for 15 minutes, so a few seconds of memoisation removes
+ * almost all repeat work without letting the snapshot go stale.
+ */
+const SNAPSHOT_MEMO_TTL_MS = 3_000;
+const _snapshotMemo = new Map<string, { at: number; value: Awaited<ReturnType<typeof resolveSnapshotForSymbol>> }>();
+
+/**
+ * Resolve a full technical snapshot for a symbol on a tick-driven path.
+ *
+ * Exported so the realtime orchestrator path (Path B) can run the same real risk
+ * gates the intraday path (Path C) runs, instead of fabricating a signal and
+ * skipping `risk_engine.assessRisk` entirely.
+ *
+ * Prefers a live `scanStock` result — the only source of genuine `avgDailyVolume`,
+ * `high52w` and `ema200`, which the liquidity and volatility gates depend on.
+ * Falls back to tick-derived indicators when no scan data is reachable.
+ */
+export async function resolveSnapshotForSymbol(
   symbol: string,
   currentPrice: number,
-  monitored: MonitoredStock,
+  intradayRange?: { highOfDay: number; lowOfDay: number },
+): Promise<{
+  snap: TechnicalSnapshot;
+  source: "live_scan" | "tick_derived";
+  rsVsNifty: number | null;
+  scanFeatures: FeatureVector | null;
+}> {
+  const now = Date.now();
+  const memo = _snapshotMemo.get(symbol);
+  if (memo && now - memo.at < SNAPSHOT_MEMO_TTL_MS) {
+    // Keep the live price fresh; the indicator state is intentionally reused.
+    return {
+      ...memo.value,
+      snap: { ...memo.value.snap, close: currentPrice },
+    };
+  }
+
+  const value = await _resolveSnapshotUncached(symbol, currentPrice, intradayRange);
+  _snapshotMemo.set(symbol, { at: now, value });
+  if (_snapshotMemo.size > 256) {
+    for (const [k, v] of _snapshotMemo) {
+      if (now - v.at >= SNAPSHOT_MEMO_TTL_MS) _snapshotMemo.delete(k);
+    }
+  }
+  return value;
+}
+
+async function _resolveSnapshotUncached(
+  symbol: string,
+  currentPrice: number,
+  intradayRange?: { highOfDay: number; lowOfDay: number },
 ): Promise<{
   snap: TechnicalSnapshot;
   source: "live_scan" | "tick_derived";
@@ -553,23 +606,10 @@ async function resolveTechnicalSnapshot(
       const niftyCandles = await fetchNiftyDailyCandles(70);
       const scanResult = await scanStock(stock, niftyCandles);
       if (scanResult?.snapshot) {
-        const snap = { ...scanResult.snapshot, close: currentPrice };
-
-        // Detect alerts in background
-        detectAlerts(symbol, {
-          rsi: snap.rsi14,
-          vwap: snap.vwap,
-          close: snap.close,
-          mtfScore: scanResult.mtfScore,
-          mtfDesc: scanResult.mtfConfluenceString
-        }).catch(err => logger.error({ err }, "Alert detection failed"));
-
         return {
-          snap,
+          snap: { ...scanResult.snapshot, close: currentPrice },
           source: "live_scan",
           rsVsNifty: scanResult.rs60,
-          // ScanResult deliberately carries only the normalized snapshot/candles
-          // contract. Build the monitor feature vector from that snapshot below.
           scanFeatures: null,
         };
       }
@@ -578,11 +618,48 @@ async function resolveTechnicalSnapshot(
     logger.debug({ err, symbol }, "Live scan snapshot unavailable; using tick-derived indicators");
   }
   return {
-    snap: buildTickDerivedSnapshot(symbol, currentPrice, monitored),
+    snap: buildTickDerivedSnapshot(symbol, currentPrice, {
+      highOfDay: intradayRange?.highOfDay ?? currentPrice,
+      lowOfDay: intradayRange?.lowOfDay ?? currentPrice,
+    }),
     source: "tick_derived",
     rsVsNifty: null,
     scanFeatures: null,
   };
+}
+
+async function resolveTechnicalSnapshot(
+  symbol: string,
+  currentPrice: number,
+  monitored: MonitoredStock,
+): Promise<{
+  snap: TechnicalSnapshot;
+  source: "live_scan" | "tick_derived";
+  rsVsNifty: number | null;
+  scanFeatures: FeatureVector | null;
+}> {
+  const resolved = await resolveSnapshotForSymbol(symbol, currentPrice, {
+    highOfDay: monitored.highOfDay,
+    lowOfDay: monitored.lowOfDay,
+  });
+  if (resolved.source === "live_scan") {
+    // Background alert evaluation is specific to the monitoring subscription.
+    const stock = await findStockBySymbol(symbol).catch(() => null);
+    if (stock) {
+      const niftyCandles = await fetchNiftyDailyCandles(70);
+      const scanResult = await scanStock(stock, niftyCandles).catch(() => null);
+      if (scanResult?.snapshot) {
+        detectAlerts(symbol, {
+          rsi: resolved.snap.rsi14,
+          vwap: resolved.snap.vwap,
+          close: resolved.snap.close,
+          mtfScore: scanResult.mtfScore,
+          mtfDesc: scanResult.mtfConfluenceString,
+        }).catch((err) => logger.error({ err }, "Alert detection failed"));
+      }
+    }
+  }
+  return resolved;
 }
 
 /**
@@ -591,7 +668,7 @@ async function resolveTechnicalSnapshot(
 function buildTickDerivedSnapshot(
   symbol: string,
   currentPrice: number,
-  monitored: MonitoredStock,
+  monitored: { highOfDay: number; lowOfDay: number },
 ): TechnicalSnapshot {
   const ticks = getTickData(symbol);
   const prices = ticks.map((t) => t.price);
