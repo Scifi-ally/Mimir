@@ -56,6 +56,8 @@ export class ThreadWorkerPool {
   // Workers whose replacement was already spawned (timeout path) — their
   // exit event must not spawn another.
   private readonly replacedWorkers = new Set<Worker>();
+  // Pending crash-loop respawn timers, so shutdown() can cancel them.
+  private readonly respawnTimers: NodeJS.Timeout[] = [];
 
   constructor(
     public readonly name: WorkerPoolName,
@@ -162,7 +164,17 @@ export class ThreadWorkerPool {
         }
         const delay = Math.min(30000, 2000 * Math.pow(2, this.consecutiveFastExits));
         logger.warn({ pool: this.name, aliveMs, delay }, "Worker died immediately after spawn — delaying respawn");
-        setTimeout(() => this.spawnWorker(), delay);
+        // Track the timer so shutdown() can cancel it and so a shutdown/restart
+        // inside the 2-30s backoff window cannot spawn a Worker after shutdown —
+        // which would be registered nowhere, never terminated, and leak one OS
+        // thread per restart cycle. The market scheduler restarts on every
+        // open/close, so this is not a theoretical path.
+        this.respawnTimers.push(
+          setTimeout(() => {
+            if (this.shuttingDown) return;
+            this.spawnWorker();
+          }, delay),
+        );
       } else {
         this.consecutiveFastExits = 0;
         this.spawnWorker();
@@ -194,6 +206,17 @@ export class ThreadWorkerPool {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   enqueue<T>(type: string, payload: any): Promise<T> {
     return new Promise<T>((resolve, reject) => {
+      // Without this guard a task enqueued AFTER shutdown() is pushed onto a
+      // queue that no longer has workers to drain it, and shutdown()'s rejection
+      // sweep has already run — so the returned promise never settles and leaks
+      // permanently. Reachable from any "processedTick" event or debounce
+      // callback that fires after marketIntelligence.stop().
+      if (this.shuttingDown) {
+        const err = new Error(`Worker pool '${this.name}' is shutting down; rejecting task ${type}.`);
+        this.failed += 1;
+        this.addError(err.message);
+        return reject(err);
+      }
       if (this.taskQueue.length >= this.maxQueueSize) {
         // Dynamic Backpressure: Reject new incoming tasks immediately so producer can backoff
         this.failed += 1;
@@ -292,6 +315,10 @@ export class ThreadWorkerPool {
 
   async shutdown(): Promise<void> {
     this.shuttingDown = true;
+    for (const timer of this.respawnTimers) {
+      clearTimeout(timer);
+    }
+    this.respawnTimers.length = 0;
     for (const task of this.taskQueue) {
       task.reject(new Error(`Worker pool '${this.name}' shut down`));
     }

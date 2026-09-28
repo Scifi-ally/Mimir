@@ -91,7 +91,7 @@ export const defaultConfig: TradingConfig = {
   upstoxApiSecret: process.env["UPSTOX_API_SECRET"] ?? "",
   upstoxDataApiKey: process.env["UPSTOX_DATA_API_KEY"] ?? "",
   upstoxDataApiSecret: process.env["UPSTOX_DATA_API_SECRET"] ?? "",
-  useDualApiKeys: false,
+  useDualApiKeys: process.env["USE_DUAL_API_KEYS"] === "true" || Boolean(process.env["UPSTOX_DATA_API_KEY"]),
   upstoxRedirectUri: (() => {
     if (process.env["UPSTOX_REDIRECT_URI"]) return process.env["UPSTOX_REDIRECT_URI"];
     // Auto-derive from Replit dev domain when running in Replit
@@ -159,12 +159,12 @@ function rowToConfig(row: typeof tradingConfigTable.$inferSelect): TradingConfig
     maxDeployedCapitalPct: numberOrDefault(row.maxDeployedCapitalPct, defaultConfig.maxDeployedCapitalPct),
     paperTradingEnabled: row.paperTradingEnabled ?? defaultConfig.paperTradingEnabled,
     tradingMode: row.tradingMode === "LIVE" ? "LIVE" : "PAPER",
-    upstoxApiKey: row.upstoxApiKey ?? defaultConfig.upstoxApiKey,
+    upstoxApiKey: (row.upstoxApiKey && row.upstoxApiKey.trim().length > 0 && row.upstoxApiKey !== "your_upstox_api_key_here") ? row.upstoxApiKey : defaultConfig.upstoxApiKey,
     // MEDIUM FIX (Issue #23): Handle empty strings properly when revealing secrets
-    upstoxApiSecret: row.upstoxApiSecret && row.upstoxApiSecret.length > 0 ? revealSecret(row.upstoxApiSecret) : defaultConfig.upstoxApiSecret,
-    upstoxDataApiKey: row.upstoxDataApiKey ?? defaultConfig.upstoxDataApiKey,
-    upstoxDataApiSecret: row.upstoxDataApiSecret && row.upstoxDataApiSecret.length > 0 ? revealSecret(row.upstoxDataApiSecret) : defaultConfig.upstoxDataApiSecret,
-    useDualApiKeys: row.useDualApiKeys ?? defaultConfig.useDualApiKeys,
+    upstoxApiSecret: (row.upstoxApiSecret && row.upstoxApiSecret.length > 0 && row.upstoxApiSecret !== "your_upstox_api_secret_here") ? revealSecret(row.upstoxApiSecret) : defaultConfig.upstoxApiSecret,
+    upstoxDataApiKey: (row.upstoxDataApiKey && row.upstoxDataApiKey.trim().length > 0 && row.upstoxDataApiKey !== "your_upstox_data_api_key_here") ? row.upstoxDataApiKey : defaultConfig.upstoxDataApiKey,
+    upstoxDataApiSecret: (row.upstoxDataApiSecret && row.upstoxDataApiSecret.length > 0 && row.upstoxDataApiSecret !== "your_upstox_data_api_secret_here") ? revealSecret(row.upstoxDataApiSecret) : defaultConfig.upstoxDataApiSecret,
+    useDualApiKeys: row.useDualApiKeys != null ? (row.useDualApiKeys || defaultConfig.useDualApiKeys) : defaultConfig.useDualApiKeys,
     upstoxRedirectUri: row.upstoxRedirectUri ?? defaultConfig.upstoxRedirectUri,
     discordWebhookUrl: row.discordWebhookUrl ?? defaultConfig.discordWebhookUrl,
     telegramBotToken: row.telegramBotToken && row.telegramBotToken.length > 0 ? revealSecret(row.telegramBotToken) : defaultConfig.telegramBotToken,

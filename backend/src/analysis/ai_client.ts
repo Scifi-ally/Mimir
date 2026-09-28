@@ -7,6 +7,31 @@ import { getFiiDiiDivergence } from "./divergence_engine";
 import { computeOFI } from "./order_flow";
 import { fetchFIIDIIData } from "../market_data/fii_dii";
 import { buildSnapshot, computeMACD, type OHLCV } from "./technical";
+import type { JevDecision, JevVerdict, JevAction, JevDecisionRequest } from "./jev_contract";
+import type { LayaDecision, LayaVerdict, LayaAction, LayaDecisionRequest } from "./laya_contract";
+import type {
+  System1Decision,
+  System1Verdict,
+  System1Action,
+  System1DecisionRequest,
+  System1Provider,
+} from "./system1_contract";
+
+export type {
+  JevDecision,
+  JevVerdict,
+  JevAction,
+  JevDecisionRequest,
+  LayaDecision,
+  LayaVerdict,
+  LayaAction,
+  LayaDecisionRequest,
+  System1Decision,
+  System1Verdict,
+  System1Action,
+  System1DecisionRequest,
+  System1Provider,
+};
 
 export interface BatchInferenceCandidate {
   symbol: string;
@@ -49,6 +74,9 @@ export interface BatchResult {
   ranker_threshold?: number | null;
   ranker_loaded?: boolean;
   shap_values?: Record<string, number>;
+  jev_decision?: JevDecision;
+  laya_decision?: LayaDecision;
+  system1_decision?: System1Decision;
 }
 
 export interface BatchResponse {
@@ -56,6 +84,9 @@ export interface BatchResponse {
   processing_time_ms: number;
   ranker_threshold?: number | null;
   ranker_loaded?: boolean;
+  jev_enabled?: boolean;
+  laya_enabled?: boolean;
+  system1_enabled?: boolean;
 }
 
 export interface HealthResponse {
@@ -191,6 +222,9 @@ export async function checkAIHealth(): Promise<HealthResponse> {
         sentiment: { loaded: false, healthy: false, fallback_active: true, fallback_mode: "keyword_or_neutral" },
         confluence: { loaded: false, healthy: false, fallback_active: true },
         rl_inference: { loaded: false, healthy: false, fallback_active: true },
+        jev: { loaded: true, healthy: true, fallback_active: true, mode: "native_ts_surrogate" },
+        laya: { loaded: true, healthy: true, fallback_active: true, mode: "native_ts_surrogate" },
+        system1: { loaded: true, healthy: true, fallback_active: true, mode: "native_ts_surrogate" },
       },
       hardware: { type: "Node.js Fallback" },
       diagnostics: { latency: "0ms", error: "FastAPI unreachable" }
@@ -299,21 +333,51 @@ export async function batchInference(
   }
 
   // FALLBACK: Native Math Model (Advanced Stochastic Engine)
+  const [fiiDii, optionChain] = await Promise.all([
+    fetchFIIDIIData(),
+    fetchOptionChainData(),
+  ]);
+  const macroState = getGlobalMacroState();
+  const marketState = getMarketState();
+  const envEngine = (process.env.SYSTEM1_ENGINE ?? "laya").toLowerCase();
+  const defaultEngine: "laya" | "jev" | "consensus" = envEngine === "jev" ? "jev" : (envEngine === "consensus" ? "consensus" : "laya");
+
   for (const c of candidates) {
     if (c.ohlcv.length < 55) continue; // We need at least 55 for a good technical snapshot
 
-    const candles = c.ohlcv.map(([open, high, low, close, volume], index): OHLCV => ({
-      timestamp: String(index),
-      open: Number(open),
-      high: Number(high),
-      low: Number(low),
-      close: Number(close),
-      volume: Number(volume ?? 0),
-    }));
+    // Per-candidate isolation. This loop sits OUTSIDE the microservice try/catch
+    // above, so a single malformed row (`row[0]` on a null entry throws a
+    // TypeError) or a non-numeric field (Number(undefined) -> NaN) previously
+    // rejected the whole batch and discarded every other candidate's results.
+    let candles: OHLCV[];
+    try {
+      candles = c.ohlcv.map((row, index): OHLCV => ({
+        timestamp: String(index),
+        open: Number(row?.[0]),
+        high: Number(row?.[1]),
+        low: Number(row?.[2]),
+        close: Number(row?.[3]),
+        volume: Number(row?.[4] ?? 0),
+      }));
+    } catch (err) {
+      logger.warn({ err: (err as Error).message, symbol: c.symbol }, "Skipping candidate with malformed ohlcv in native fallback");
+      continue;
+    }
+
+    // Reject non-finite series outright: a NaN close propagates into lastClose,
+    // drift and forecast_return_pct, and every comparison against NaN is false,
+    // so the candidate would silently score off garbage.
+    if (candles.some((x) => !Number.isFinite(x.open) || !Number.isFinite(x.high) || !Number.isFinite(x.low) || !Number.isFinite(x.close))) {
+      logger.warn({ symbol: c.symbol }, "Skipping candidate with non-finite ohlcv in native fallback");
+      continue;
+    }
 
     const snap = buildSnapshot(candles);
     if (!snap) continue;
 
+    // Remaining per-candidate maths is wrapped so a throw in indicator maths or
+    // snapshot construction cannot reject the whole batchInference() promise.
+    try {
     const returns: number[] = [];
     for (let i = 1; i < candles.length; i++) {
       const prev = candles[i - 1].close;
@@ -441,7 +505,6 @@ export async function batchInference(
     }
 
     // Phase 5: Macro-Coupled AI Penalty
-    const macroState = getGlobalMacroState();
     if (macroState.eventRiskActive) {
       prob *= 0.90; // 10% penalty
       confidence *= 0.85;
@@ -449,9 +512,6 @@ export async function batchInference(
     }
 
     // Phase 6: Indian Market Institutional & Sentiment Edge
-    const fiiDii = await fetchFIIDIIData();
-    const optionChain = await fetchOptionChainData();
-    
     if (fiiDii) {
       if (fiiDii.fiiNetInr < -2000) {
         prob *= 0.85; 
@@ -475,6 +535,27 @@ export async function batchInference(
     prob = Math.max(0, Math.min(0.99, prob)); 
     const composite_score = Math.max(0, Math.min(100, Math.round(prob * 100)));
 
+    const sys1Req: System1DecisionRequest = {
+      symbol: c.symbol,
+      direction: c.features?.direction ?? "BUY",
+      setup_type: c.features?.setup_type ?? c.features?.setupType ?? "UNKNOWN",
+      technical_score: composite_score,
+      chronos_trend: trend,
+      risk_reward_ratio: c.features?.risk_reward_ratio ?? c.features?.riskReward ?? c.features?.riskRewardScore ?? 1.5,
+      india_vix: c.features?.india_vix ?? c.features?.vix ?? marketState.indiaVix ?? 15.0,
+      order_flow_imbalance_ratio: c.features?.order_flow_imbalance_ratio ?? c.features?.ofi_ratio ?? c.features?.bidAskImbalance ?? computeOFI(c.symbol).ofiRatio,
+      fii_dii_net: c.features?.fii_dii_net ?? c.features?.fiiNet ?? c.features?.fiiDiiNetFlowLag ?? fiiDii?.fiiNetInr ?? 0.0,
+      market_regime: c.features?.market_regime ?? c.features?.regime ?? "UNKNOWN",
+      win_probability: null,
+    };
+    const nativeDecision = computeNativeSystem1Decision(sys1Req, defaultEngine);
+    const nativeLaya: LayaDecision = defaultEngine === "laya"
+      ? nativeDecision
+      : computeNativeLayaDecision(sys1Req);
+    const nativeJev: JevDecision = defaultEngine === "jev"
+      ? nativeDecision
+      : computeNativeJevDecision(sys1Req);
+
     aiResults.set(c.symbol, {
       symbol: c.symbol,
       isFallback: true,
@@ -495,7 +576,13 @@ export async function batchInference(
       // price-derived number masquerading as news sentiment.
       sentiment_score: 50,
       composite_score,
+      jev_decision: nativeJev,
+      laya_decision: nativeLaya,
+      system1_decision: nativeDecision,
     });
+    } catch (err) {
+      logger.warn({ err: (err as Error).message, symbol: c.symbol }, "Native fallback failed for candidate; continuing batch");
+    }
   }
 
   return aiResults;
@@ -504,6 +591,24 @@ export async function batchInference(
 const aiCache = new Map<string, { result: BatchResult, ts: number }>();
 const inFlightInference = new Map<string, Promise<BatchResult | null>>();
 const CACHE_TTL = 15 * 60 * 1000; // 15 minutes
+// Hard cap on cached forecasts. The TTL was only ever checked on READ and
+// nothing was ever deleted, so every symbol ever inferred stayed resident for
+// the life of the process — each entry carrying ~450 forecast numbers
+// (median_forecast[90] plus 4 quantile series). Reachable across the full
+// scan universe, that is a monotonic heap leak in an all-session process.
+const AI_CACHE_MAX = Number(process.env["AI_CACHE_MAX"] ?? "5000");
+
+function pruneAiCache() {
+  if (aiCache.size <= AI_CACHE_MAX) return;
+  // Oldest-timestamp first.
+  const overflow = aiCache.size - AI_CACHE_MAX;
+  let removed = 0;
+  for (const [key] of [...aiCache.entries()].sort((a, b) => a[1].ts - b[1].ts)) {
+    if (removed >= overflow) break;
+    aiCache.delete(key);
+    removed += 1;
+  }
+}
 
 export async function inferSymbolForecast(
   symbol: string,
@@ -527,6 +632,7 @@ export async function inferSymbolForecast(
       const result = results.get(symbol) ?? null;
       if (result) {
         aiCache.set(symbol, { result, ts: Date.now() });
+        pruneAiCache();
       }
       return result;
     } finally {
@@ -655,4 +761,303 @@ export async function triggerConfluenceTraining(): Promise<boolean> {
     logger.error({ err }, "Failed to trigger confluence training");
     return false;
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// System-1 (LAYA & JEV) Service Integrations & Native Fallbacks
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function computeNativeSystem1Decision(
+  req: System1DecisionRequest,
+  provider: "laya" | "jev" | "consensus" = "laya",
+): System1Decision {
+  const safeNum = (v: unknown, fallback: number): number => {
+    return typeof v === "number" && Number.isFinite(v) ? v : fallback;
+  };
+  const safeStr = (v: unknown, fallback: string): string => {
+    return typeof v === "string" && v.trim().length > 0 ? v.trim() : fallback;
+  };
+
+  const direction = safeStr(req.direction, "BUY").toUpperCase();
+  const setupType = safeStr(req.setup_type, "PULLBACK").toUpperCase();
+  const techScore = safeNum(req.technical_score, 50.0);
+  const rr = safeNum(req.risk_reward_ratio, 1.5);
+  const ofi = safeNum(req.order_flow_imbalance_ratio, 0.0);
+  const fiiNet = safeNum(req.fii_dii_net, 0.0);
+  const vix = safeNum(req.india_vix, 15.0);
+  const regime = safeStr(req.market_regime, "UNKNOWN").toUpperCase();
+  const chronosTrend = safeStr(req.chronos_trend, "neutral").toLowerCase();
+  const sentimentScore = safeNum(req.sentiment_score, 0.0);
+  const winProb = typeof req.win_probability === "number" && Number.isFinite(req.win_probability)
+    ? req.win_probability
+    : null;
+
+  const gateReasons: string[] = [];
+
+  let regimeAlignment = 0.0;
+  if (regime.includes("BULL")) {
+    regimeAlignment = direction === "BUY" ? 0.8 : -0.8;
+  } else if (regime.includes("BEAR")) {
+    regimeAlignment = direction === "BUY" ? -0.8 : 0.8;
+  } else if (regime.includes("SIDEWAYS") || regime.includes("RANGE")) {
+    regimeAlignment = (setupType.includes("PULLBACK") || setupType.includes("REVERSION")) ? 0.2 : -0.1;
+  } else if (regime.includes("VOLATILE")) {
+    regimeAlignment = -0.5;
+  }
+
+  // Hard risk checks
+  let hardReject = false;
+
+  if (vix > 25.0) {
+    hardReject = true;
+    gateReasons.push("HIGH_VOLATILITY_VIX_SPIKE");
+  } else if (vix > 20.0 && regimeAlignment < 0) {
+    hardReject = true;
+    gateReasons.push("ELEVATED_VIX_COUNTER_REGIME");
+  }
+
+  if (rr < 1.2) {
+    hardReject = true;
+    gateReasons.push(`UNFAVORABLE_RISK_REWARD_${rr.toFixed(2)}`);
+  }
+
+  if (direction === "BUY" && fiiNet < -2500.0) {
+    hardReject = true;
+    gateReasons.push("HEAVY_INSTITUTIONAL_SELLING");
+  } else if (direction === "SELL" && fiiNet > 2500.0) {
+    hardReject = true;
+    gateReasons.push("HEAVY_INSTITUTIONAL_BUYING");
+  }
+
+  if (winProb !== null && winProb < 0.45) {
+    hardReject = true;
+    gateReasons.push(`LOW_RANKER_WIN_PROB_${winProb.toFixed(2)}`);
+  }
+
+  if ((direction === "BUY" && ofi < -0.35) || (direction === "SELL" && ofi > 0.35)) {
+    hardReject = true;
+    gateReasons.push("SEVERE_ORDER_FLOW_CONTRADICTION");
+  }
+
+  // RLCD-Calibrated Noul Bernoulli Probabilities
+  const ofiConfluence = ((direction === "BUY" && ofi > 0.1) || (direction === "SELL" && ofi < -0.1))
+    ? 0.5
+    : (((direction === "BUY" && ofi < -0.1) || (direction === "SELL" && ofi > 0.1)) ? -0.5 : 0.0);
+
+  const zExec = 0.5 + ofiConfluence + 0.4 * regimeAlignment - 0.05 * Math.max(0, vix - 16.0);
+
+  const zHunt = -1.2 + 0.1 * Math.max(0, vix - 15.0) - (rr >= 2.0 ? 0.3 : -0.3)
+    + (setupType.includes("BREAKOUT") && (regime.includes("SIDEWAYS") || regime.includes("VOLATILE")) ? 0.5 : 0);
+
+  const zShift = -1.5 + (regimeAlignment < 0 ? 0.8 : 0) + 0.08 * Math.max(0, vix - 18.0)
+    + ((direction === "BUY" && chronosTrend === "bearish") || (direction === "SELL" && chronosTrend === "bullish") ? 0.5 : 0);
+
+  const sigmoid = (z: number): number => {
+    return Math.round((1.0 / (1.0 + Math.exp(-Math.max(-10.0, Math.min(10.0, z))))) * 10000) / 10000;
+  };
+
+  const pExec = sigmoid(zExec);
+  const pHunt = sigmoid(zHunt);
+  const pShift = sigmoid(zShift);
+
+  // Model identity must be honest. This is a hand-written deterministic
+  // heuristic, NOT the ConvAI Innovations LAYA model, so stamping it with the
+  // real `convaiinnovations/laya` model id attributes heuristic output to a
+  // calibrated neural model in every downstream metric keyed on `model_id`.
+  const modelId = "native_ts_deterministic_surrogate";
+
+
+  if (hardReject) {
+    return {
+      verdict: "REJECT",
+      action: "CANCEL",
+      confidence: 0.88,
+      opportunity_score: 15.0,
+      gate_reasons: gateReasons,
+      regime_alignment: Math.round(regimeAlignment * 100) / 100,
+      p_execution_success: Math.min(0.20, Math.round(pExec * 0.3 * 10000) / 10000),
+      p_stop_hunt_risk: Math.max(0.75, pHunt),
+      p_adverse_regime_shift: Math.max(0.70, pShift),
+      position_size_multiplier: 0.0,
+      provider,
+      model_id: modelId,
+      source: provider === "consensus" ? "native_ts_consensus" : "native_ts_surrogate",
+    };
+  }
+
+  let baseOpp = techScore * 0.45 + (rr / 3.0) * 20.0 + (regimeAlignment + 1.0) * 15.0;
+  if ((direction === "BUY" && ofi > 0.2) || (direction === "SELL" && ofi < -0.2)) {
+    baseOpp += 10.0;
+    gateReasons.push("POSITIVE_ORDER_FLOW_CONFLUENCE");
+  }
+  if ((direction === "BUY" && chronosTrend === "bullish") || (direction === "SELL" && chronosTrend === "bearish")) {
+    baseOpp += 10.0;
+    gateReasons.push("CHRONOS_DIRECTIONAL_ALIGNMENT");
+  }
+  if ((sentimentScore > 0.2 && direction === "BUY") || (sentimentScore < -0.2 && direction === "SELL")) {
+    baseOpp += 5.0;
+  }
+  if (winProb !== null && winProb >= 0.65) {
+    baseOpp += 5.0;
+    gateReasons.push("RANKER_CONVICTION_ALIGNMENT");
+  }
+
+  const oppScore = Math.max(0, Math.min(100, Math.round(baseOpp * 10) / 10));
+  const isPullback = setupType.includes("PULLBACK") || setupType.includes("REVERSION");
+
+  if (oppScore >= 70.0 && regimeAlignment >= 0.0) {
+    const action: System1Action = (pHunt > 0.35 && !isPullback) ? "LIMIT_PULLBACK" : "EXECUTE_IMMEDIATELY";
+    if (action === "LIMIT_PULLBACK") {
+      gateReasons.push("PULLBACK_ENTRY_PREFERRED");
+    } else {
+      gateReasons.push("STRONG_SYSTEM_ONE_CONVICTION");
+    }
+    let confidence = Math.min(0.95, 0.65 + (oppScore - 70.0) * 0.01);
+    if (provider === "consensus") {
+      confidence = Math.min(0.98, confidence + 0.05);
+      gateReasons.push("SYSTEM1_DUAL_ENGINE_CONSENSUS");
+    }
+    const ofiAligned = (direction === "BUY" && ofi > 0.1) || (direction === "SELL" && ofi < -0.1);
+    // Size from calibrated probabilities, mirroring the Python tiers: scale up
+    // only on clean execution odds, and scale *down* when stop-hunt or
+    // regime-collapse risk is elevated rather than ignoring it.
+    let sizeMultiplier: number;
+    if (confidence >= 0.80 && pExec >= 0.70 && pHunt <= 0.20 && pShift <= 0.20 && ofiAligned) {
+      sizeMultiplier = 1.25;
+      gateReasons.push("POSITION_SIZE_SCALED_UP_1.25X");
+    } else if (pHunt > 0.35 || pShift > 0.30 || pExec < 0.55) {
+      sizeMultiplier = 0.85;
+      gateReasons.push("POSITION_SIZE_SCALED_DOWN_0.85X");
+    } else {
+      sizeMultiplier = 1.0;
+    }
+
+    const source = provider === "consensus" ? "native_ts_consensus" : "native_ts_surrogate";
+
+    return {
+      verdict: "APPROVE",
+      action,
+      confidence: Math.round(confidence * 100) / 100,
+      opportunity_score: oppScore,
+      gate_reasons: gateReasons,
+      regime_alignment: Math.round(regimeAlignment * 100) / 100,
+      p_execution_success: pExec,
+      p_stop_hunt_risk: pHunt,
+      p_adverse_regime_shift: pShift,
+      position_size_multiplier: sizeMultiplier,
+      provider,
+      model_id: modelId,
+      source,
+    };
+  } else if (oppScore >= 50.0) {
+    gateReasons.push("MODERATE_OPPORTUNITY_REQUIRE_CONFIRMATION");
+    if (provider === "consensus") {
+      gateReasons.push("SYSTEM1_DUAL_ENGINE_CONSENSUS");
+    }
+    const source = provider === "consensus" ? "native_ts_consensus" : "native_ts_surrogate";
+    return {
+      verdict: "CAUTION",
+      action: rr >= 1.5 ? "LIMIT_PULLBACK" : "CONFIRMED_ENTRY",
+      confidence: 0.60,
+      opportunity_score: oppScore,
+      gate_reasons: gateReasons,
+      regime_alignment: Math.round(regimeAlignment * 100) / 100,
+      p_execution_success: pExec,
+      p_stop_hunt_risk: pHunt,
+      p_adverse_regime_shift: pShift,
+      position_size_multiplier: 0.65,
+      provider,
+      model_id: modelId,
+      source,
+    };
+  } else {
+    gateReasons.push("LOW_OPPORTUNITY_SCORE");
+    const source = provider === "consensus" ? "native_ts_consensus" : "native_ts_surrogate";
+    return {
+      verdict: "REJECT",
+      action: "CANCEL",
+      confidence: 0.75,
+      opportunity_score: oppScore,
+      gate_reasons: gateReasons,
+      regime_alignment: Math.round(regimeAlignment * 100) / 100,
+      p_execution_success: pExec,
+      p_stop_hunt_risk: pHunt,
+      p_adverse_regime_shift: pShift,
+      position_size_multiplier: 0.0,
+      provider,
+      model_id: modelId,
+      source,
+    };
+  }
+}
+
+export function computeNativeLayaDecision(
+  req: System1DecisionRequest,
+): LayaDecision {
+  return computeNativeSystem1Decision(req, "laya");
+}
+
+export function computeNativeJevDecision(
+  req: JevDecisionRequest,
+): JevDecision {
+  return computeNativeSystem1Decision(req, "jev");
+}
+
+export async function evaluateLayaDecision(
+  req: System1DecisionRequest,
+): Promise<LayaDecision> {
+  const url = `${getAiServiceUrl()}/inference/laya`;
+  try {
+    const res = await axios.post<LayaDecision>(url, req, {
+      headers: getAiServiceHeaders(),
+      timeout: 3000,
+    });
+    if (res.status === 200 && res.data) {
+      return res.data;
+    }
+  } catch (err) {
+    logger.debug(`LAYA inference error: ${(err as Error).message}; using native fallback`);
+  }
+  return computeNativeLayaDecision(req);
+}
+
+export async function evaluateSystem1Decision(
+  req: System1DecisionRequest,
+  preferredEngine?: "laya" | "jev" | "consensus" | "auto",
+): Promise<System1Decision> {
+  const envEngine = (process.env.SYSTEM1_ENGINE ?? "laya").toLowerCase();
+  const defaultEngine: "laya" | "jev" | "consensus" = envEngine === "jev" ? "jev" : (envEngine === "consensus" ? "consensus" : "laya");
+  const targetEngine = preferredEngine && preferredEngine !== "auto" ? preferredEngine : defaultEngine;
+  const url = `${getAiServiceUrl()}/inference/system1`;
+  try {
+    const payload = { ...req, preferred_engine: targetEngine };
+    const res = await axios.post<System1Decision>(url, payload, {
+      headers: getAiServiceHeaders(),
+      timeout: 3000,
+    });
+    if (res.status === 200 && res.data) {
+      return res.data;
+    }
+  } catch (err) {
+    logger.debug(`System-1 inference error: ${(err as Error).message}; using native fallback`);
+  }
+  return computeNativeSystem1Decision(req, targetEngine);
+}
+
+export async function evaluateJevDecision(
+  req: JevDecisionRequest,
+): Promise<JevDecision> {
+  const url = `${getAiServiceUrl()}/inference/jev`;
+  try {
+    const res = await axios.post<JevDecision>(url, req, {
+      headers: getAiServiceHeaders(),
+      timeout: 3000,
+    });
+    if (res.status === 200 && res.data) {
+      return res.data;
+    }
+  } catch (err) {
+    logger.debug(`JEV inference error: ${(err as Error).message}; using native fallback`);
+  }
+  return computeNativeJevDecision(req);
 }

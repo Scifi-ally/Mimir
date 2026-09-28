@@ -161,4 +161,262 @@ describe('runIntelligencePipeline', () => {
     expect(trace).toBeDefined();
     expect(trace?.confidencePath).toBe('native_math_fallback');
   });
+
+  it('should reject signal when LAYA System-1 triage rejects setup with high confidence', async () => {
+    const aiResults = new Map();
+    aiResults.set('RELIANCE', {
+      composite_score: 75,
+      win_probability: 0.70,
+      ranker_threshold: 0.58,
+      ranker_loaded: true,
+      isFallback: false,
+      technicalRanking: { bullish_probability: 0.75, detected_patterns: [] },
+      chronos: { trend: 'bullish', forecast_return_pct: 2 },
+      sentiment_score: 65,
+      laya_decision: {
+        verdict: 'REJECT',
+        action: 'CANCEL',
+        confidence: 0.88,
+        opportunity_score: 15.0,
+        regime_alignment: -0.6,
+        p_execution_success: 0.15,
+        p_stop_hunt_risk: 0.85,
+        p_adverse_regime_shift: 0.75,
+        gate_reasons: ['HIGH_VOLATILITY_VIX_SPIKE'],
+        provider: 'laya',
+        model_id: 'convaiinnovations/laya',
+        source: 'local_surrogate',
+      },
+    });
+    vi.mocked(aiClient.batchInference).mockResolvedValue(aiResults);
+
+    const result = await runIntelligencePipeline([mockScanResult]);
+    expect(result.signals.length).toBe(0);
+    expect(result.rejectedSignals?.length).toBe(1);
+    const trace = result.rejectedSignals![0].decisionTrace;
+    expect(trace?.rejectionGate).toBe('laya_decision');
+    expect(trace?.rejectionValue).toBe('CANCEL');
+  });
+
+  it('should include LAYA conviction approval in confluence when LAYA approves', async () => {
+    const aiResults = new Map();
+    aiResults.set('RELIANCE', {
+      composite_score: 85,
+      win_probability: 0.72,
+      ranker_threshold: 0.58,
+      ranker_loaded: true,
+      isFallback: false,
+      technicalRanking: { bullish_probability: 0.85, detected_patterns: [] },
+      chronos: { trend: 'bullish', forecast_return_pct: 2 },
+      sentiment_score: 65,
+      laya_decision: {
+        verdict: 'APPROVE',
+        action: 'EXECUTE_IMMEDIATELY',
+        confidence: 0.85,
+        opportunity_score: 85.0,
+        regime_alignment: 0.6,
+        p_execution_success: 0.85,
+        p_stop_hunt_risk: 0.15,
+        p_adverse_regime_shift: 0.20,
+        gate_reasons: ['STRONG_SYSTEM_ONE_CONVICTION'],
+        provider: 'laya',
+        model_id: 'convaiinnovations/laya',
+        source: 'local_surrogate',
+      },
+    });
+    vi.mocked(aiClient.batchInference).mockResolvedValue(aiResults);
+
+    const result = await runIntelligencePipeline([mockScanResult]);
+    expect(result.signals.length).toBe(1);
+    expect(result.signals[0].confluence).toContain('LAYA System-1: Conviction Approved');
+  });
+
+  it('should reject signal when JEV System-1 triage rejects setup under SYSTEM1_ENGINE=jev', async () => {
+    const origEngine = process.env.SYSTEM1_ENGINE;
+    try {
+      process.env.SYSTEM1_ENGINE = 'jev';
+      const aiResults = new Map();
+      aiResults.set('RELIANCE', {
+        composite_score: 75,
+        win_probability: 0.70,
+        ranker_threshold: 0.58,
+        ranker_loaded: true,
+        isFallback: false,
+        technicalRanking: { bullish_probability: 0.75, detected_patterns: [] },
+        chronos: { trend: 'bullish', forecast_return_pct: 2 },
+        sentiment_score: 65,
+        jev_decision: {
+          verdict: 'REJECT',
+          action: 'CANCEL',
+          confidence: 0.88,
+          opportunity_score: 15.0,
+          regime_alignment: -0.6,
+          p_execution_success: 0.15,
+          p_stop_hunt_risk: 0.85,
+          p_adverse_regime_shift: 0.75,
+          gate_reasons: ['HIGH_VOLATILITY_VIX_SPIKE'],
+          provider: 'jev',
+          model_id: 'jev-1',
+          source: 'local_surrogate',
+        },
+      });
+      vi.mocked(aiClient.batchInference).mockResolvedValue(aiResults);
+
+      const result = await runIntelligencePipeline([mockScanResult]);
+      expect(result.signals.length).toBe(0);
+      expect(result.rejectedSignals?.length).toBe(1);
+      const trace = result.rejectedSignals![0].decisionTrace;
+      expect(trace?.rejectionGate).toBe('jev_decision');
+      expect(trace?.rejectionValue).toBe('CANCEL');
+    } finally {
+      if (origEngine !== undefined) {
+        process.env.SYSTEM1_ENGINE = origEngine;
+      } else {
+        delete process.env.SYSTEM1_ENGINE;
+      }
+    }
+  });
+
+  it('should include JEV conviction approval in confluence when SYSTEM1_ENGINE=jev approves', async () => {
+    const origEngine = process.env.SYSTEM1_ENGINE;
+    try {
+      process.env.SYSTEM1_ENGINE = 'jev';
+      const aiResults = new Map();
+      aiResults.set('RELIANCE', {
+        composite_score: 85,
+        win_probability: 0.72,
+        ranker_threshold: 0.58,
+        ranker_loaded: true,
+        isFallback: false,
+        technicalRanking: { bullish_probability: 0.85, detected_patterns: [] },
+        chronos: { trend: 'bullish', forecast_return_pct: 2 },
+        sentiment_score: 65,
+        jev_decision: {
+          verdict: 'APPROVE',
+          action: 'EXECUTE_IMMEDIATELY',
+          confidence: 0.85,
+          opportunity_score: 85.0,
+          regime_alignment: 0.6,
+          p_execution_success: 0.85,
+          p_stop_hunt_risk: 0.15,
+          p_adverse_regime_shift: 0.20,
+          gate_reasons: ['STRONG_SYSTEM_ONE_CONVICTION'],
+          provider: 'jev',
+          model_id: 'jev-1',
+          source: 'local_surrogate',
+        },
+      });
+      vi.mocked(aiClient.batchInference).mockResolvedValue(aiResults);
+
+      const result = await runIntelligencePipeline([mockScanResult]);
+      expect(result.signals.length).toBe(1);
+      expect(result.signals[0].confluence).toContain('JEV System-1: Conviction Approved');
+    } finally {
+      if (origEngine !== undefined) {
+        process.env.SYSTEM1_ENGINE = origEngine;
+      } else {
+        delete process.env.SYSTEM1_ENGINE;
+      }
+    }
+  });
+
+  it('should handle SYSTEM1_ENGINE=consensus approval and scale position size by multiplier', async () => {
+    const origEngine = process.env.SYSTEM1_ENGINE;
+    try {
+      process.env.SYSTEM1_ENGINE = 'consensus';
+      const aiResults = new Map();
+      aiResults.set('RELIANCE', {
+        composite_score: 85,
+        win_probability: 0.72,
+        ranker_threshold: 0.58,
+        ranker_loaded: true,
+        isFallback: false,
+        technicalRanking: { bullish_probability: 0.85, detected_patterns: [] },
+        chronos: { trend: 'bullish', forecast_return_pct: 2 },
+        sentiment_score: 65,
+        system1_decision: {
+          verdict: 'APPROVE',
+          action: 'EXECUTE_IMMEDIATELY',
+          confidence: 0.90,
+          opportunity_score: 88.0,
+          regime_alignment: 0.6,
+          p_execution_success: 0.88,
+          p_stop_hunt_risk: 0.12,
+          p_adverse_regime_shift: 0.15,
+          position_size_multiplier: 1.25,
+          gate_reasons: ['STRONG_SYSTEM_ONE_CONVICTION', 'SYSTEM1_DUAL_ENGINE_CONSENSUS'],
+          provider: 'consensus',
+          model_id: 'convaiinnovations/laya',
+          source: 'local_surrogate_consensus',
+        },
+      });
+      vi.mocked(aiClient.batchInference).mockResolvedValue(aiResults);
+
+      const result = await runIntelligencePipeline([mockScanResult]);
+      expect(result.signals.length).toBe(1);
+      const signal = result.signals[0];
+      expect(signal.confluence).toContain('SYSTEM-1 Consensus: Conviction Approved');
+      // The risk engine approved 10 shares AFTER applying its macro-risk
+      // halving and deployed-capital cap. An upside System-1 multiplier must
+      // never re-inflate a position past a cap the risk engine just enforced, so
+      // 1.25x is clamped back to 10 rather than producing 12.
+      expect(signal.positionSize).toBe(10);
+      expect(signal.decisionTrace?.system1_verdict).toBe('APPROVE');
+      expect(signal.decisionTrace?.position_size_multiplier).toBe(1.25);
+    } finally {
+      if (origEngine !== undefined) {
+        process.env.SYSTEM1_ENGINE = origEngine;
+      } else {
+        delete process.env.SYSTEM1_ENGINE;
+      }
+    }
+  });
+
+  it('should reject signal when SYSTEM1_ENGINE=consensus fails closed on disagreement', async () => {
+    const origEngine = process.env.SYSTEM1_ENGINE;
+    try {
+      process.env.SYSTEM1_ENGINE = 'consensus';
+      const aiResults = new Map();
+      aiResults.set('RELIANCE', {
+        composite_score: 75,
+        win_probability: 0.70,
+        ranker_threshold: 0.58,
+        ranker_loaded: true,
+        isFallback: false,
+        technicalRanking: { bullish_probability: 0.75, detected_patterns: [] },
+        chronos: { trend: 'bullish', forecast_return_pct: 2 },
+        sentiment_score: 65,
+        laya_decision: {
+          verdict: 'APPROVE',
+          action: 'EXECUTE_IMMEDIATELY',
+          confidence: 0.75,
+          opportunity_score: 75.0,
+          provider: 'laya',
+          gate_reasons: [],
+        },
+        jev_decision: {
+          verdict: 'REJECT',
+          action: 'CANCEL',
+          confidence: 0.88,
+          opportunity_score: 20.0,
+          provider: 'jev',
+          gate_reasons: ['HIGH_VOLATILITY_VIX_SPIKE'],
+        },
+      });
+      vi.mocked(aiClient.batchInference).mockResolvedValue(aiResults);
+
+      const result = await runIntelligencePipeline([mockScanResult]);
+      expect(result.signals.length).toBe(0);
+      expect(result.rejectedSignals?.length).toBe(1);
+      const trace = result.rejectedSignals![0].decisionTrace;
+      expect(trace?.rejectionGate).toBe('jev_decision');
+      expect(trace?.rejectionValue).toBe('CANCEL');
+    } finally {
+      if (origEngine !== undefined) {
+        process.env.SYSTEM1_ENGINE = origEngine;
+      } else {
+        delete process.env.SYSTEM1_ENGINE;
+      }
+    }
+  });
 });

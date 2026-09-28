@@ -12,8 +12,23 @@ export class ScanWorkerPool {
   private taskQueue: any[] = [];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private readonly pendingPromises = new Map<string, any>();
+  // Per-task deadline timers, cleared when a task settles.
+  private readonly taskTimers = new Map<string, NodeJS.Timeout>();
+  private readonly taskTimeoutMs = Math.max(
+    5_000,
+    Number(process.env["SCAN_WORKER_TIMEOUT_MS"] ?? "60_000"),
+  );
   private readonly size = Math.max(2, os.cpus().length - 1);
   private shuttingDown = false;
+  // Observable counters, so a wedged-worker timeout is visible in telemetry
+  // rather than a silent stall.
+  private failed = 0;
+  private readonly errors: string[] = [];
+
+  private addError(message: string) {
+    this.errors.push(message);
+    if (this.errors.length > 50) this.errors.shift();
+  }
 
   constructor(private readonly scriptPath: string | URL) {
     this.init();
@@ -37,6 +52,7 @@ export class ScanWorkerPool {
       if (!pending) return;
 
       this.pendingPromises.delete(msg.id);
+      this.clearTaskTimer(msg.id);
       this.makeWorkerIdle(worker);
 
       if (msg.success) {
@@ -52,6 +68,7 @@ export class ScanWorkerPool {
       for (const [id, pending] of this.pendingPromises.entries()) {
         if (pending.worker === worker) {
           this.pendingPromises.delete(id);
+          this.clearTaskTimer(id);
           pending.reject(err);
         }
       }
@@ -66,6 +83,7 @@ export class ScanWorkerPool {
       for (const [id, pending] of this.pendingPromises.entries()) {
         if (pending.worker === worker) {
           this.pendingPromises.delete(id);
+          this.clearTaskTimer(id);
           pending.reject(new Error(`Worker exited with code ${code}`));
         }
       }
@@ -87,6 +105,14 @@ export class ScanWorkerPool {
     this.workers = this.workers.filter((w) => w !== worker);
     this.idleWorkers = this.idleWorkers.filter((w) => w !== worker);
     void worker.terminate().catch(() => {});
+  }
+
+  private clearTaskTimer(taskId: string) {
+    const timer = this.taskTimers.get(taskId);
+    if (timer) {
+      clearTimeout(timer);
+      this.taskTimers.delete(taskId);
+    }
   }
 
   private makeWorkerIdle(worker: Worker) {
@@ -124,6 +150,12 @@ export class ScanWorkerPool {
       return { snap, allCandidates } as unknown as T;
     }
     return new Promise<T>((resolve, reject) => {
+      // A task enqueued after shutdown() would sit in a queue with no workers to
+      // drain it, and the rejection sweep below has already run — the returned
+      // promise would never settle.
+      if (this.shuttingDown) {
+        return reject(new Error("Worker pool is shutting down; task rejected"));
+      }
       const task = {
         id: crypto.randomUUID(),
         payload,
@@ -147,6 +179,30 @@ export class ScanWorkerPool {
         worker,
       });
 
+      // Per-task deadline. Without one, a worker that starts but never posts a
+      // message (thread OOM, infinite loop in scan_worker, lost message) leaves
+      // the entry in pendingPromises forever, so the returned promise never
+      // settles AND a concurrency slot is permanently lost. Ten stuck tasks and
+      // scanMarket makes zero progress while still holding every HTTP request
+      // open — with no error and no log.
+      const timer = setTimeout(() => {
+        const pending = this.pendingPromises.get(task.id);
+        if (!pending) return;
+        this.pendingPromises.delete(task.id);
+        this.taskTimers.delete(task.id);
+        this.failed += 1;
+        const err = new Error(`Scan worker task ${task.id} timed out after ${this.taskTimeoutMs}ms`);
+        this.addError(err.message);
+        pending.reject(err);
+        // Replace the wedged worker so the pool keeps its concurrency budget.
+        this.workers = this.workers.filter((w) => w !== worker);
+        this.idleWorkers = this.idleWorkers.filter((w) => w !== worker);
+        void worker.terminate().catch(() => {});
+        this.spawnWorker();
+      }, this.taskTimeoutMs);
+      timer.unref?.();
+      this.taskTimers.set(task.id, timer);
+
       worker.postMessage({
         id: task.id,
         payload: task.payload,
@@ -156,6 +212,13 @@ export class ScanWorkerPool {
 
   async shutdown(): Promise<void> {
     this.shuttingDown = true;
+    // Cancel every in-flight deadline timer first, otherwise a timer armed
+    // moments ago fires after shutdown and tries to respawn a worker into a pool
+    // that is being torn down.
+    for (const timer of this.taskTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.taskTimers.clear();
     // Reject queued tasks instead of silently dropping them — callers'
     // promises would otherwise hang forever.
     for (const task of this.taskQueue) {

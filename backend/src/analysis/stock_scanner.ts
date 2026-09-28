@@ -1015,6 +1015,30 @@ interface CachedCandleEntry {
 const CANDLE_CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
 const dailyCandleCache = new Map<string, CachedCandleEntry>();
 const hourlyCandleCache = new Map<string, CachedCandleEntry>();
+// Hard cap per candle cache. The cache key embeds `endDate`, and scanMarket
+// passes today's date, so every new trading day minted a brand-new key for
+// every instrument — two caches x ~2000 instruments x hundreds of OHLCV
+// objects, accumulating daily and never released. The TTL was only a read-side
+// freshness check; expired entries were never swept.
+const CANDLE_CACHE_MAX = Math.max(50, Number(process.env["CANDLE_CACHE_MAX"] ?? "6000"));
+
+function pruneCandleCache(cache: Map<string, CachedCandleEntry>): void {
+  if (cache.size <= CANDLE_CACHE_MAX) return;
+  const now = Date.now();
+  // Drop expired entries first.
+  for (const [key, entry] of cache) {
+    if (now - entry.timestamp >= CANDLE_CACHE_TTL_MS) cache.delete(key);
+  }
+  if (cache.size <= CANDLE_CACHE_MAX) return;
+  // Still oversized: evict oldest-timestamp entries.
+  const overflow = cache.size - CANDLE_CACHE_MAX;
+  let removed = 0;
+  for (const [key] of [...cache.entries()].sort((a, b) => a[1].timestamp - b[1].timestamp)) {
+    if (removed >= overflow) break;
+    cache.delete(key);
+    removed += 1;
+  }
+}
 
 // ── Fetch helpers ────────────────────────────────────────────────────────────
 
@@ -1075,6 +1099,7 @@ async function fetchDailyCandles(
 
     if (result.length > 0) {
       dailyCandleCache.set(cacheKey, { timestamp: now, candles: result });
+    pruneCandleCache(dailyCandleCache);
     }
     return result;
   } catch (err) {
@@ -1132,6 +1157,7 @@ async function fetchHourlyCandles(
     }));
     if (c60.length > 0) {
       hourlyCandleCache.set(cacheKey, { timestamp: now, candles: c60 });
+    pruneCandleCache(hourlyCandleCache);
     }
     return c60;
   } catch (err) {
@@ -1963,8 +1989,11 @@ export async function scanMarket(
           try {
             const result = await scanStock(stock, niftyCandles, scanDate);
             if (abortCheck && abortCheck()) {
-              active--;
-              next();
+              // Release the concurrency slot here ONLY via the `finally` below.
+              // An extra `active--; next();` in the try block decremented twice
+              // (once here, once in `finally`), driving `active` negative and
+              // making the limiter admit more than `limit` concurrent
+              // scanStock calls — unbounded fan-out of broker candle requests.
               return;
             }
             

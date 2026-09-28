@@ -1,0 +1,56 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Line endings must NEVER be rewritten for the LightGBM ranker artifacts.
+#
+# LightGBM's text model parser is line-based and rejects CRLF outright. Worse,
+# the failure surfaces as a native abort() (STATUS_STACK_BUFFER_OVERRUN) that
+# terminates the whole process rather than raising a catchable exception — so a
+# Windows checkout with core.autocrlf=true silently prevents the AI service from
+# starting, costing the entire learned-ranker edge.
+#
+# ORDERING MATTERS: in .gitattributes the LAST matching pattern wins, so these
+# `-text` rules must come AFTER the broad defaults below, or they are ignored.
+# Verify with: git check-attr text -- backend/ai_service/ranker_model.txt
+#              → should print "text: unset"
+
+# ── Broad defaults (must precede the specific overrides) ─────────────────────
+* text=auto
+*.py text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.mjs text eol=lf
+*.cjs text eol=lf
+*.json text eol=lf
+*.jsonl text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.sql text eol=lf
+*.sh text eol=lf
+*.toml text eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# ── Model artifacts: never line-ending converted ────────────────────────────
+backend/ai_service/ranker_model.txt -text
+backend/ai_service/ranker_meta.json -text
+**/ranker_model.txt -text
+**/ranker_meta.json -text
+*.onnx -text
+*.bin -text
+
+# ── Binary assets ────────────────────────────────────────────────────────────
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.pdf binary
+*.pkl binary
+*.joblib binary

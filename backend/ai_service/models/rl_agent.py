@@ -41,6 +41,26 @@ def _ensure_rsi_macd(df: pd.DataFrame) -> pd.DataFrame:
         df["macd"] = MACD(close=df["close"]).macd_diff()
     return df
 
+
+def _scaled(value: Any, divisor: float, default: float) -> float:
+    """
+    Divide by `divisor`, substituting `default` for anything non-finite.
+
+    `bool(nan)` is True, so the previous `x / d if x else default` guards were
+    ineffective for NaN. A non-finite observation makes the PPO policy emit a
+    confident STRONG_SELL (argmax of an all-NaN logit vector is index 0) and
+    returns confidence=NaN, which crashes response serialization because FastAPI
+    renders with allow_nan=False.
+    """
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return default
+    if not np.isfinite(f):
+        return default
+    return f / divisor
+
+
 class RLAgentService:
     def __init__(self):
         self.model = None
@@ -118,16 +138,27 @@ class RLAgentService:
         
         # In a real scenario, these must be normalized using the exact same scaler used during training.
         # This is a naive normalization for demonstration.
+        #
+        # EVERY component is coerced to a finite float. `if close` is True for NaN
+        # (bool(nan) is True), so the previous guards let NaN through; the policy
+        # then received an all-NaN observation, `np.argmax` returned 0, and the
+        # service emitted a confident "STRONG_SELL" with confidence=NaN — which
+        # additionally crashed response serialization, because FastAPI renders
+        # with allow_nan=False and this endpoint declares no response_model.
         state = np.array([
-            close / 10000.0 if close else 0.0,
-            volume / 1000000.0 if volume else 0.0,
-            rsi / 100.0 if not pd.isna(rsi) else 0.5,
-            macd / 100.0 if not pd.isna(macd) else 0.0,
-            vix / 50.0 if not pd.isna(vix) else 0.3,
-            fii / 10000.0 if not pd.isna(fii) else 0.0,
-            pcr / 3.0 if not pd.isna(pcr) else 0.33,
+            _scaled(close, 10000.0, 0.0),
+            _scaled(volume, 1000000.0, 0.0),
+            _scaled(rsi, 100.0, 0.5),
+            _scaled(macd, 100.0, 0.0),
+            _scaled(vix, 50.0, 0.3),
+            _scaled(fii, 10000.0, 0.0),
+            _scaled(pcr, 3.0, 0.33),
         ], dtype=np.float32)
-        
+
+        # Final guard: the policy must never see a non-finite observation.
+        if not np.all(np.isfinite(state)):
+            state = np.nan_to_num(state, nan=0.0, posinf=1.0, neginf=-1.0).astype(np.float32)
+
         return state
 
     def predict(self, df: pd.DataFrame, macro_data: Dict[str, float] = None) -> Dict[str, Any]:
@@ -200,7 +231,13 @@ class RLAgentService:
                 dist = self.model.policy.get_distribution(obs_t)
                 probs = dist.distribution.probs.detach().cpu().numpy().ravel()
             if 0 <= action_idx < len(probs):
-                return float(probs[action_idx])
+                p = float(probs[action_idx])
+                # Clamp: a non-finite probability here would 500 the response,
+                # since this endpoint declares no response_model and FastAPI
+                # serializes with allow_nan=False.
+                if not np.isfinite(p):
+                    return 0.5
+                return min(1.0, max(0.0, p))
             return 0.5
         except Exception as e:
             logger.debug(f"Could not derive RL action probability, using neutral: {e}")

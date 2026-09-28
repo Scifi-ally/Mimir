@@ -160,7 +160,9 @@ def run_harness(args) -> Tuple[int, List[str]]:
         X_tr, y_tr = X[tr_sub_idx], y[tr_sub_idx]
         X_ca, y_ca, ret_ca = X[ca_sub_idx], y[ca_sub_idx], ret[ca_sub_idx]
         X_te, y_te, ret_te = X[te_idx], y[te_idx], ret[te_idx]
-        
+
+        sample_weights_tr = None
+
         if len(X_tr) < 10 or len(X_ca) < 10 or len(X_te) < 10:
             print(f"Fold {fold_idx + 1}: Skipping due to insufficient data (train: {len(X_tr)}, calib: {len(X_ca)}, test: {len(X_te)})")
             continue
@@ -168,7 +170,7 @@ def run_harness(args) -> Tuple[int, List[str]]:
         pos_rate = max(1e-6, float(y_tr.mean()))
         scale_pos_weight = (1 - pos_rate) / pos_rate
 
-        train_set = lgb.Dataset(X_tr, label=y_tr, feature_name=FEATURE_KEYS)
+        train_set = lgb.Dataset(X_tr, label=y_tr, weight=sample_weights_tr, feature_name=FEATURE_KEYS)
         calib_set = lgb.Dataset(X_ca, label=y_ca, reference=train_set)
 
         params = {

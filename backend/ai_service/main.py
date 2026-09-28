@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 import shutil
 import subprocess
@@ -31,8 +32,21 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from pydantic import BaseModel, Field, field_validator
 
+# Load .env / .env.local BEFORE importing any service module. Every service
+# singleton reads its configuration in __init__ (JEV keys and timeouts, Laya
+# weights, ranker artifact paths), so this must run first or those values are
+# frozen to hardcoded defaults.
+from env_loader import load_env_files, resolve_env_paths
+
+_ENV_FILES_APPLIED = load_env_files(resolve_env_paths(os.path.dirname(os.path.abspath(__file__))))
+
 from models import technical_pattern_engine, chronos_service
 from models import ranker_service
+from models.numeric_utils import finite_clamp, safe_div, sanitize_float
+from models.confluence_service import confluence_service
+from models.jev_service import jev_service, JevDecision
+from models.laya_service import laya_service, LayaDecision
+from models.system1_service import system1_service, System1Decision
 from models.rl_agent import rl_agent_service
 from rl_lifecycle import rl_lifecycle_manager
 from ranker_lifecycle import ranker_lifecycle_manager
@@ -49,11 +63,22 @@ logging.basicConfig(
 )
 logger = logging.getLogger("ai_service")
 
+if _ENV_FILES_APPLIED:
+    logger.info(
+        "Loaded %d config value(s) from .env/.env.local (e.g. %s)",
+        len(_ENV_FILES_APPLIED),
+        ", ".join(sorted(_ENV_FILES_APPLIED)[:6]),
+    )
+
 _HEALTH_REFRESH_INTERVAL_SEC = 60.0
 _HEALTH_MONITOR_TASK: Optional[asyncio.Task[None]] = None
 _LAST_HEALTH_SNAPSHOT: Optional[Dict[str, Any]] = None
 _LAST_HEALTH_REFRESH_TS: float = 0.0
 _HEALTH_LOCK = threading.Lock()
+
+# Guards against concurrent confluence retrains (each would fork a full
+# training subprocess). See trigger_confluence_train.
+confluence_train_lock = threading.Lock()
 
 class RuntimeDiagnostics:
     """Collect live runtime diagnostics from torch, ONNX Runtime, and the OS."""
@@ -174,6 +199,9 @@ def _build_health_snapshot() -> Dict[str, Any]:
     confluence_status = confluence_service.get_status()
     rl_status = rl_lifecycle_manager.get_status()
     rl_inference_status = rl_agent_service.get_status()
+    jev_status = jev_service.get_status()
+    laya_status = laya_service.get_status()
+    system1_status = system1_service.get_status()
     runtime = RuntimeDiagnostics.collect()
 
     core_ready = bool(
@@ -193,6 +221,10 @@ def _build_health_snapshot() -> Dict[str, Any]:
         degraded_components.append("confluence")
     if not rl_agent_service.is_loaded:
         degraded_components.append("rl")
+    if not jev_status.get("healthy"):
+        degraded_components.append("jev")
+    if not laya_status.get("healthy"):
+        degraded_components.append("laya")
 
     ai_mode = "AI Mode" if core_ready else "Fallback Mode"
     if degraded_components:
@@ -238,6 +270,9 @@ def _build_health_snapshot() -> Dict[str, Any]:
             "rl_inference": rl_inference_status,
             "rl_inference_loaded": rl_agent_service.is_loaded,
             "sentiment": sentiment_status,
+            "jev": jev_status,
+            "laya": laya_status,
+            "system1": system1_status,
         },
         "hardware": runtime,
         "diagnostics": diagnostics,
@@ -315,6 +350,21 @@ async def lifespan(app: FastAPI):
             ranker_service.load_model()
         except Exception:
             logger.exception("Failed to load learned ranker")
+
+        try:
+            jev_service.reload_config()
+        except Exception:
+            logger.exception("Failed to load JEV service config")
+
+        try:
+            laya_service.reload_config()
+        except Exception:
+            logger.exception("Failed to load LAYA service config")
+
+        try:
+            system1_service.reload_config()
+        except Exception:
+            logger.exception("Failed to load System-1 service config")
 
         _refresh_health_snapshot()
         logger.info("=== Model loading completed in %.2f s ===", time.time() - t0)
@@ -429,6 +479,18 @@ class CandidateScore(BaseModel):
         default=None,
         description="Calibrated P(target1 before stop) from the learned ranker; null when the ranker is unavailable and callers should use composite_score.",
     )
+    jev_decision: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="TypeSafe Jev System-1 decision (verdict, action, confidence, gate_reasons).",
+    )
+    laya_decision: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Convai Innovations Laya System-1 decision (verdict, action, confidence, Noul primitives).",
+    )
+    system1_decision: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Unified System-1 decision (Choice, Score, Noul primitives).",
+    )
     scored: bool = Field(
         default=True,
         description="False when this candidate could not be scored and composite_score is a neutral 50 placeholder (per-candidate inference error). Callers must NOT rank an unscored placeholder alongside genuinely-scored candidates.",
@@ -443,6 +505,55 @@ class BatchResponse(BaseModel):
         description="Recommended P(win) threshold for greenlighting a trade; null when the ranker is unavailable.",
     )
     ranker_loaded: bool = Field(default=False, description="Whether the learned ranker served these scores.")
+    jev_enabled: bool = Field(default=True, description="Whether Jev System-1 triage is active.")
+    laya_enabled: bool = Field(default=True, description="Whether Laya System-1 triage is active.")
+    system1_enabled: bool = Field(default=True, description="Whether unified System-1 triage is active.")
+
+
+class System1Request(BaseModel):
+    symbol: str
+    direction: str = "BUY"
+    setup_type: str = "PULLBACK"
+    timeframe: str = "15m"
+    entry_price: float = 0.0
+    stop_loss: float = 0.0
+    target1: float = 0.0
+    risk_reward_ratio: float = 1.5
+    technical_score: float = 50.0
+    chronos_trend: str = "neutral"
+    sentiment_score: float = 0.0
+    order_flow_imbalance_ratio: float = 0.0
+    fii_dii_net: float = 0.0
+    india_vix: float = 15.0
+    market_regime: str = "UNKNOWN"
+    win_probability: Optional[float] = None
+    preferred_engine: Optional[str] = None
+
+
+LayaRequest = System1Request
+JevRequest = System1Request
+
+
+class System1Response(BaseModel):
+    model_config = {"protected_namespaces": ()}
+    verdict: str
+    action: str
+    confidence: float
+    opportunity_score: float
+    gate_reasons: List[str]
+    regime_alignment: float
+    p_execution_success: float
+    p_stop_hunt_risk: float
+    p_adverse_regime_shift: float
+    provider: str
+    model_id: str
+    source: str
+    latency_ms: float
+    position_size_multiplier: float = 1.0
+
+
+LayaResponse = System1Response
+JevResponse = System1Response
 
 
 class HealthResponse(BaseModel):
@@ -528,25 +639,73 @@ async def infer_chronos(req: ChronosRequest):
         raise HTTPException(status_code=500, detail=f"Inference failed: {exc}")
 
 
+@app.post("/inference/jev", response_model=JevResponse, tags=["Inference"])
+async def infer_jev(req: JevRequest):
+    """Evaluate candidate state using TypeSafe AI Jev System-1 Decision Engine."""
+    t0 = time.time()
+    try:
+        state = req.model_dump()
+        result = await asyncio.to_thread(jev_service.evaluate_decision, state)
+        InferenceStats.record((time.time() - t0) * 1000)
+        return JevResponse(**result.to_dict())
+    except Exception as exc:
+        logger.exception("Jev inference error")
+        raise HTTPException(status_code=500, detail=f"Jev decision evaluation failed: {exc}")
+
+
+@app.post("/inference/laya", response_model=LayaResponse, tags=["Inference"])
+async def infer_laya(req: LayaRequest):
+    """Evaluate candidate state using Convai Innovations Laya System-1 Decision Engine."""
+    t0 = time.time()
+    try:
+        state = req.model_dump()
+        result = await asyncio.to_thread(laya_service.evaluate_decision, state)
+        InferenceStats.record((time.time() - t0) * 1000)
+        return LayaResponse(**result.to_dict())
+    except Exception as exc:
+        logger.exception("Laya inference error")
+        raise HTTPException(status_code=500, detail=f"Laya decision evaluation failed: {exc}")
+
+
+@app.post("/inference/system1", response_model=System1Response, tags=["Inference"])
+async def infer_system1(req: System1Request):
+    """Evaluate candidate state using Unified System-1 Router (Laya / Jev)."""
+    t0 = time.time()
+    try:
+        state = req.model_dump()
+        result = await asyncio.to_thread(system1_service.evaluate_decision, state)
+        InferenceStats.record((time.time() - t0) * 1000)
+        return System1Response(**result.to_dict())
+    except Exception as exc:
+        logger.exception("System-1 inference error")
+        raise HTTPException(status_code=500, detail=f"System-1 decision evaluation failed: {exc}")
+
+
 def _compute_composite_score(kr: technical_pattern_engine.TechnicalPatternResult, cr: chronos_service.ChronosResult, sentiment_dict: Dict[str, float], features: Dict[str, Any]) -> tuple[float, dict]:
     """
     Blend Technical bullish probability, Chronos forecast, and news sentiment into a 0-100 score.
     Returns (score, components_dict)
-    """
-    technical_component = kr.bullish_probability * 50
 
-    import math
+    Every component is coerced to a finite float first. NaN compares False against
+    everything, so `max(0, min(100, nan))` evaluates to 100 — meaning a single NaN
+    anywhere upstream (a missing close, a null->NaN column mapping, a Postgres
+    `double precision` NaN) would hand a candidate a PERFECT 100.0 score for
+    corrupt data, with no error and no fallback marker.
+    """
+    technical_component = sanitize_float(kr.bullish_probability, default=0.5) * 50
+
     # Scale forecast before sigmoid: realistic short-horizon forecasts are
     # ±0.3-1%, which unscaled maps to 0.43-0.57 — the component barely
     # discriminates. x3 spreads ±1% to 0.05-0.95.
-    chronos_raw = 1 / (1 + math.exp(-cr.forecast_return_pct * 3.0))  # 0..1
+    forecast_pct = sanitize_float(cr.forecast_return_pct, default=0.0, low=-20.0, high=20.0)
+    chronos_raw = 1 / (1 + math.exp(-forecast_pct * 3.0))  # 0..1
     chronos_component = chronos_raw * 30
 
-    confidence_component = kr.confidence * 15
-    
+    confidence_component = sanitize_float(kr.confidence, default=0.0) * 15
+
     # Advanced Sentiment Component using blended composite
-    sentiment_component = sentiment_dict.get('composite', 0.0) * 5.0
-    
+    sentiment_component = sanitize_float(sentiment_dict.get('composite', 0.0), default=0.0) * 5.0
+
     components = {
         "trend_alignment": round(technical_component, 2),
         "forecast_momentum": round(chronos_component, 2),
@@ -555,28 +714,28 @@ def _compute_composite_score(kr: technical_pattern_engine.TechnicalPatternResult
     }
 
     score = sum(components.values())
-    
+
     # Macro Crash Risk Penalty (World Sentiment)
-    world_score = sentiment_dict.get('world_score', 0.0)
+    world_score = sanitize_float(sentiment_dict.get('world_score', 0.0), default=0.0)
     if world_score < -0.5:
         logger.warning("Severe negative world politics sentiment detected. Applying macro crash penalty.")
         score -= 15.0
         components["macro_penalty"] = -15.0
-        
+
     # Micro-structure Order Flow Imbalance (OFI) Boost
-    ofi_ratio = features.get("ofi_ratio", 0.0)
+    ofi_ratio = sanitize_float(features.get("ofi_ratio", 0.0), default=0.0, low=-10.0, high=10.0)
     if ofi_ratio != 0.0:
         ofi_boost = round(ofi_ratio * 5.0, 2)  # up to +/- 5 score points
         score += ofi_boost
         components["micro_structure_ofi"] = ofi_boost
         
     # FII/DII Divergence Penalty/Boost
-    div_penalty = features.get("macro_divergence_penalty", 0.0)
+    div_penalty = sanitize_float(features.get("macro_divergence_penalty", 0.0), default=0.0, low=-100.0, high=100.0)
     if div_penalty != 0.0:
         score += div_penalty
         components["fii_dii_divergence"] = div_penalty
 
-    return round(max(0, min(100, score)), 2), components
+    return round(finite_clamp(score, 0.0, 100.0, default=50.0), 2), components
 
 
 @app.post("/inference/batch", response_model=BatchResponse, tags=["Inference"])
@@ -591,7 +750,16 @@ async def infer_batch(req: BatchRequest):
     def _closes_for(cand: CandidateRequest) -> List[float]:
         c = cand.closes
         if c is None or len(c) < 2:
-            c = [row[3] for row in cand.ohlcv]
+            # `row[3]` assumes every row has at least 4 numbers, but
+            # `List[List[float]]` accepts ragged rows and the pydantic validator
+            # only checks the OUTER list length. An unguarded IndexError here
+            # would abort the whole batch and discard every other candidate's
+            # work, so bad rows are skipped rather than fatal.
+            c = [
+                row[3]
+                for row in cand.ohlcv
+                if len(row) >= 4
+            ]
         return c
 
     closes_batch = [_closes_for(cand) for cand in req.candidates]
@@ -612,128 +780,278 @@ async def infer_batch(req: BatchRequest):
     win_prob_by_id = {
         id(cand): ranker_probs[i] for i, cand in enumerate(req.candidates)
     }
-
     # Semaphore bounds the remaining per-candidate CPU work (pattern engine +
-    # sentiment). Chronos is already done, so contention on the GPU is gone.
+    # sentiment). Chronos is already batched, so contention on the GPU is gone.
     sem = asyncio.Semaphore(4)
 
-    async def process_candidate(cand: CandidateRequest) -> CandidateScore:
+    def _error_score(symbol: str) -> CandidateScore:
+        return CandidateScore(
+            symbol=symbol,
+            kronos=TechnicalRankingResponse(
+                bullish_probability=0.5,
+                confidence=0.0,
+                detected_patterns=[],
+                source="error",
+            ),
+            chronos=ChronosResponse(
+                median_forecast=[],
+                quantile_forecasts={},
+                trend="neutral",
+                forecast_return_pct=0.0,
+                source="error",
+            ),
+            sentiment_score=0.0,
+            world_sentiment_score=0.0,
+            composite_score=50.0,
+            components={},
+            win_probability=None,
+            jev_decision=None,
+            laya_decision=None,
+            system1_decision=None,
+            scored=False,
+        )
+
+    # ---- Phase 1: per-candidate enrichment (concurrent, bounded) -----------
+    async def prepare_candidate(cand: CandidateRequest) -> Dict[str, Any]:
+        cr = chronos_by_symbol[id(cand)]
+
+        kr = await asyncio.to_thread(
+            technical_pattern_engine.infer, cand.ohlcv, cand.features or {}
+        )
+
+        # Fetch sentiment
+        if cand.as_of_date:
+            def fetch_historical_sentiment():
+                db_url = os.getenv("DATABASE_URL")
+                if not db_url:
+                    return 0.0, 0.0
+                try:
+                    import psycopg2
+                    from contextlib import closing
+                    with closing(psycopg2.connect(db_url)) as conn:
+                        with conn.cursor() as cur:
+                            cur.execute("""
+                                SELECT value FROM fundamental_snapshots
+                                WHERE symbol = %s AND field_name = 'sentiment_composite' AND filed_date <= %s
+                                ORDER BY filed_date DESC LIMIT 1
+                            """, (cand.symbol, cand.as_of_date))
+                            row = cur.fetchone()
+                            composite_val = float(row[0]) if row else 0.0
+                            cur.execute("""
+                                SELECT value FROM fundamental_snapshots
+                                WHERE field_name = 'sentiment_world' AND filed_date <= %s
+                                ORDER BY filed_date DESC LIMIT 1
+                            """, (cand.as_of_date,))
+                            wrow = cur.fetchone()
+                            world_val = float(wrow[0]) if wrow else 0.0
+                            return composite_val, world_val
+                except Exception as e:
+                    logger.error(f"Failed to fetch historical sentiment: {e}")
+                    return 0.0, 0.0
+
+            historical_composite, historical_world = await asyncio.to_thread(fetch_historical_sentiment)
+            sentiment_dict = {"symbol_specific_score": historical_composite, "market_wide_score": 0.0, "world_score": historical_world, "composite": historical_composite}
+        else:
+            # Live query
+            sentiment_dict = await analyze_sentiment(cand.symbol)
+            if isinstance(sentiment_dict, float):
+                sentiment_dict = {"symbol_specific_score": sentiment_dict, "market_wide_score": 0.0, "world_score": 0.0, "composite": sentiment_dict}
+
+        cand_feats = cand.features or {}
+        composite, components = _compute_composite_score(kr, cr, sentiment_dict, cand_feats)
+
+        # Assemble the canonical System-1 state. Built here (not in a later
+        # phase) because it needs the ranker, Chronos trend, and sentiment.
+        system1_state = {
+            "symbol": cand.symbol,
+            "direction": cand_feats.get("direction", "BUY"),
+            "setup_type": cand_feats.get("setup_type") or cand_feats.get("setupType", "UNKNOWN"),
+            "timeframe": cand_feats.get("timeframe", "15m"),
+            "entry_price": cand_feats.get("entry_price") if cand_feats.get("entry_price") is not None else cand_feats.get("entryPrice", 0.0),
+            "stop_loss": cand_feats.get("stop_loss") if cand_feats.get("stop_loss") is not None else cand_feats.get("stopLoss", 0.0),
+            "target1": cand_feats.get("target1", 0.0),
+            "risk_reward_ratio": cand_feats.get("risk_reward_ratio") if cand_feats.get("risk_reward_ratio") is not None else (cand_feats.get("riskReward") if cand_feats.get("riskReward") is not None else cand_feats.get("riskRewardScore", 1.5)),
+            "technical_score": round(kr.bullish_probability * 100.0, 2),
+            "chronos_trend": cr.trend,
+            "sentiment_score": sentiment_dict.get("symbol_specific_score", 0.0),
+            "order_flow_imbalance_ratio": cand_feats.get("order_flow_imbalance_ratio") if cand_feats.get("order_flow_imbalance_ratio") is not None else (cand_feats.get("ofi_ratio") if cand_feats.get("ofi_ratio") is not None else cand_feats.get("bidAskImbalance", 0.0)),
+            "fii_dii_net": cand_feats.get("fii_dii_net") if cand_feats.get("fii_dii_net") is not None else (cand_feats.get("fiiNet") if cand_feats.get("fiiNet") is not None else cand_feats.get("fiiDiiNetFlowLag", 0.0)),
+            "india_vix": cand_feats.get("india_vix") if cand_feats.get("india_vix") is not None else cand_feats.get("vix", 15.0),
+            "market_regime": cand_feats.get("market_regime") or cand_feats.get("regime", "UNKNOWN"),
+            "win_probability": win_prob_by_id.get(id(cand)),
+        }
+
+        return {
+            "kr": kr,
+            "cr": cr,
+            "sentiment": sentiment_dict,
+            "composite": composite,
+            "components": components,
+            "state": system1_state,
+        }
+
+    async def _phase1(idx: int, cand: CandidateRequest) -> Optional[Dict[str, Any]]:
         async with sem:
             try:
-                # Chronos already computed in the batched pass above.
-                cr = chronos_by_symbol[id(cand)]
-
-                kr = await asyncio.to_thread(
-                    technical_pattern_engine.infer, cand.ohlcv, cand.features or {}
-                )
-
-                # Fetch sentiment
-                if cand.as_of_date:
-                    # PIT query from DB. Fetch BOTH the symbol composite and the
-                    # as-of-date world sentiment so the backtest applies the SAME
-                    # macro crash penalty (_compute_composite_score gates it on
-                    # world_score < -0.5) that live scoring does. Previously
-                    # world_score was hardcoded to 0.0 here, so the penalty could
-                    # never fire historically — train/serve skew between backtest
-                    # and live scoring of the identical formula.
-                    def fetch_historical_sentiment():
-                        db_url = os.getenv("DATABASE_URL")
-                        if not db_url:
-                            return 0.0, 0.0
-                        try:
-                            import psycopg2
-                            from contextlib import closing
-                            with closing(psycopg2.connect(db_url)) as conn:
-                                with conn.cursor() as cur:
-                                    cur.execute("""
-                                        SELECT value FROM fundamental_snapshots
-                                        WHERE symbol = %s AND field_name = 'sentiment_composite' AND filed_date <= %s
-                                        ORDER BY filed_date DESC LIMIT 1
-                                    """, (cand.symbol, cand.as_of_date))
-                                    row = cur.fetchone()
-                                    composite_val = float(row[0]) if row else 0.0
-                                    # World sentiment is market-wide, not per-symbol;
-                                    # take the most recent as-of-date reading from any
-                                    # symbol (they all write the same world score).
-                                    cur.execute("""
-                                        SELECT value FROM fundamental_snapshots
-                                        WHERE field_name = 'sentiment_world' AND filed_date <= %s
-                                        ORDER BY filed_date DESC LIMIT 1
-                                    """, (cand.as_of_date,))
-                                    wrow = cur.fetchone()
-                                    world_val = float(wrow[0]) if wrow else 0.0
-                                    return composite_val, world_val
-                        except Exception as e:
-                            logger.error(f"Failed to fetch historical sentiment: {e}")
-                            return 0.0, 0.0
-
-                    historical_composite, historical_world = await asyncio.to_thread(fetch_historical_sentiment)
-                    sentiment_dict = {"symbol_specific_score": historical_composite, "market_wide_score": 0.0, "world_score": historical_world, "composite": historical_composite}
-                else:
-                    # Live query
-                    sentiment_dict = await analyze_sentiment(cand.symbol)
-                    if isinstance(sentiment_dict, float):
-                        sentiment_dict = {"symbol_specific_score": sentiment_dict, "market_wide_score": 0.0, "world_score": 0.0, "composite": sentiment_dict}
-
-                composite, components = _compute_composite_score(kr, cr, sentiment_dict, cand.features or {})
-
-                return CandidateScore(
-                    symbol=cand.symbol,
-                    kronos=TechnicalRankingResponse(
-                        bullish_probability=kr.bullish_probability,
-                        confidence=kr.confidence,
-                        detected_patterns=kr.detected_patterns,
-                        source=kr.source,
-                    ),
-                    chronos=ChronosResponse(
-                        median_forecast=cr.median_forecast,
-                        quantile_forecasts=cr.quantile_forecasts,
-                        trend=cr.trend,
-                        forecast_return_pct=cr.forecast_return_pct,
-                        source=cr.source,
-                    ),
-                    sentiment_score=sentiment_dict.get("symbol_specific_score", 0.0),
-                    world_sentiment_score=sentiment_dict.get("world_score", 0.0),
-                    composite_score=composite,
-                    components=components,
-                    win_probability=win_prob_by_id.get(id(cand)),
-                )
+                return await prepare_candidate(cand)
             except Exception as exc:
                 logger.error("Batch inference failed for %s: %s", cand.symbol, exc)
-                return CandidateScore(
-                    symbol=cand.symbol,
-                    kronos=TechnicalRankingResponse(
-                        bullish_probability=0.5,
-                        confidence=0.0,
-                        detected_patterns=[],
-                        source="error",
-                    ),
-                    chronos=ChronosResponse(
-                        median_forecast=[],
-                        quantile_forecasts={},
-                        trend="neutral",
-                        forecast_return_pct=0.0,
-                        source="error",
-                    ),
-                    sentiment_score=0.0,
-                    world_sentiment_score=0.0,
-                    composite_score=50.0,
-                    components={},
-                    scored=False,
-                )
+                return None
 
-    # Process all candidates concurrently with bounded concurrency
-    results = await asyncio.gather(*(process_candidate(cand) for cand in req.candidates))
+    prepared = await asyncio.gather(
+        *(_phase1(i, cand) for i, cand in enumerate(req.candidates))
+    )
+
+    # ---- Phase 2: batched System-1 triage (JEV & LAYA) --------------------
+    # Candidates are grouped by the engine they require so each engine performs a
+    # SINGLE true-batch inference: Laya issues one ModernBERT forward pass over
+    # every prompt, and Jev fans each cache miss out concurrently over its pooled
+    # keep-alive connections. Issuing one call per candidate was the dominant
+    # cost of this endpoint.
+    default_engine = os.getenv("SYSTEM1_ENGINE", "laya").lower()
+    if default_engine not in ("laya", "jev", "consensus"):
+        default_engine = "laya"
+    evaluate_all = os.getenv("SYSTEM1_EVALUATE_ALL", "false").lower() in ("true", "1", "yes")
+
+    engine_for: List[str] = []
+    for cand, prep in zip(req.candidates, prepared):
+        if prep is None:
+            engine_for.append(default_engine)
+            continue
+        eng = str((cand.features or {}).get("preferred_engine") or default_engine).lower()
+        if eng not in ("laya", "jev", "consensus"):
+            eng = default_engine
+        if evaluate_all and eng != "consensus":
+            eng = "consensus"
+        engine_for.append(eng)
+
+    laya_idx = [
+        i for i, e in enumerate(engine_for)
+        if prepared[i] is not None and e in ("laya", "consensus")
+    ]
+    jev_idx = [
+        i for i, e in enumerate(engine_for)
+        if prepared[i] is not None and e in ("jev", "consensus")
+    ]
+
+    laya_by_idx: Dict[int, Any] = {}
+    jev_by_idx: Dict[int, Any] = {}
+
+    async def _laya_pass(idxs: List[int]) -> None:
+        if not idxs:
+            return
+        states = [prepared[i]["state"] for i in idxs]
+        try:
+            results = await asyncio.to_thread(laya_service.evaluate_batch, states)
+        except Exception as exc:
+            logger.error("Laya batch triage failed (%s); retrying per candidate", exc)
+            # return_exceptions is essential: a plain gather re-raises the FIRST
+            # failure and abandons the rest, which would 500 the whole batch
+            # even though most candidates scored fine.
+            results = await asyncio.gather(
+                *(asyncio.to_thread(laya_service.evaluate_decision, s) for s in states),
+                return_exceptions=True,
+            )
+        for i, res in zip(idxs, results):
+            if isinstance(res, BaseException):
+                logger.error("Laya per-candidate retry failed for index %s: %s", i, res)
+                continue
+            laya_by_idx[i] = res
+
+    async def _jev_pass(idxs: List[int]) -> None:
+        if not idxs:
+            return
+        states = [prepared[i]["state"] for i in idxs]
+        try:
+            results = await asyncio.to_thread(jev_service.evaluate_batch, states)
+        except Exception as exc:
+            logger.error("Jev batch triage failed (%s); retrying per candidate", exc)
+            results = await asyncio.gather(
+                *(asyncio.to_thread(jev_service.evaluate_decision, s) for s in states),
+                return_exceptions=True,
+            )
+        for i, res in zip(idxs, results):
+            if isinstance(res, BaseException):
+                logger.error("Jev per-candidate retry failed for index %s: %s", i, res)
+                continue
+            jev_by_idx[i] = res
+
+    await asyncio.gather(_laya_pass(laya_idx), _jev_pass(jev_idx), return_exceptions=True)
+
+    # ---- Phase 3: resolve + assemble responses ---------------------------
+    def _assemble(idx: int) -> CandidateScore:
+        cand = req.candidates[idx]
+        prep = prepared[idx]
+        if prep is None:
+            return _error_score(cand.symbol)
+
+        kr = prep["kr"]
+        cr = prep["cr"]
+        sentiment_dict = prep["sentiment"]
+
+        eng = engine_for[idx]
+        laya_dec = laya_by_idx.get(idx)
+        jev_dec = jev_by_idx.get(idx)
+
+        if eng == "consensus" and laya_dec is not None and jev_dec is not None:
+            sys1_dec = system1_service.resolve_decision(laya_dec, jev_dec)
+        else:
+            sys1_dec = laya_dec or jev_dec
+
+        # Surface only the per-engine decisions the router actually consumed, so
+        # a Jev-only or Laya-only run reports zero cost for the unused engine.
+        if eng != "consensus":
+            laya_dec = laya_dec if eng == "laya" else None
+            jev_dec = jev_dec if eng == "jev" else None
+
+        return CandidateScore(
+            symbol=cand.symbol,
+            kronos=TechnicalRankingResponse(
+                bullish_probability=kr.bullish_probability,
+                confidence=kr.confidence,
+                detected_patterns=kr.detected_patterns,
+                source=kr.source,
+            ),
+            chronos=ChronosResponse(
+                median_forecast=cr.median_forecast,
+                quantile_forecasts=cr.quantile_forecasts,
+                trend=cr.trend,
+                forecast_return_pct=cr.forecast_return_pct,
+                source=cr.source,
+            ),
+            sentiment_score=sentiment_dict.get("symbol_specific_score", 0.0),
+            world_sentiment_score=sentiment_dict.get("world_score", 0.0),
+            composite_score=prep["composite"],
+            components=prep["components"],
+            win_probability=win_prob_by_id.get(id(cand)),
+            jev_decision=jev_dec.to_dict() if jev_dec is not None else None,
+            laya_decision=laya_dec.to_dict() if laya_dec is not None else None,
+            system1_decision=sys1_dec.to_dict() if sys1_dec is not None else None,
+        )
+
+    results = [_assemble(i) for i in range(len(req.candidates))]
 
     elapsed_ms = (time.time() - t0) * 1000
     InferenceStats.record(elapsed_ms)
-    logger.info("Batch inference: %d candidates in %.1f ms", len(results), elapsed_ms)
+    consensus_count = sum(1 for e in engine_for if e == "consensus")
+    logger.info(
+        "Batch inference: %d candidates in %.1f ms "
+        "(laya_batched=%d, jev_batched=%d, consensus=%d)",
+        len(results),
+        elapsed_ms,
+        len(laya_idx),
+        len(jev_idx),
+        consensus_count,
+    )
 
     return BatchResponse(
         results=results,
         processing_time_ms=round(elapsed_ms, 2),
         ranker_loaded=ranker_service.is_loaded(),
         ranker_threshold=ranker_service.recommended_threshold(),
+        jev_enabled=jev_service.get_status().get("enabled", True),
+        laya_enabled=laya_service.get_status().get("enabled", True),
+        system1_enabled=system1_service.get_status().get("enabled", True),
     )
 
 
@@ -830,16 +1148,51 @@ async def trigger_ranker_train(req: RankerTrainRequest):
 @app.post("/api/v1/confluence_train", tags=["Training"])
 async def trigger_confluence_train():
     """Trigger confluence model retraining in the background."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    script = os.path.join(here, "train_confluence.py")
+    data_path = os.path.abspath(os.path.join(here, "..", "data", "confluence_train.jsonl"))
+
+    if not os.path.isfile(script):
+        logger.error("Confluence training script not found at %s", script)
+        raise HTTPException(status_code=500, detail="train_confluence.py not found")
+    if not os.path.isfile(data_path):
+        logger.error("Confluence training data not found at %s", data_path)
+        raise HTTPException(status_code=500, detail="confluence training data not found")
+
+    # In-flight guard. Without this, N concurrent POSTs each spawn a thread that
+    # forks a full retraining subprocess, exhausting CPU and RAM.
+    if not confluence_train_lock.acquire(blocking=False):
+        return {"message": "Confluence training already in progress", "status": "TRAINING"}
+
     def run_train():
         try:
-            data_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data", "confluence_train.jsonl"))
-            subprocess.run([sys.executable, "train_confluence.py", "--data", data_path], check=True)
-            # Reload models in the service after training completes
-            confluence_service.load_models()
+            # `cwd=here` with an absolute script path: the previous RELATIVE
+            # script path only resolved when the process happened to start with
+            # this directory as its cwd, and the resulting FileNotFoundError was
+            # swallowed — so the endpoint reported success for a retrain that
+            # never ran, and load_models() was never called.
+            result = subprocess.run(
+                [sys.executable, script, "--data", data_path],
+                cwd=here,
+                capture_output=True,
+                text=True,
+                timeout=1800,
+            )
+            if result.returncode != 0:
+                logger.error(
+                    "Confluence training failed (rc=%s): %s",
+                    result.returncode,
+                    (result.stderr or result.stdout or "")[-500:],
+                )
+                return
+            confluence_service.load_models(force=True)
+            logger.info("Confluence retraining completed and models reloaded")
         except Exception as e:
             logger.error(f"Confluence training failed: {e}")
-            
-    threading.Thread(target=run_train, daemon=True).start()
+        finally:
+            confluence_train_lock.release()
+
+    threading.Thread(target=run_train, daemon=True, name="confluence-train").start()
     return {"message": "Confluence training started"}
 
 

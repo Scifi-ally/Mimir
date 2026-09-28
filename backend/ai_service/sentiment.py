@@ -37,6 +37,26 @@ CACHE_TTL_SEC = 300  # 5 minutes — RSS feeds don't update faster than this
 # so healthy results aren't locked out for the full TTL.
 FAILURE_CACHE_TTL_SEC = 20
 
+# Hard cap on the per-symbol cache. Entries expired logically (via CACHE_TTL_SEC)
+# but were only ever OVERWRITTEN on a repeat request for the same key, so a
+# long-running process accumulated one permanent entry per distinct symbol ever
+# scored — a monotonic leak in a service designed to run all session.
+_SENTIMENT_CACHE_MAX = 4096
+_sentiment_cache_lock = threading.Lock()
+
+
+def _prune_sentiment_cache(now: float) -> None:
+    """Drop expired entries, then enforce the size cap. Caller holds the lock."""
+    stale = [k for k, (ts, _) in _sentiment_cache.items() if now - ts >= CACHE_TTL_SEC]
+    for k in stale:
+        _sentiment_cache.pop(k, None)
+    overflow = len(_sentiment_cache) - _SENTIMENT_CACHE_MAX
+    if overflow > 0:
+        # Oldest-timestamp first.
+        for k, _ in sorted(_sentiment_cache.items(), key=lambda kv: kv[1][0])[:overflow]:
+            _sentiment_cache.pop(k, None)
+
+
 # Background DB-save tasks — keep strong references so they aren't GC'd mid-flight
 _bg_tasks: set = set()
 
@@ -460,10 +480,13 @@ async def analyze_sentiment(symbol: str) -> Dict[str, float]:
     now = time.time()
 
     # Check cache
-    if symbol in _sentiment_cache:
-        cached_ts, cached_result = _sentiment_cache[symbol]
-        if now - cached_ts < CACHE_TTL_SEC:
-            return cached_result
+    with _sentiment_cache_lock:
+        _prune_sentiment_cache(now)
+        cached = _sentiment_cache.get(symbol)
+        if cached is not None:
+            cached_ts, cached_result = cached
+            if now - cached_ts < CACHE_TTL_SEC:
+                return cached_result
 
     if sentiment_pipeline is None and not _sentiment_initialized:
         # Off the event loop — FinBERT may download hundreds of MB on first run.
@@ -511,10 +534,12 @@ async def analyze_sentiment(symbol: str) -> Dict[str, float]:
 
     # Cache result — briefly if FinBERT inference failed during this run,
     # since the composite then embeds degraded (keyword-only) scores.
-    if _finbert_last_failure_ts >= now:
-        _sentiment_cache[symbol] = (now - CACHE_TTL_SEC + FAILURE_CACHE_TTL_SEC, result)
-    else:
-        _sentiment_cache[symbol] = (now, result)
+    with _sentiment_cache_lock:
+        _prune_sentiment_cache(now)
+        if _finbert_last_failure_ts >= now:
+            _sentiment_cache[symbol] = (now - CACHE_TTL_SEC + FAILURE_CACHE_TTL_SEC, result)
+        else:
+            _sentiment_cache[symbol] = (now, result)
 
     # Save to DB in background
     def save_to_db():

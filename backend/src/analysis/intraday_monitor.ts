@@ -47,6 +47,13 @@ const MONITORING_CYCLE_CONCURRENCY = Math.max(
   Number(process.env["MONITORING_CYCLE_CONCURRENCY"] ?? "8"),
 );
 
+// Intraday geometry constants. `INTRADAY_MIN_RR` must be >= the effective
+// minimum the risk engine enforces (max(cfg.minRiskReward, autoRisk.minRiskReward),
+// 1.8 by default) or every signal this module produces is rejected.
+const INTRADAY_STOP_DISTANCE_PCT = 1.0;
+const INTRADAY_MIN_RR = 1.9;
+const INTRADAY_TARGET2_RR = 2.8;
+
 interface WatchlistSeed {
   symbol: string;
   name: string | null;
@@ -65,6 +72,8 @@ interface MonitoredStock {
   highOfDay: number;
   lowOfDay: number;
   signalGenerated: boolean;
+  /** Why the last detected setup was not taken (risk-engine rejection). */
+  signalRejectionReason?: string;
   lastCheckAt: Date;
 }
 
@@ -793,18 +802,38 @@ async function generateIntraDaySuggestion(
 
     const direction = monitored.direction;
 
+    // Intraday geometry.
+    //
+    // The previous levels were a 1% stop against a 1.5% target — a true
+    // risk-reward of 1.5 — but risk_engine enforces
+    // `max(cfg.minRiskReward, autoRisk.minRiskReward)`, which is 1.8 by
+    // default. Every intraday signal was therefore rejected before it could
+    // ever be emitted, making this entire subsystem dead code. Size target1 to
+    // clear the configured minimum rather than weakening the risk gate.
+    const stopDistancePct = INTRADAY_STOP_DISTANCE_PCT;
+    const target1Pct = stopDistancePct * INTRADAY_MIN_RR;
+    const target2Pct = stopDistancePct * INTRADAY_TARGET2_RR;
+
     const stopLoss =
       direction === "BUY"
-        ? currentPrice * 0.99
-        : currentPrice * 1.01;
+        ? currentPrice * (1 - stopDistancePct / 100)
+        : currentPrice * (1 + stopDistancePct / 100);
     const target1 =
       direction === "BUY"
-        ? currentPrice * 1.015
-        : currentPrice * 0.985;
+        ? currentPrice * (1 + target1Pct / 100)
+        : currentPrice * (1 - target1Pct / 100);
     const target2 =
       direction === "BUY"
-        ? currentPrice * 1.03
-        : currentPrice * 0.97;
+        ? currentPrice * (1 + target2Pct / 100)
+        : currentPrice * (1 - target2Pct / 100);
+
+    // Derive RR from the actual levels so it can never drift from the geometry
+    // again (a hardcoded literal here is what hid the bug).
+    const riskPerShare = Math.abs(currentPrice - stopLoss);
+    const derivedRR =
+      riskPerShare > 0 && Number.isFinite(riskPerShare)
+        ? Math.abs(target1 - currentPrice) / riskPerShare
+        : 0;
 
     const setup: SetupCandidate = {
       setupType: "INTRADAY_SIGNAL",
@@ -814,7 +843,7 @@ async function generateIntraDaySuggestion(
       stopLoss,
       target1,
       target2,
-      riskReward: 1.5,
+      riskReward: Math.round(derivedRR * 100) / 100,
       reasoning: `Intraday signal: ${monitored.watchlistEntry.condition}`,
       confluence: [monitored.watchlistEntry.category],
     };
@@ -831,6 +860,14 @@ async function generateIntraDaySuggestion(
 
     if (!riskAssessment.passed) {
       logger.warn({ symbol, reasons: riskAssessment.rejectionReasons }, "Intraday signal rejected by Risk Engine");
+      // Mark as handled. Returning without setting `signalGenerated` meant the
+      // same setup was re-detected and re-evaluated on EVERY monitoring cycle
+      // (10-500ms apart), each time re-running resolveTechnicalSnapshot ->
+      // scanStock and enqueueing a worker-pool task — a sustained CPU/worker/API
+      // hammer for the whole session on a signal that can never be taken.
+      monitored.signalGenerated = true;
+      monitored.signalRejectionReason = riskAssessment.rejectionReasons.join("; ");
+      await stateStore.saveMonitoredStock(symbol, monitored).catch(() => {});
       return;
     }
 

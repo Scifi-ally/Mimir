@@ -17,6 +17,8 @@ import numpy as np
 import pandas as pd
 import ta
 
+from .numeric_utils import finite_clamp, sanitize_float
+
 logger = logging.getLogger("ai_service.technical_pattern_engine")
 
 # ---------------------------------------------------------------------------
@@ -218,8 +220,17 @@ def _trend_bias(ohlcv: np.ndarray) -> float:
     closes = ohlcv[-20:, 3].astype(float)
     if len(closes) < 2:
         return 0.0
+    # Reject corrupt price series outright. `min(0.3, nan)` returns 0.3 (NaN
+    # compares False against everything), so a single NaN close would otherwise
+    # yield MAXIMUM bullish bias and the highest-scoring candidate in the batch.
+    if not np.all(np.isfinite(closes)):
+        return 0.0
     returns = np.diff(closes) / (closes[:-1] + 1e-9)
+    if not np.all(np.isfinite(returns)):
+        return 0.0
     avg_ret = float(np.mean(returns))
+    if not math.isfinite(avg_ret):
+        return 0.0
     # Clamp to [-0.3, 0.3]
     return max(-0.3, min(0.3, avg_ret * 50))
 
@@ -229,24 +240,32 @@ def _volume_signal(ohlcv: np.ndarray) -> float:
     if ohlcv.shape[1] < 5 or len(ohlcv) < 5:
         return 0.0
     volumes = ohlcv[-20:, 4].astype(float)
+    if not np.all(np.isfinite(volumes)):
+        return 0.0
     avg_vol = float(np.mean(volumes[:-1])) if len(volumes) > 1 else float(volumes[0])
     latest_vol = float(volumes[-1])
+    if not math.isfinite(avg_vol) or not math.isfinite(latest_vol):
+        return 0.0
     if avg_vol < 1:
         return 0.0
     ratio = latest_vol / avg_vol
+    if not math.isfinite(ratio):
+        return 0.0
     # High volume confirms direction of last candle
     last_close = float(ohlcv[-1, 3])
     last_open = float(ohlcv[-1, 0])
+    if not (math.isfinite(last_close) and math.isfinite(last_open)):
+        return 0.0
     direction = 1.0 if last_close >= last_open else -1.0
-    
+
     if ratio < 1.0:
         return 0.0
-    
+
     # Cap ratio at 5x to prevent extreme distortion
     capped_ratio = min(ratio, 5.0)
     # Stronger impact on bias: 0.15 bias per 1x avg volume above normal
-    spike_impact = (capped_ratio - 1.0) * 0.15 
-    
+    spike_impact = (capped_ratio - 1.0) * 0.15
+
     return spike_impact * direction
 
 
@@ -371,12 +390,16 @@ def _infer_engine(ohlcv: np.ndarray, features: Dict[str, Any]) -> TechnicalPatte
             confidence_accum += 0.04
             bias += 0.03
 
-    # Convert bias → probability via sigmoid-like mapping
+    # Convert bias → probability via sigmoid-like mapping. Guarded: a NaN bias
+    # (from any upstream indicator) would otherwise make math.exp raise or, via
+    # max/min first-argument semantics, clamp to a confident 1.0 probability.
+    bias = sanitize_float(bias, default=0.0, low=-20.0, high=20.0)
     bullish_prob = 1.0 / (1.0 + math.exp(-5 * bias))  # steeper sigmoid
     # Clamp to [0, 0.85]: subtractive paths (ADX chop, high ATR) can push the
     # accumulator negative, which would make the composite's confidence
     # component subtract instead of contributing zero.
-    confidence = max(0.0, min(confidence_accum, 0.85))
+    confidence = finite_clamp(confidence_accum, 0.0, 0.85)
+    bullish_prob = finite_clamp(bullish_prob, 0.0, 1.0, default=0.5)
 
     _last_inference_latency_ms = round((time.time() - started_at) * 1000, 2)
     _last_successful_inference_ts = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -412,8 +435,27 @@ def infer(ohlcv_list: List[List[float]], features: Optional[Dict[str, Any]] = No
     if ohlcv.ndim != 2 or ohlcv.shape[1] < 4:
         raise ValueError("ohlcv must be a 2-D array with at least 4 columns (O, H, L, C)")
 
-    # Pad volume column if missing
+    # Normalize to exactly 5 columns [O, H, L, C, V].
+    #
+    # A 6-column payload (the documented RL contract format
+    # `[timestamp, open, high, low, close, volume]`) used to pass the `>= 4`
+    # guard, reach the TA block, and raise a DataFrame shape error that was then
+    # swallowed — silently disabling the ADX chop dampener and the ATR
+    # high-volatility confidence reduction for every candidate it touched.
     if ohlcv.shape[1] == 4:
+        ohlcv = np.column_stack([ohlcv, np.zeros(len(ohlcv))])
+    elif ohlcv.shape[1] > 5:
+        # Detect the leading-timestamp variant by magnitude: epoch seconds are
+        # ~1e9-1.8e9, while prices are orders of magnitude smaller.
+        first_col = ohlcv[:, 0]
+        looks_like_timestamp = bool(
+            np.all(np.isfinite(first_col))
+            and np.nanmax(np.abs(first_col)) > 1e8
+            and np.nanmin(np.abs(first_col)) > 1e7
+        )
+        ohlcv = ohlcv[:, 1:6] if looks_like_timestamp else ohlcv[:, :5]
+
+    if ohlcv.shape[1] < 5:
         ohlcv = np.column_stack([ohlcv, np.zeros(len(ohlcv))])
 
     return _infer_engine(ohlcv, features)

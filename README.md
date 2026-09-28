@@ -250,6 +250,18 @@ cp .env.example .env
 ```
 Configure your PostgreSQL database connection string and Upstox API credentials in `.env`.
 
+> **Note:** `.env` is read by **both** the Node backend and the Python AI service. The
+> AI service loads `.env.local` then `.env` (real environment variables always take
+> precedence) and does so *before* any model or service starts, so settings like
+> `SYSTEM1_ENGINE`, `TYPESAFE_API_KEY`, and `RANKER_MODEL_PATH` are all honoured.
+> Set `MIMIR_SKIP_DOTENV=1` to disable that loading (the test suite does this so results
+> never depend on your local `.env`).
+>
+> **If you are on Windows:** set `git config core.autocrlf false` before cloning, or keep
+> the committed `.gitattributes` in place. LightGBM's model parser rejects CRLF and
+> aborts the process, so a line-ending conversion of `ranker_model.txt` will stop the AI
+> service from starting.
+
 ### 2. Installation
 Install dependencies across all system components:
 ```bash

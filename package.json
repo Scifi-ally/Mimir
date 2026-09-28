@@ -39,6 +39,11 @@
     "build:prod": "npm run build:frontend && npm run build:backend",
     "build:frontend": "npm --prefix frontend run build",
     "build:backend": "npm --prefix backend run build",
+    "desktop": "npm --prefix frontend run tauri:dev",
+    "desktop:dev": "npm --prefix frontend run tauri:dev",
+    "desktop:build": "npm --prefix frontend run tauri:build",
+    "tauri:dev": "npm --prefix frontend run tauri:dev",
+    "mimir": "powershell -ExecutionPolicy Bypass -File bin/mimir.ps1",
     "start:prod": "docker-compose up --build -d"
   },
   "private": true,

@@ -21,7 +21,7 @@ import { assessRisk, syncRiskEngineState } from "./risk_engine";
 import { getConfig } from "../config";
 import type { TechnicalSnapshot, OHLCV } from "./technical";
 import type { ScanResult, StockSector } from "./stock_scanner";
-import { checkAIHealth, batchInference, type BatchResult, getConfluenceScore } from "./ai_client";
+import { checkAIHealth, batchInference, type BatchResult, getConfluenceScore, type System1Decision } from "./ai_client";
 import { checkEarningsRisk } from "./earnings_filter";
 import { getMarketState } from "../market_data/market_state";
 import { stateStore, type RealtimeFeatures } from "../lib/redis_state";
@@ -169,6 +169,14 @@ export interface DecisionTrace {
   threshold?: number;
   shap_values?: Record<string, number>;
   analysisTraceId?: string;
+  jev_verdict?: string;
+  jev_action?: string;
+  laya_verdict?: string;
+  laya_action?: string;
+  system1_verdict?: string;
+  system1_action?: string;
+  system1_confidence?: number;
+  position_size_multiplier?: number;
 }
 
 export interface PipelineResult {
@@ -436,10 +444,21 @@ export async function runIntelligencePipeline(
 
   const modelInferenceStart = Date.now();
   if (health.status !== "unavailable" && candidates.length > 0) {
+    const currentMkt = getMarketState();
     aiResults = await batchInference(toBatchInferenceCandidates(candidates.map(c => ({
       symbol: c.result.symbol,
       candles: c.candles,
       features: c.features,
+      direction: c.result.setup.direction,
+      setupType: c.result.setup.setupType,
+      entryPrice: c.result.setup.entryPrice,
+      stopLoss: c.result.setup.stopLoss,
+      target1: c.result.setup.target1,
+      riskReward: c.result.setup.riskReward,
+      marketRegime: regime.regime,
+      indiaVix: currentMkt.indiaVix ?? 15.0,
+      ofiRatio: c.features.bidAskImbalance ?? 0.0,
+      fiiNet: currentMkt.fiiNetInr ?? 0.0,
     }))));
     const fallbackOnly = aiResults.size === 0 || Array.from(aiResults.values()).every(result => result.isFallback);
     recordAnalysisStage(analysisTrace, "model_inference", fallbackOnly ? "degraded" : "ok", modelInferenceStart, {
@@ -583,7 +602,15 @@ export async function runIntelligencePipeline(
         rejectionValue: value,
         threshold: thresholdVal,
         shap_values: aiResult?.shap_values,
-        analysisTraceId: analysisTrace.traceId
+        analysisTraceId: analysisTrace.traceId,
+        jev_verdict: aiResult?.jev_decision?.verdict,
+        jev_action: aiResult?.jev_decision?.action,
+        laya_verdict: aiResult?.laya_decision?.verdict,
+        laya_action: aiResult?.laya_decision?.action,
+        system1_verdict: aiResult?.system1_decision?.verdict,
+        system1_action: aiResult?.system1_decision?.action,
+        system1_confidence: aiResult?.system1_decision?.confidence,
+        position_size_multiplier: aiResult?.system1_decision?.position_size_multiplier,
       };
       
       return {
@@ -645,8 +672,12 @@ export async function runIntelligencePipeline(
     if (rankerLoaded && typeof winProb === "number") {
       // Threshold from the trained model's meta (expectancy-maximising on the
       // held-out slice), with a conservative floor so a loose auto-threshold
-      // can never wave through coin-flips. Floor optimized via Phase 5 walk-forward.
-      const rankerThreshold = Math.max(0.58, aiResult?.ranker_threshold ?? 0.58);
+      // can never wave through coin-flips. Configurable via RANKER_MIN_THRESHOLD.
+      const envRankerFloor = process.env.RANKER_MIN_THRESHOLD;
+      const rankerFloor = envRankerFloor !== undefined && !isNaN(Number(envRankerFloor))
+        ? Number(envRankerFloor)
+        : 0.58;
+      const rankerThreshold = Math.max(rankerFloor, aiResult?.ranker_threshold ?? rankerFloor);
       if (winProb < rankerThreshold) {
         rejectedByAI++;
         rejectedSignals.push(buildRejectedSignal("ranker_threshold", winProb, rankerThreshold));
@@ -663,6 +694,82 @@ export async function runIntelligencePipeline(
       const rankerConfidence = winProb * 100;
       confidence = Math.round(rankerConfidence * 0.7 + confidence * 0.3);
     }
+
+    // ── System-1 Fast Decision Gatekeepers (Unified Laya / Jev / Consensus) ──────
+    const system1Engine = (process.env.SYSTEM1_ENGINE ?? "laya").toLowerCase();
+    const layaEnabled = (process.env.LAYA_ENABLED ?? "true").toLowerCase() !== "false";
+    const jevEnabled = (process.env.JEV_ENABLED ?? "true").toLowerCase() !== "false";
+    const layaDecision = aiResult?.laya_decision;
+    const jevDecision = aiResult?.jev_decision;
+
+    // Canonical active decision resolution:
+    // If consensus is configured or resolved, use system1_decision as the single source of truth.
+    // Otherwise route based on system1Engine, falling back to whichever engine is present.
+    let activeSys1Decision: System1Decision | undefined;
+    let activeSys1Name = "LAYA";
+    let activeTag = "laya_decision";
+
+    if (system1Engine === "consensus") {
+      activeSys1Decision = aiResult?.system1_decision ?? (
+        layaDecision && jevDecision
+          ? (layaDecision.verdict === "REJECT" || jevDecision.verdict === "REJECT"
+              ? (layaDecision.verdict === "REJECT" ? layaDecision : jevDecision)
+              : layaDecision)
+          : (layaDecision ?? jevDecision)
+      );
+      if (activeSys1Decision?.provider === "jev") {
+        activeSys1Name = "JEV";
+        activeTag = "jev_decision";
+      } else if (activeSys1Decision?.provider === "consensus" || (layaDecision && jevDecision)) {
+        activeSys1Name = "Consensus";
+        activeTag = "system1_decision";
+      } else {
+        activeSys1Name = "LAYA";
+        activeTag = "laya_decision";
+      }
+    } else if (system1Engine === "jev") {
+      activeSys1Decision = (jevEnabled && jevDecision)
+        ? jevDecision
+        : ((aiResult?.system1_decision?.provider === "jev" ? aiResult.system1_decision : undefined)
+            ?? (layaEnabled ? (layaDecision ?? aiResult?.system1_decision) : undefined));
+      activeSys1Name = (activeSys1Decision === jevDecision || activeSys1Decision?.provider === "jev") ? "JEV" : "LAYA";
+      activeTag = activeSys1Name === "JEV" ? "jev_decision" : "laya_decision";
+    } else {
+      activeSys1Decision = (layaEnabled && layaDecision)
+        ? layaDecision
+        : ((aiResult?.system1_decision?.provider !== "jev" ? aiResult?.system1_decision : undefined)
+            ?? (jevEnabled ? (jevDecision ?? aiResult?.system1_decision) : undefined));
+      activeSys1Name = (activeSys1Decision === jevDecision || activeSys1Decision?.provider === "jev") ? "JEV" : "LAYA";
+      activeTag = activeSys1Name === "JEV" ? "jev_decision" : "laya_decision";
+    }
+
+    let rejectedBySystem1 = false;
+    if (system1Engine === "consensus") {
+      if (layaEnabled && layaDecision?.verdict === "REJECT" && layaDecision.confidence >= 0.70) {
+        rejectedByAI++;
+        rejectedSignals.push(buildRejectedSignal("laya_decision", layaDecision.action, 0.70));
+        rejectedBySystem1 = true;
+      } else if (jevEnabled && jevDecision?.verdict === "REJECT" && jevDecision.confidence >= 0.70) {
+        rejectedByAI++;
+        rejectedSignals.push(buildRejectedSignal("jev_decision", jevDecision.action, 0.70));
+        rejectedBySystem1 = true;
+      } else if (activeSys1Decision?.verdict === "REJECT" && activeSys1Decision.confidence >= 0.70) {
+        rejectedByAI++;
+        rejectedSignals.push(buildRejectedSignal(activeTag, activeSys1Decision.action, 0.70));
+        rejectedBySystem1 = true;
+      }
+    } else {
+      if (activeSys1Decision?.verdict === "REJECT" && activeSys1Decision.confidence >= 0.70) {
+        rejectedByAI++;
+        rejectedSignals.push(buildRejectedSignal(activeTag, activeSys1Decision.action, 0.70));
+        logger.debug(
+          { symbol: result.symbol, action: activeSys1Decision.action, reasons: activeSys1Decision.gate_reasons },
+          `Signal rejected — ${activeSys1Name} triage gatekeeper rejected setup`,
+        );
+        rejectedBySystem1 = true;
+      }
+    }
+    if (rejectedBySystem1) continue;
 
     const aiScore = aiContributing && aiResult ? aiResult.composite_score : 0;
 
@@ -835,6 +942,124 @@ export async function runIntelligencePipeline(
       );
     }
 
+    const sys1Label = activeSys1Name === "Consensus" ? "SYSTEM-1 Consensus" : `${activeSys1Name} System-1`;
+    const sys1Prefix = activeSys1Name === "Consensus" ? "SYSTEM-1 Consensus" : activeSys1Name;
+
+    if (activeSys1Decision?.verdict === "CAUTION") {
+      riskAssessment.warningReasons.push(
+        `${sys1Label} Caution (${activeSys1Decision.action}): pullback confirmation advised`,
+      );
+    }
+    const stopHuntRisk = activeSys1Decision?.p_stop_hunt_risk;
+    if (typeof stopHuntRisk === "number" && stopHuntRisk > 0.40) {
+      riskAssessment.warningReasons.push(
+        `${sys1Prefix}: Elevated stop-hunt risk (${Math.round(stopHuntRisk * 100)}%) — limit pullback order advised`,
+      );
+    }
+    if (activeSys1Decision?.action === "LIMIT_PULLBACK") {
+      riskAssessment.warningReasons.push(
+        `${sys1Prefix}: Limit pullback order recommended to avoid chasing extension`,
+      );
+      // Re-anchor entry price to dynamic pullback support (VWAP or EMA9) to prevent
+      // chasing extended breakouts, improving R:R and avoiding false stop-outs
+      const currentPrice = snap.close;
+      const vwap = snap.vwap;
+      const ema9 = snap.ema9;
+      if (result.setup.direction === "BUY") {
+        const pullbackPrice = (vwap && vwap > 0 && vwap < currentPrice && (currentPrice - vwap) / currentPrice < 0.035)
+          ? vwap
+          : (ema9 && ema9 > 0 && ema9 < currentPrice && (currentPrice - ema9) / currentPrice < 0.035 ? ema9 : null);
+        if (pullbackPrice && pullbackPrice > 0) {
+          const refinedEntry = Math.round(pullbackPrice * 100) / 100;
+          if (refinedEntry < (result.setup.entryPrice || currentPrice)) {
+            result.setup.entryPrice = refinedEntry;
+            provisional_trigger = refinedEntry;
+            const newRisk = refinedEntry - result.setup.stopLoss;
+            const newReward = result.setup.target1 - refinedEntry;
+            if (newRisk > 0) {
+              result.setup.riskReward = Math.round((newReward / newRisk) * 100) / 100;
+            }
+          }
+        }
+      } else if (result.setup.direction === "SELL") {
+        const pullbackPrice = (vwap && vwap > 0 && vwap > currentPrice && (vwap - currentPrice) / currentPrice < 0.035)
+          ? vwap
+          : (ema9 && ema9 > 0 && ema9 > currentPrice && (ema9 - currentPrice) / currentPrice < 0.035 ? ema9 : null);
+        if (pullbackPrice && pullbackPrice > 0) {
+          const refinedEntry = Math.round(pullbackPrice * 100) / 100;
+          if (refinedEntry > (result.setup.entryPrice || currentPrice)) {
+            result.setup.entryPrice = refinedEntry;
+            provisional_trigger = refinedEntry;
+            const newRisk = result.setup.stopLoss - refinedEntry;
+            const newReward = refinedEntry - result.setup.target1;
+            if (newRisk > 0) {
+              result.setup.riskReward = Math.round((newReward / newRisk) * 100) / 100;
+            }
+          }
+        }
+      }
+    }
+
+    const mergedConfluence = [...result.setup.confluence];
+    if (shapString) {
+      mergedConfluence.push(shapString);
+    }
+    if (activeSys1Decision?.verdict === "APPROVE") {
+      mergedConfluence.push(`${sys1Label}: Conviction Approved`);
+      if (activeSys1Decision.action && activeSys1Decision.action !== "EXECUTE_IMMEDIATELY") {
+        mergedConfluence.push(`${sys1Prefix} Action: ${activeSys1Decision.action}`);
+      }
+      const execSuccess = activeSys1Decision.p_execution_success;
+      if (typeof execSuccess === "number" && execSuccess >= 0.75) {
+        mergedConfluence.push(`${sys1Prefix}: High Fill Success Prob (${Math.round(execSuccess * 100)}%)`);
+      }
+    }
+
+    // Dynamic position sizing scaling from System-1 decision.
+    //
+    // `riskAssessment.positionSize` has ALREADY been reduced by the risk engine
+    // for hard portfolio constraints — halved when macro.eventRiskActive
+    // (risk_engine.ts:395) and cut to fit maxDeployedCapitalPct
+    // (risk_engine.ts:409). Multiplying that result by an upside multiplier
+    // re-inflates a position past the exact cap that was just enforced, and
+    // `Math.max(1, …)` could even grow a cap-constrained size of 0 or 1.
+    //
+    // System-1 is therefore only permitted to VETO or DOWNSCALE. It can never
+    // unlock capital the risk engine refused. Sizing up on extra conviction
+    // belongs before the caps are applied, inside the risk engine.
+    let finalPositionSize = riskAssessment.positionSize;
+    let finalInvestmentAmount = riskAssessment.investmentAmount;
+    let finalMaxRiskInr = riskAssessment.maxRiskInr;
+    const sys1Multiplier = activeSys1Decision?.position_size_multiplier;
+    if (
+      typeof sys1Multiplier === "number" &&
+      Number.isFinite(sys1Multiplier) &&
+      sys1Multiplier > 0 &&
+      sys1Multiplier !== 1.0
+    ) {
+      const riskEngineSize = Math.max(0, Math.floor(riskAssessment.positionSize));
+      // min() is load-bearing: an upside multiplier is clamped back to the
+      // risk-engine size, a downside multiplier is honoured.
+      const scaled = Math.floor(riskEngineSize * sys1Multiplier);
+      finalPositionSize = Math.max(0, Math.min(riskEngineSize, scaled));
+
+      if (finalPositionSize !== riskEngineSize) {
+        const entryPx = Number.isFinite(result.setup.entryPrice) && result.setup.entryPrice > 0
+          ? result.setup.entryPrice
+          : snap.close;
+        const stopPx = Number.isFinite(result.setup.stopLoss) ? result.setup.stopLoss : entryPx;
+        const riskPerShare = Math.abs(entryPx - stopPx);
+
+        if (Number.isFinite(entryPx) && entryPx > 0) {
+          finalInvestmentAmount = Math.round(finalPositionSize * entryPx * 100) / 100;
+        }
+        // Never let a NaN/Infinity risk-per-share reach the order record.
+        finalMaxRiskInr = Number.isFinite(riskPerShare)
+          ? Math.round(finalPositionSize * riskPerShare * 100) / 100
+          : 0;
+      }
+    }
+
     // ── Signal PASSED all gates! ──────────────────────────────────────
     const signal: IntelligenceSignal = {
       symbol: result.symbol,
@@ -859,16 +1084,16 @@ export async function runIntelligencePipeline(
       regime: regime.regime,
       regimeConfidence: regime.confidence,
 
-      positionSize: riskAssessment.positionSize,
-      investmentAmount: riskAssessment.investmentAmount,
-      maxRiskInr: riskAssessment.maxRiskInr,
+      positionSize: finalPositionSize,
+      investmentAmount: finalInvestmentAmount,
+      maxRiskInr: finalMaxRiskInr,
       stopDistancePct: riskAssessment.stopDistancePct,
       riskWarnings: riskAssessment.warningReasons,
 
       featureVector: features,
 
       reasoning: dynamicReasoning,
-      confluence: shapString ? [...result.setup.confluence, shapString] : result.setup.confluence,
+      confluence: mergedConfluence,
       aiPatterns: aiResult?.technicalRanking?.detected_patterns ?? [],
       aiMode,
       rankingProvider,
@@ -907,7 +1132,15 @@ export async function runIntelligencePipeline(
         confidencePath: usedConfluence ? "python_confluence" : "native_math_fallback",
         rankerBlendApplied: !!(aiResult?.ranker_loaded && typeof aiResult?.win_probability === "number"),
         shap_values: aiResult?.shap_values,
-        analysisTraceId: analysisTrace.traceId
+        analysisTraceId: analysisTrace.traceId,
+        jev_verdict: aiResult?.jev_decision?.verdict,
+        jev_action: aiResult?.jev_decision?.action,
+        laya_verdict: aiResult?.laya_decision?.verdict,
+        laya_action: aiResult?.laya_decision?.action,
+        system1_verdict: aiResult?.system1_decision?.verdict,
+        system1_action: aiResult?.system1_decision?.action,
+        system1_confidence: aiResult?.system1_decision?.confidence,
+        position_size_multiplier: aiResult?.system1_decision?.position_size_multiplier,
       }
     };
 

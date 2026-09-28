@@ -55,6 +55,39 @@ _loaded: bool = False
 _load_error: Optional[str] = None
 
 
+def _load_booster(model_path: str) -> Any:
+    """
+    Construct the LightGBM booster, tolerating CRLF-converted model files.
+
+    LightGBM's text model parser is line-based and rejects CRLF endings. Worse,
+    the failure surfaces as a native `abort()` (STATUS_STACK_BUFFER_OVERRUN),
+    which terminates the whole process rather than raising a catchable Python
+    exception — so the CRLF case MUST be detected before the C++ loader is
+    invoked, not handled by a try/except around it.
+
+    A Windows checkout with core.autocrlf=true rewrites the model file to CRLF,
+    which would otherwise crash the AI service on startup. `.gitattributes` marks
+    these artifacts `-text` to prevent that; this is the runtime backstop.
+    """
+    import lightgbm as lgb
+
+    # newline="" preserves original line endings so the CR check is exact.
+    with open(model_path, "r", encoding="utf-8", errors="replace", newline="") as fh:
+        text = fh.read()
+
+    if "\r" in text:
+        normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+        booster = lgb.Booster(model_str=normalized)
+        logger.warning(
+            "Loaded ranker model after LF normalization — %s has CRLF line endings, which "
+            "LightGBM's model parser aborts on. See .gitattributes / core.autocrlf.",
+            os.path.basename(model_path),
+        )
+        return booster
+
+    return lgb.Booster(model_file=model_path)
+
+
 def load_model() -> None:
     """Load the booster + calibration meta once. Safe to call repeatedly."""
     global _booster, _feature_keys, _iso_x, _iso_y, _metrics, _trained_at, _loaded, _load_error, _recommended_threshold
@@ -68,22 +101,32 @@ def load_model() -> None:
             _load_error = "no trained ranker artifacts on disk"
             return
         try:
-            import lightgbm as lgb
-
-            booster = lgb.Booster(model_file=model_path)
+            booster = _load_booster(model_path)
             with open(meta_path, "r", encoding="utf-8") as fh:
                 meta = json.load(fh)
 
             iso = meta.get("isotonic") or {}
-            _iso_x = np.asarray(iso.get("x", []), dtype=np.float64) if iso.get("x") else None
-            _iso_y = np.asarray(iso.get("y", []), dtype=np.float64) if iso.get("y") else None
-
-            _booster = booster
-            _feature_keys = list(meta.get("feature_keys", []))
-            _metrics = meta.get("metrics", {})
-            _trained_at = meta.get("trained_at")
+            # Build the complete snapshot OFF to the side, then publish it as ONE
+            # tuple assignment. Assigning the globals one at a time let a
+            # concurrent predict_batch observe a MIXED state — most damagingly the
+            # old booster scored against the NEW isotonic calibration (a
+            # genuinely miscalibrated P(win), which is a hard trade gate), or the
+            # new booster against stale feature keys (LightGBM raises, and the
+            # handler returns [None]*n, silently disabling the ranker for the
+            # whole batch).
+            snapshot = (
+                booster,                                              # _booster
+                list(meta.get("feature_keys", [])),                   # _feature_keys
+                (np.asarray(iso.get("x", []), dtype=np.float64) if iso.get("x") else None),
+                (np.asarray(iso.get("y", []), dtype=np.float64) if iso.get("y") else None),
+                meta.get("metrics", {}),                              # _metrics
+                meta.get("trained_at"),                               # _trained_at
+            )
             thr = meta.get("recommended_threshold")
-            _recommended_threshold = float(thr) if isinstance(thr, (int, float)) else None
+            threshold = float(thr) if isinstance(thr, (int, float)) and np.isfinite(thr) else None
+
+            _booster, _feature_keys, _iso_x, _iso_y, _metrics, _trained_at = snapshot
+            _recommended_threshold = threshold
             _loaded = True
             logger.info(
                 "Learned ranker loaded (features=%d, trained_at=%s, val_auc=%s)",

@@ -9,6 +9,7 @@ httpx==0.27.0
 transformers>=4.49.0
 chronos-forecasting==2.0
 onnxruntime==1.18.0
+laya>=0.3.20
 stable-baselines3==2.3.0
 gymnasium==0.29.1
 # Learned ranker (LightGBM win-probability model + isotonic calibration).
@@ -29,3 +30,7 @@ python-multipart==0.0.9
 # Logging
 python-json-logger==2.0.7
 psycopg2-binary==2.9.9
+
+# Testing
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
