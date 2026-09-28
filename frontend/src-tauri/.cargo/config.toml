@@ -1,0 +1,24 @@
+# Cargo configuration for the Tauri desktop shell.
+#
+# The Windows toolchain here is `x86_64-pc-windows-gnu`. Its GNU `ld.exe`
+# CANNOT link the Tauri binary:
+#
+#     ld.exe: error: export ordinal too large: 95530
+#
+# `cargo check` passes, so this is a link-time toolchain limitation, not a
+# defect in the crate: GNU ld numbers exports in 16 bits and Tauri + WebView2
+# pull in more than 65535 of them.
+#
+# Do NOT try to work around this with LLVM's lld via `-C link-arg=-fuse-ld=lld`.
+# That was tried and it makes the build strictly worse: the MinGW GCC driver on
+# this machine does not quote arguments containing spaces, and Rust is installed
+# under "C:\Program Files\...", so lld receives
+#     could not open 'C:\Program': No such file or directory
+# and even build scripts stop linking.
+#
+# The supported fix is the MSVC toolchain, which needs the MSVC linker and the
+# Windows SDK. Run `npm --prefix frontend run desktop:doctor` for a preflight
+# report and exact remediation steps.
+
+# Intentionally empty: no linker overrides. See the notes above.
+[target.x86_64-pc-windows-gnu]

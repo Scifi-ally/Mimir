@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useStore } from "@/store/useStore";
 import { normalizeMonitoringPayload } from "@/lib/api";
+import { getWebSocketUrl } from "@/lib/backendOrigin";
 import { useQueryClient } from "@tanstack/react-query";
 import { marketDataStore } from "@/providers/MarketDataProvider";
 
@@ -27,8 +28,11 @@ export function subscribeWsSymbols(symbols: string[], force = false) {
 }
 
 function wsUrl(path = "/ws") {
-  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${protocol}//${window.location.host}${path}`;
+  // In a packaged Tauri build there is no Vite proxy in front of the webview,
+  // so a socket built from `window.location.host` would connect to the webview
+  // origin instead of the backend and never open. getWebSocketUrl() targets the
+  // backend directly in that case.
+  return getWebSocketUrl(path);
 }
 
 export function useWebSocket() {

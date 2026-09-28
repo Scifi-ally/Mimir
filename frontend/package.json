@@ -13,7 +13,8 @@
     "test:all": "playwright test",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "desktop:doctor": "powershell -ExecutionPolicy Bypass -File src-tauri/check-toolchain.ps1"
   },
   "dependencies": {
     "@tailwindcss/typography": "^0.5.20",

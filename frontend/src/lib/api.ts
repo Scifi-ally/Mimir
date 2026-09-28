@@ -1,5 +1,6 @@
 import type { IntradayMonitoring } from "@/types/api";
 import { SessionStateSchema, MarketRegimeSchema, SuggestionSchema } from "./schemas";
+import { getBackendOrigin } from "./backendOrigin";
 import { z } from "zod";
 
 export function hasAdminToken(): boolean {
@@ -16,7 +17,7 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     headers.set("x-admin-token", token);
   }
 
-  const baseUrl = import.meta.env.VITE_API_URL || "";
+  const baseUrl = getBackendOrigin();
   let res: Response;
   try {
     res = await fetch(`${baseUrl}${path}`, {
@@ -61,7 +62,7 @@ async function apiFetchSoft<T>(path: string, fallback: T): Promise<T> {
     const headers = new Headers();
     if (token) headers.set("x-admin-token", token);
 
-    const baseUrl = import.meta.env.VITE_API_URL || "";
+    const baseUrl = getBackendOrigin();
     const res = await fetch(`${baseUrl}${path}`, { credentials: "include", headers });
     
     if (!res.ok) {
