@@ -17,6 +17,56 @@ import { stateStore } from "../lib/redis_state";
 import { getCalibration, ensureFresh } from "../analysis/calibration_engine";
 import Decimal from "decimal.js";
 
+/**
+ * Resolve the final order quantity, honouring the upstream risk decision.
+ *
+ * Kept as a pure, exported function so the sizing contract is directly testable
+ * rather than buried inside the suggestionTriggered handler.
+ *
+ * `upstreamMaxRiskInr` is risk_engine.assessRisk's `maxRiskInr` — a HARD cap
+ * that already accounts for portfolio state this engine cannot observe (open
+ * positions, sector exposure, deployed capital, macro halving). `upstreamQuantity`
+ * is the share count it approved. Both are optional so the realtime and intraday
+ * paths, which do not call assessRisk, keep working.
+ *
+ * Returns quantity 0 when the risk budget cannot cover a single share. The
+ * previous code used `Decimal.max(1, ...)`, which forced a 1-share trade in
+ * exactly that case and so over-risked the very setups the risk engine had
+ * deliberately sized down.
+ */
+export function resolveOrderQuantity(params: {
+  balance: Decimal;
+  riskPct: number;
+  stopDistance: Decimal;
+  upstreamMaxRiskInr?: Decimal | null;
+  upstreamQuantity?: number | null;
+}): { quantity: number; riskAmount: Decimal; cappedByUpstream: boolean } {
+  const { balance, riskPct, stopDistance, upstreamMaxRiskInr, upstreamQuantity } = params;
+
+  let riskAmount = balance.mul(riskPct).div(100);
+  let cappedByUpstream = false;
+  if (upstreamMaxRiskInr && upstreamMaxRiskInr.gt(0) && upstreamMaxRiskInr.lt(riskAmount)) {
+    riskAmount = upstreamMaxRiskInr;
+    cappedByUpstream = true;
+  }
+
+  if (stopDistance.lte(0) || stopDistance.isNaN()) {
+    return { quantity: 0, riskAmount, cappedByUpstream };
+  }
+
+  const sharesAffordable = riskAmount.div(stopDistance).floor();
+  if (sharesAffordable.lte(0)) {
+    return { quantity: 0, riskAmount, cappedByUpstream };
+  }
+
+  let quantity = sharesAffordable.toNumber();
+  if (upstreamQuantity != null && upstreamQuantity > 0 && quantity > upstreamQuantity) {
+    quantity = upstreamQuantity;
+  }
+
+  return { quantity, riskAmount, cappedByUpstream };
+}
+
 let engineActive = false;
 
 // Track symbols with active OPEN paper positions to eliminate DB query thrashing on ticks
@@ -98,6 +148,22 @@ export async function initPaperEngine() {
          return;
       }
       
+      // Upstream risk decision from risk_engine.assessRisk, already persisted on
+      // the row by suggestions/generator.ts. This engine previously read NEITHER
+      // and re-derived the position from a 0-100 `confidence` score that had
+      // already been rewritten twice, so every control computed upstream — the
+      // macro-risk halving, the 20%-of-capital cap, the 90% deployed-capital
+      // cap, quarter-Kelly sizing — was discarded at the final step before an
+      // order was sized. The risk engine's decision must bind execution.
+      const upstreamMaxRisk = (() => {
+        const raw = sugRow.maxRiskInr == null ? null : parseFloat(String(sugRow.maxRiskInr));
+        return raw != null && Number.isFinite(raw) && raw > 0 ? new Decimal(raw) : null;
+      })();
+      const upstreamQuantity =
+        sugRow.quantity != null && Number.isFinite(Number(sugRow.quantity)) && Number(sugRow.quantity) > 0
+          ? Math.floor(Number(sugRow.quantity))
+          : null;
+
       const suggestion = {
         id: sugRow.id,
         symbol: sugRow.symbol,
@@ -114,6 +180,8 @@ export async function initPaperEngine() {
         aiScore: sugRow.aiScore,
         patternScore: sugRow.patternScore,
         technicalScore: sugRow.technicalScore,
+        upstreamMaxRiskInr: upstreamMaxRisk,
+        upstreamQuantity,
       };
 
       logger.info({ symbol: suggestion.symbol, confidence: suggestion.confidence, fillPrice: event.fillPrice }, "PaperEngine: Processing suggestionTriggered event");
@@ -219,7 +287,35 @@ export async function initPaperEngine() {
 
       // Ensure within bounds
       riskPct = Math.min(Math.max(riskPct, 0.20), maxRiskCap);
-      const riskAmount = balance.mul(riskPct).div(100);
+
+      // The risk engine's maxRiskInr is a HARD cap, not advice: it already
+      // accounts for portfolio state (open positions, sector exposure, deployed
+      // capital, macro halving) that this engine cannot see, so min() here is
+      // what stops execution from re-expanding a position the portfolio
+      // deliberately constrained.
+      const locallyDerivedRisk = balance.mul(riskPct).div(100);
+      const riskAmount = (
+        suggestion.upstreamMaxRiskInr && suggestion.upstreamMaxRiskInr.lt(locallyDerivedRisk)
+          ? suggestion.upstreamMaxRiskInr
+          : locallyDerivedRisk
+      );
+      if (riskAmount !== locallyDerivedRisk) {
+        logger.info(
+          {
+            symbol: suggestion.symbol,
+            locallyDerivedRisk: locallyDerivedRisk.toNumber(),
+            upstreamCap: suggestion.upstreamMaxRiskInr?.toNumber(),
+          },
+          "PaperEngine: clamped risk to the risk engine's maxRiskInr",
+        );
+      }
+
+      logger.info({
+        symbol: suggestion.symbol,
+        confidence,
+        riskPct,
+        riskAmount: riskAmount.toNumber(),
+      }, "PaperEngine: Position sized with risk-based approach");
       
       logger.info({ 
         symbol: suggestion.symbol, 
@@ -295,8 +391,30 @@ export async function initPaperEngine() {
         return;
       }
 
-      // Calculate quantity, but guarantee at least 1 share if margin allows it
-      let quantity = Decimal.max(1, riskAmount.div(stopDistance).floor()).toNumber();
+      // Resolve the share count through the single, testable implementation.
+      // Never exceed the quantity the risk engine approved.
+      const sizing = resolveOrderQuantity({
+        balance,
+        riskPct,
+        stopDistance,
+        upstreamMaxRiskInr: suggestion.upstreamMaxRiskInr,
+        upstreamQuantity: suggestion.upstreamQuantity,
+      });
+
+      if (sizing.quantity <= 0) {
+        logger.warn(
+          {
+            symbol: suggestion.symbol,
+            riskAmount: riskAmount.toNumber(),
+            stopDistance: stopDistance.toNumber(),
+            upstreamMaxRiskInr: suggestion.upstreamMaxRiskInr?.toNumber() ?? null,
+          },
+          "PaperEngine: Aborted entry — risk budget cannot cover a single share",
+        );
+        return;
+      }
+
+      let quantity = sizing.quantity;
 
       // Proper trader intraday MIS leverage on NSE (5x leverage -> 20% margin required per share)
       const intradayLeverage = new Decimal(5);
