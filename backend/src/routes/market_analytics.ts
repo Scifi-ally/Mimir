@@ -69,8 +69,13 @@ router.get("/market/forecast", async (req, res) => {
 
     const token = getAccessToken();
     if (!token) {
-      res.status(401).json({ error: "Upstox authentication required" });
-      return;
+      // As with symbol-insights, `token` is never used in this handler: the
+      // forecast is computed from cached candles plus the AI service. The guard
+      // only blanked the forecast panel for logged-out users.
+      logger.info(
+        { route: "symbolForecast", rawSymbol },
+        "No Upstox token; serving forecast from cached candles + AI service"
+      );
     }
 
     const stock = resolveIndexAsStock(rawSymbol) || await findStockBySymbol(rawSymbol);
@@ -162,8 +167,15 @@ router.get("/market/symbol-insights", async (req, res) => {
 
     const token = getAccessToken();
     if (!token) {
-      res.status(401).json({ error: "Upstox authentication required" });
-      return;
+      // `token` is never used anywhere in this handler - the insights are
+      // computed from cached candles and in-memory monitoring state, never from
+      // an authenticated Upstox call. Requiring it meant the entire symbol detail
+      // panel 401'd (and rendered empty) whenever the user was logged out, even
+      // though everything needed to render was already available locally.
+      logger.info(
+        { route: "symbolInsights", rawSymbol },
+        "No Upstox token; serving symbol insights from cache/monitoring state"
+      );
     }
 
     const stock = resolveIndexAsStock(rawSymbol) || await findStockBySymbol(rawSymbol);
