@@ -86,18 +86,7 @@ export function updateOpenPositions(positions: OpenPosition[]): void {
 export function updateDailyPnl(pnl: number, lossCount: number): void {
   _dailyPnlInr = pnl;
   _dailyLossCount = lossCount;
-}
-
-export function resetDailyTracking(): void {
-  _dailyPnlInr = 0;
-  _dailyLossCount = 0;
-}
-
-export function getOpenPositionCount(): number {
-  return _openPositions.length;
-}
-
-/**
+}/**
  * Syncs the risk engine state with the database.
  * NOTE: This is called every minute via the scheduler. The 60s staleness window
  * is acceptable for the current trading cadence (suggestions generated every 5 mins).

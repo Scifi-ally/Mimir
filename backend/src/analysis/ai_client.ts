@@ -714,21 +714,6 @@ export interface RLStatusResponse {
   reward?: number;
   [key: string]: unknown;
 }
-
-export async function getRLStatus(): Promise<RLStatusResponse | null> {
-  if (!process.env.AI_SERVICE_URL) return null;
-  try {
-    const response = await axios.get(
-      `${getAiServiceUrl()}/api/v1/rl_status`,
-      { headers: getAiServiceHeaders(), timeout: 5000 }
-    );
-    return response.data;
-  } catch (err) {
-    logger.error({ err }, "Failed to get RL status");
-    return null;
-  }
-}
-
 export async function getConfluenceScore(
   regime: string,
   features: Record<string, number>
@@ -1042,22 +1027,4 @@ export async function evaluateSystem1Decision(
     logger.debug(`System-1 inference error: ${(err as Error).message}; using native fallback`);
   }
   return computeNativeSystem1Decision(req, targetEngine);
-}
-
-export async function evaluateJevDecision(
-  req: JevDecisionRequest,
-): Promise<JevDecision> {
-  const url = `${getAiServiceUrl()}/inference/jev`;
-  try {
-    const res = await axios.post<JevDecision>(url, req, {
-      headers: getAiServiceHeaders(),
-      timeout: 3000,
-    });
-    if (res.status === 200 && res.data) {
-      return res.data;
-    }
-  } catch (err) {
-    logger.debug(`JEV inference error: ${(err as Error).message}; using native fallback`);
-  }
-  return computeNativeJevDecision(req);
 }

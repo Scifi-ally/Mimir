@@ -19,8 +19,3 @@ export const SPRING_GENTLE: Transition = { type: "spring", stiffness: 450, dampi
 export const FADE_FAST: Transition = { duration: 0.08, ease: "easeOut" };
 export const FADE_STANDARD: Transition = { duration: 0.12, ease: "easeOut" };
 export const FADE_SLOW: Transition = { duration: 0.18, ease: [0.16, 1, 0.3, 1] };
-
-export const stagger = (index: number, base: Transition = FADE_STANDARD): Transition => ({
-  ...base,
-  delay: Math.min(index * 0.01, 0.05),
-});

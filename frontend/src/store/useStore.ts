@@ -229,9 +229,6 @@ export const useStore = create<AppStore>()(
 import { useShallow } from "zustand/react/shallow";
 
 // Watchlist counts — changes on scan
-export const useWatchlistCounts = () => 
+export const useWatchlistCounts = () =>
   useStore(useShallow(s => s.watchlistCounts));
 
-// Active symbol — changes on user click
-export const useActiveSymbol = () => useStore(s => s.selectedSymbol);
-export const useSetActiveSymbol = () => useStore(s => s.setSelectedSymbol);

@@ -3,10 +3,6 @@ import { SessionStateSchema, MarketRegimeSchema, SuggestionSchema } from "./sche
 import { getBackendOrigin } from "./backendOrigin";
 import { z } from "zod";
 
-export function hasAdminToken(): boolean {
-  return Boolean(localStorage.getItem("mimir_admin_token")?.trim());
-}
-
 /**
  * A 4xx (other than 408/429) will not fix itself on retry: it means the request
  * is unauthorized, forbidden, malformed, or missing. Upstox endpoints answer

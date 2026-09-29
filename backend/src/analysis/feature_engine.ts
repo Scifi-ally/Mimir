@@ -449,35 +449,3 @@ export function computeFeatureVector(
   return features;
 }
 
-/**
- * Batch compute feature vectors for multiple candidates.
- */
-export function computeFeatureVectors(
-  candidates: Array<{
-    symbol: string;
-    sector: string;
-    candles: OHLCV[];
-    snap: TechnicalSnapshot;
-    rsVsNifty: number;
-    rsVsSector: number;
-    riskReward: number;
-    bidAskImbalance: number;
-    optionsOiChangeRate: number;
-    rankerIncomplete?: boolean;
-    historicalFiiDiiFlowLag?: number;
-  }>,
-): FeatureVector[] {
-  return candidates.map(c => computeFeatureVector(
-    c.symbol,
-    c.sector,
-    c.candles,
-    c.snap,
-    c.rsVsNifty,
-    c.rsVsSector,
-    c.riskReward,
-    c.bidAskImbalance,
-    c.optionsOiChangeRate,
-    c.rankerIncomplete,
-    c.historicalFiiDiiFlowLag,
-  ));
-}

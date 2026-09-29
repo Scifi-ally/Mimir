@@ -42,13 +42,11 @@ const MAX_TICKS_PER_STOCK = Math.max(
 );
 
 const subscriptions = new Map<string, StockSubscription>();
-let tickUpdateQueue: TickData[] = [];
 let redisBatchQueue: Record<string, TickData[]> = {};
 let redisBatchTimer: ReturnType<typeof setInterval> | null = null;
 let volumePollerTimer: ReturnType<typeof setInterval> | null = null;
 let eventBusUnsubscribe: (() => void) | null = null;
 let reconnectUnsubscribe: (() => void) | null = null;
-let lastTickTimestamp: number = 0;
 let initPromise: Promise<void> = Promise.resolve();
 
 /**
@@ -209,7 +207,6 @@ async function doInitTickFeeder(stocks: Array<{ symbol: string; key: string }>):
       }
       redisBatchQueue[sub.symbol].push(tick);
 
-      lastTickTimestamp = Date.now();
     });
   });
 
@@ -374,26 +371,6 @@ export function stopTickFeeder(): void {
   }
 
   subscriptions.clear();
-  tickUpdateQueue = [];
   redisBatchQueue = {};
 }
 
-/**
- * Get feeder status
- */
-export function getTickFeederStatus() {
-  return {
-    connected: subscriptions.size > 0 && lastTickTimestamp > 0,
-    subscriptionsCount: subscriptions.size,
-    queuedTicks: tickUpdateQueue.length,
-    lastTickTimestamp,
-    subscriptions: Array.from(subscriptions.values()).map((s) => ({
-      symbol: s.symbol,
-      lastPrice: s.lastPrice,
-      bid: s.bid,
-      ask: s.ask,
-      volume: s.volume,
-      ticksRecorded: s.ticks.length,
-    })),
-  };
-}

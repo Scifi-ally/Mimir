@@ -1,6 +1,6 @@
 import { logger } from "../lib/logger";
 import { NSE_UNIVERSE, StockSector } from "./stock_scanner";
-import { updateMarketState, getMarketState } from "../market_data/market_state";
+import { updateMarketState } from "../market_data/market_state";
 
 export interface SectorMoneyFlow {
   sector: StockSector;
@@ -132,24 +132,5 @@ export function calculateTopSectors() {
 
   updateMarketState({ topSectors });
   return topSectors;
-}
-
-/**
- * Returns a momentum score (-100 to 100) based on relative strength vs Nifty 50.
- */
-export function getSectorMomentumScore(sectorName: string): number {
-  const flow = sectorAggregates.get(sectorName as StockSector);
-  if (!flow) return 0;
-  
-  const state = getMarketState();
-  const niftyChange = state.niftyChangePct ?? 0;
-  
-  // Calculate relative strength (RS)
-  const relativeStrength = flow.avgPctChange - niftyChange;
-  
-  // Scale RS: 1% outperformance = +50 score
-  const AMPLIFIER = 50; 
-  const score = relativeStrength * AMPLIFIER;
-  return Math.max(-100, Math.min(100, score));
 }
 

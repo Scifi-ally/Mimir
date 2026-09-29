@@ -52,16 +52,4 @@ export function fmtPct(value: unknown, decimals: number = 1) {
   return `${num > 0 ? "+" : ""}${num.toFixed(actualDecimals)}%`;
 }
 
-/** Calendar-date key in IST (Asia/Kolkata) — for grouping trades/suggestions by market day */
-export function istDateKey(d: Date): string {
-  return d.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" });
-}
 
-export function calcPnLPct(current: unknown, entry: unknown): number | null {
-  const curNum = toNumber(current, NaN);
-  const entNum = toNumber(entry, NaN);
-  if (!Number.isNaN(curNum) && !Number.isNaN(entNum) && entNum > 0) {
-    return ((curNum - entNum) / entNum) * 100;
-  }
-  return null;
-}

@@ -24,6 +24,7 @@ import {
 import { getMarketFeedSnapshot } from "../market_data/market_feed";
 import { upstoxConnectionManager } from "../intelligence/connection_manager";
 import { upstoxHeadlessAuth } from "../upstox/headless_auth";
+import { checkUpstoxCredentials } from "../upstox/credential_check";
 import { getEffectiveUniverse } from "../analysis/stock_scanner";
 import { getConnectedClients, broadcast } from "../ws/websocket_server";
 import { isSchedulerRunning } from "../scheduler/jobs";
@@ -136,6 +137,19 @@ router.get("/system/status", async (_req, res) => {
           ? "B"
           : "C";
 
+  // "Configured" in the payload only means the values are non-empty, which is
+  // true even for a placeholder. upstoxCredentialsUsable states whether they are
+  // actually usable, so the UI can explain why authorization is unavailable
+  // instead of showing a button that silently fails.
+  const upstoxCredentialCheck = checkUpstoxCredentials({
+    apiKey: cfg.upstoxApiKey,
+    apiSecret: cfg.upstoxApiSecret,
+    dataApiKey: cfg.upstoxDataApiKey,
+    dataApiSecret: cfg.upstoxDataApiSecret,
+    useDualApiKeys: cfg.useDualApiKeys,
+    redirectUri: cfg.upstoxRedirectUri,
+  });
+
   res.json({
     wsConnected: getConnectedClients() > 0,
     dbConnected,
@@ -146,6 +160,12 @@ router.get("/system/status", async (_req, res) => {
     upstoxConfigured: Boolean((cfg.upstoxApiKey && cfg.upstoxApiSecret) || (cfg.upstoxDataApiKey && cfg.upstoxDataApiSecret)),
     upstoxFeedConfigured: Boolean(cfg.upstoxApiKey && cfg.upstoxApiSecret),
     upstoxDataConfigured: Boolean(cfg.upstoxDataApiKey && cfg.upstoxDataApiSecret),
+    // "Configured" above only means the values are non-empty, which is true even
+    // for a placeholder. This states whether the credentials are actually usable
+    // so the UI can explain why authorization is unavailable instead of showing
+    // a button that silently fails.
+    upstoxCredentialsUsable: upstoxCredentialCheck.ok,
+    upstoxCredentialProblem: upstoxCredentialCheck.problem ?? null,
     useDualApiKeys: cfg.useDualApiKeys,
     isMarketOpen: isMarketOpen(), // Dynamically compute instead of relying on decoupled local state
     symbolsCached: effectiveUniverse.length, // Renamed from instrumentsLoaded (Issue #9)
@@ -365,17 +385,41 @@ router.get("/system/symbols", async (req, res) => {
 });
 
 // GET /api/system/auth-url
-router.get("/system/auth-url", (req, res) => {
-  const cfg = getConfig();
-  const type = req.query.type === "data" ? "data" : "trading";
-  
-  if (type === "trading" && (!cfg.upstoxApiKey || !cfg.upstoxApiSecret)) {
-    res.status(400).json({ url: "", error: "Upstox API key and secret are required" });
-    return;
-  } else if (type === "data" && (!cfg.upstoxDataApiKey || !cfg.upstoxDataApiSecret)) {
-    res.status(400).json({ url: "", error: "Upstox Data API key and secret are required" });
-    return;
-  }
+  router.get("/system/auth-url", (req, res) => {
+    const cfg = getConfig();
+    const type = req.query.type === "data" ? "data" : "trading";
+
+    // Shape-check the credentials BEFORE handing the user an Upstox URL. A
+    // placeholder key previously passed the presence check, sent the user to
+    // Upstox, and failed there with an error that gave no hint the local config
+    // was the problem.
+    const creds = checkUpstoxCredentials({
+      apiKey: cfg.upstoxApiKey,
+      apiSecret: cfg.upstoxApiSecret,
+      dataApiKey: cfg.upstoxDataApiKey,
+      dataApiSecret: cfg.upstoxDataApiSecret,
+      useDualApiKeys: cfg.useDualApiKeys,
+      redirectUri: cfg.upstoxRedirectUri,
+    });
+    if (!creds.ok) {
+      req.log.warn({ problem: creds.problem, type }, "Refusing to start Upstox OAuth: credentials are not usable");
+      res.status(400).json({
+        url: "",
+        error: `Upstox credentials are not configured correctly: ${creds.problem}`,
+        code: "UPSTOX_CREDENTIALS_INVALID",
+        alreadyAuthenticated: false,
+      });
+      return;
+    }
+
+    if (type === "trading" && (!cfg.upstoxApiKey || !cfg.upstoxApiSecret)) {
+      res.status(400).json({ url: "", error: "Upstox API key and secret are required" });
+      return;
+    } else if (type === "data" && (!cfg.upstoxDataApiKey || !cfg.upstoxDataApiSecret)) {
+      res.status(400).json({ url: "", error: "Upstox Data API key and secret are required" });
+      return;
+    }
+
 
   const cookieName = `${AUTH_STATE_COOKIE}_${type}`;
   const state = crypto.randomBytes(24).toString("hex") + "_" + type;
@@ -402,6 +446,25 @@ router.post("/system/headless/begin", async (req, res) => {
     return;
   }
   const type = parsed.data.type;
+
+  // Same shape check as /auth-url: headless auth would otherwise accept a phone
+  // number and walk the user through OTP for credentials that can never work.
+  const headlessCreds = checkUpstoxCredentials({
+    apiKey: cfg.upstoxApiKey,
+    apiSecret: cfg.upstoxApiSecret,
+    dataApiKey: cfg.upstoxDataApiKey,
+    dataApiSecret: cfg.upstoxDataApiSecret,
+    useDualApiKeys: cfg.useDualApiKeys,
+    redirectUri: cfg.upstoxRedirectUri,
+  });
+  if (!headlessCreds.ok) {
+    req.log.warn({ problem: headlessCreds.problem, type }, "Refusing to start headless auth: credentials are not usable");
+    res.status(400).json({
+      error: `Upstox credentials are not configured correctly: ${headlessCreds.problem}`,
+      code: "UPSTOX_CREDENTIALS_INVALID",
+    });
+    return;
+  }
 
   if (type === "trading" && (!cfg.upstoxApiKey || !cfg.upstoxApiSecret)) {
     res.status(400).json({ error: "Upstox API key and secret are required" });

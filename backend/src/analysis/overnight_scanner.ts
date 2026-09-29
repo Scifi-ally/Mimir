@@ -67,11 +67,6 @@ export let activeScanCandidates: Array<{ symbol: string; reason?: string }> = []
 export function getActiveScanSessionId(): string | null {
   return activeScanSessionId;
 }
-
-export function setActiveScanSessionId(id: string | null): void {
-  activeScanSessionId = id;
-}
-
 let onScanCompletedCallback: (() => void | Promise<void>) | null = null;
 export function registerOnScanCompleted(cb: () => void | Promise<void>) {
   onScanCompletedCallback = cb;

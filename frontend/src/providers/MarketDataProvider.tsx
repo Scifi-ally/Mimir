@@ -284,10 +284,3 @@ export function useSymbolDataSelector<T>(symbol: string, selector: (data: Symbol
   const getSnapshot = useCallback(() => selector(marketDataStore.get(symbol)), [symbol, selector]);
   return useSyncExternalStore(subscribe, getSnapshot);
 }
-
-export function useMarketTelemetry(): MarketTelemetry {
-  return useSyncExternalStore(
-    (cb) => marketDataStore.subscribeTelemetry(cb),
-    () => marketDataStore.getTelemetry()
-  );
-}

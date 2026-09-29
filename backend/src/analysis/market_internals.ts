@@ -17,7 +17,6 @@
 
 import { getMarketState } from "../market_data/market_state";
 import { STOCK_SECTOR_MAP } from "./stock_scanner";
-import { logger } from "../lib/logger";
 
 // ── VIX rate-of-change ────────────────────────────────────────────────────────
 
@@ -190,8 +189,4 @@ export function getInternalsSnapshot() {
     topSectors: state.topSectors.slice(0, 5),
     sampleCount: vixSamples.length,
   };
-}
-
-export function logInternals(): void {
-  logger.debug(getInternalsSnapshot(), "Market internals snapshot");
 }

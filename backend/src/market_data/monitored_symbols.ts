@@ -212,12 +212,6 @@ export async function addManualMonitoredSymbol(symbol: string): Promise<Monitore
   await addManualMonitoredSymbols([stock.symbol]);
   return { symbol: stock.symbol, key: stock.key, source: "manual" };
 }
-
-export async function isSymbolMonitored(symbol: string): Promise<boolean> {
-  const stocks = await getMonitoredSubscriptionStocks();
-  return stocks.some((s) => s.symbol === symbol.toUpperCase());
-}
-
 /** Push current monitored set to Upstox WS + tick feeder (watchlist + manual only). */
 export async function syncMonitoredSubscriptions(): Promise<MonitoredStock[]> {
   const stocks = await getMonitoredSubscriptionStocks();
@@ -262,8 +256,4 @@ export async function removeManualMonitoredSymbol(symbol: string): Promise<boole
     return true;
   }
   return false;
-}
-
-export function clearManualMonitoredSymbols(): void {
-  manualSymbols.clear();
 }

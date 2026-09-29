@@ -31,16 +31,3 @@ export async function cacheJson(key: string, value: any, ttlSeconds: number): Pr
     logger.debug({ err, key }, "Failed to write intelligence cache");
   }
 }
-
-export async function readJson<T>(key: string): Promise<T | null> {
-  const client = getRedis();
-  if (!client) return null;
-  try {
-    if (client.status === "wait") await client.connect();
-    const value = await client.get(key);
-    return value ? (JSON.parse(value) as T) : null;
-  } catch (err) {
-    logger.debug({ err, key }, "Failed to read intelligence cache");
-    return null;
-  }
-}
