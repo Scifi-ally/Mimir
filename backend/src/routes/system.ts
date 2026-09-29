@@ -166,6 +166,7 @@ router.get("/system/status", async (_req, res) => {
     // a button that silently fails.
     upstoxCredentialsUsable: upstoxCredentialCheck.ok,
     upstoxCredentialProblem: upstoxCredentialCheck.problem ?? null,
+    upstoxCredentialWarning: upstoxCredentialCheck.warning ?? null,
     useDualApiKeys: cfg.useDualApiKeys,
     isMarketOpen: isMarketOpen(), // Dynamically compute instead of relying on decoupled local state
     symbolsCached: effectiveUniverse.length, // Renamed from instrumentsLoaded (Issue #9)
@@ -410,6 +411,11 @@ router.get("/system/symbols", async (req, res) => {
         alreadyAuthenticated: false,
       });
       return;
+    }
+    if (creds.warning) {
+      // Advisory only - the attempt still proceeds, because only Upstox can
+      // decide whether the credentials are actually valid.
+      req.log.warn({ warning: creds.warning }, "Upstox credential shape looks unusual");
     }
 
     if (type === "trading" && (!cfg.upstoxApiKey || !cfg.upstoxApiSecret)) {
@@ -886,6 +892,70 @@ const htmlResponse = (title: string, message: string, isError = false) => {
 };
 
 // GET /api/system/auth-callback
+/**
+ * Where to send the browser after a successful OAuth round trip.
+ *
+ * The previous value was `FRONTEND_URL + "mimir"`, which appended a path that
+ * does not exist - there is no /mimir route in the SPA - so a SUCCESSFUL login
+ * landed the user on a blank page. It also defaulted to http://localhost:3000/,
+ * which is wrong inside the Tauri shell where the UI is served from the webview
+ * origin and there may be no dev server at all.
+ */
+function frontendRedirectUrl(): string {
+  const configured = process.env.FRONTEND_URL?.trim();
+  if (configured) return configured;
+  return "http://localhost:3000/";
+}
+
+/**
+ * Pull the human-readable message out of an Upstox / upstream failure.
+ *
+ * Upstox answers with
+ *   {"status":"error","errors":[{"errorCode":"UDAPI100057","message":"Invalid Auth code"}]}
+ * note the key is `errors` (plural, an array) - matching only the singular
+ * `error` key silently returned null and the user got a generic message.
+ * `title`/`detail` cover the Cloudflare envelope Upstox's edge returns when the
+ * request is blocked before it reaches the app (Error 1010), which is worth
+ * naming precisely because it means "blocked", not "bad credentials".
+ */
+export function extractUpstoxErrorMessage(err: unknown): string | null {
+  const candidate = err as { response?: { data?: unknown }; data?: unknown };
+  const payload = candidate?.response?.data ?? candidate?.data;
+
+  const read = (v: unknown, depth = 0): string | null => {
+    if (depth > 4) return null;
+    if (typeof v === "string" && v.trim()) return v.trim();
+    if (Array.isArray(v)) {
+      for (const item of v) {
+        const got = read(item, depth + 1);
+        if (got) return got;
+      }
+      return null;
+    }
+    if (v && typeof v === "object") {
+      const o = v as Record<string, unknown>;
+      // "message" first: it is the human text we actually want. Then the
+      // plural "errors" array, then singular/edge-case keys.
+      for (const key of [
+        "message",
+        "errors",
+        "error",
+        "error_description",
+        "errorCode",
+        "detail",
+        "title",
+      ]) {
+        if (!(key in o)) continue;
+        const got = read(o[key], depth + 1);
+        if (got) return got;
+      }
+    }
+    return null;
+  };
+
+  return read(payload);
+}
+
 router.get("/system/auth-callback", async (req, res) => {
   const parsed = HandleAuthCallbackQueryParams.safeParse(req.query);
   if (!parsed.success) {
@@ -916,12 +986,12 @@ router.get("/system/auth-callback", async (req, res) => {
 
   try {
     await exchangeCodeForToken(parsed.data.code, type);
-    
+
     if (type === "data") {
       // Re-connect market data stream if data token updated
       upstoxConnectionManager.resetCircuitBreakerAndConnect();
     }
-    
+
     // Notify all connected WebSocket clients that auth succeeded
     broadcast({
       event: "system_alert",
@@ -930,14 +1000,20 @@ router.get("/system/auth-callback", async (req, res) => {
       },
     });
 
-    const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000/";
-    res.redirect(frontendUrl + "mimir");
+    res.redirect(frontendRedirectUrl());
   } catch (err) {
-    req.log.error({ err }, "Upstox auth callback failed");
+    // Surface Upstox's own message. "Please check backend logs" is useless to
+    // the person standing in front of the authorize button, and the most common
+    // failures (invalid client, unapproved redirect URI, expired code) are all
+    // reported by Upstox in the response body.
+    const detail = extractUpstoxErrorMessage(err);
+    req.log.error({ err, detail }, "Upstox auth callback failed");
     res.setHeader("Content-Type", "text/html");
     res.status(500).send(htmlResponse(
       "Authorization Failed",
-      "An error occurred while exchanging the authorization code for a token. Please check backend logs.",
+      detail
+        ? `Upstox rejected the authorization: ${detail}`
+        : "An error occurred while exchanging the authorization code for a token.",
       true
     ));
   }

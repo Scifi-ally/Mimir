@@ -1,26 +1,35 @@
 /**
- * Upstox credential shape validation.
+ * Upstox credential pre-flight.
  *
  * Why this exists
  * ───────────────
- * The auth flow previously checked only that `UPSTOX_API_KEY` / `_SECRET` were
- * non-empty. A placeholder value therefore sailed through, the user was handed a
- * real Upstox OAuth URL, and the failure surfaced as an opaque error on
- * Upstox's own login page with no indication that the problem was local. In this
- * repo the committed .env carries a UUID where the API key should be, which
- * looks "configured" to every presence check.
+ * The auth flow only checked that `UPSTOX_API_KEY` / `_SECRET` were non-empty.
+ * A placeholder therefore sailed through and the user was handed a real Upstox
+ * OAuth URL, where the failure surfaced with no hint that the local config was
+ * the problem.
  *
- * Upstox issues 32-character alphanumeric API keys and 32-character API
- * secrets. A UUID is unambiguous evidence that the value is a placeholder, not
- * a real credential, so it is worth catching before the user is sent anywhere.
+ * What it does and does NOT decide
+ * ────────────────────────────────
+ * Observed against the live API: posting to the exchange endpoint the app uses
+ * (https://api-v2.upstox.com/login/authorization/token) with a deliberately
+ * bogus `code` returns Upstox's own `UDAPI100057 "Invalid Auth code"`. Upstox
+ * accepted the request and objected to the auth code - it did NOT reject the
+ * client credentials. So a shape mismatch cannot prove the credentials are
+ * invalid; only Upstox can.
+ *
+ * Therefore this module BLOCKS only on things that cannot possibly work (a
+ * missing value, an explicitly named placeholder, a non-absolute redirect URI)
+ * and WARNS - without blocking - when the shape merely looks unusual. The
+ * warning is surfaced to the UI so a suspicious key is visible before login,
+ * but it never prevents an attempt that might still succeed.
  *
  * This never logs or returns the secret itself, only which check failed.
  */
 
-/** Real Upstox API keys and secrets are 32-char alphanumeric strings. */
+/** Upstox documents API keys/secrets as 32-character alphanumeric strings. */
 const UPSTOX_CREDENTIAL_RE = /^[A-Za-z0-9]{32}$/;
 
-/** A UUID can never be an Upstox key, so name it explicitly for a clear message. */
+/** A UUID is not Upstox's documented key shape, but Upstox remains the authority. */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const PLACEHOLDER_HINTS = [
@@ -35,9 +44,15 @@ const PLACEHOLDER_HINTS = [
 ];
 
 export interface CredentialCheck {
+  /** True when an authorization attempt is worth making. */
   ok: boolean;
-  /** Human-readable reason, safe to surface in the UI. Never contains the value. */
+  /** Blocking reason, safe to surface in the UI. Never contains the value. */
   problem?: string;
+  /**
+   * Non-blocking advisory, present when a value is shaped unlike a real Upstox
+   * key. Surfaced in the UI, but the attempt is still allowed.
+   */
+  warning?: string;
 }
 
 function checkOne(label: string, value: string): CredentialCheck {
@@ -52,26 +67,26 @@ function checkOne(label: string, value: string): CredentialCheck {
     return { ok: false, problem: `${label} still contains a placeholder value` };
   }
 
+  if (UPSTOX_CREDENTIAL_RE.test(trimmed)) {
+    return { ok: true };
+  }
+
   if (UUID_RE.test(trimmed)) {
     return {
-      ok: false,
-      problem:
-        `${label} is a UUID, which is a placeholder rather than a real Upstox key. ` +
-        `Upstox issues a 32-character alphanumeric key from ` +
-        `https://upstox.com/developer/api-documentation`,
+      ok: true,
+      warning:
+        `${label} is UUID-shaped, not Upstox's documented 32-character ` +
+        `alphanumeric key. Authorization will still be attempted; if it fails, ` +
+        `check the key at https://upstox.com/developer/api-documentation`,
     };
   }
 
-  if (!UPSTOX_CREDENTIAL_RE.test(trimmed)) {
-    return {
-      ok: false,
-      problem:
-        `${label} is ${trimmed.length} characters; Upstox API keys/secrets are ` +
-        `32-character alphanumeric strings`,
-    };
-  }
-
-  return { ok: true };
+  return {
+    ok: true,
+    warning:
+      `${label} is ${trimmed.length} characters; Upstox documents 32-character ` +
+      `alphanumeric keys. Authorization will still be attempted.`,
+  };
 }
 
 export function checkUpstoxCredentials(creds: {
@@ -82,17 +97,23 @@ export function checkUpstoxCredentials(creds: {
   useDualApiKeys?: boolean;
   redirectUri?: string;
 }): CredentialCheck {
+  const warnings: string[] = [];
+
   const keyCheck = checkOne("UPSTOX_API_KEY", creds.apiKey);
   if (!keyCheck.ok) return keyCheck;
+  if (keyCheck.warning) warnings.push(keyCheck.warning);
 
   const secretCheck = checkOne("UPSTOX_API_SECRET", creds.apiSecret);
   if (!secretCheck.ok) return secretCheck;
+  if (secretCheck.warning) warnings.push(secretCheck.warning);
 
   if (creds.useDualApiKeys) {
     const dataKey = checkOne("UPSTOX_DATA_API_KEY", creds.dataApiKey ?? "");
     if (!dataKey.ok) return dataKey;
+    if (dataKey.warning) warnings.push(dataKey.warning);
     const dataSecret = checkOne("UPSTOX_DATA_API_SECRET", creds.dataApiSecret ?? "");
     if (!dataSecret.ok) return dataSecret;
+    if (dataSecret.warning) warnings.push(dataSecret.warning);
   }
 
   if (!creds.redirectUri) {
@@ -105,5 +126,5 @@ export function checkUpstoxCredentials(creds: {
     };
   }
 
-  return { ok: true };
+  return { ok: true, warning: warnings.length ? warnings.join("; ") : undefined };
 }
