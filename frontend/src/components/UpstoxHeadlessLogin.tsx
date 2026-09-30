@@ -93,14 +93,19 @@ export function UpstoxHeadlessLogin({ type, onSuccess }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Clean up if cancelled or unmounted before success
-  useEffect(() => {
-    return () => {
-      if (!hasSucceeded.current) {
-        api.headlessAuth.cancel().catch(() => {});
-      }
-    };
-  }, []);
+  // Do NOT cancel the server-side browser session on unmount.
+  //
+  // This component is rendered as `content` inside the DynamicIsland portal, so
+  // any re-render that recreates the island element unmounts it. The previous
+  // unmount handler called /headless/cancel, which runs the server's
+  // cleanup() and drops the Playwright page. The user was then left staring at
+  // the PIN step with a dead session, and submitting the PIN failed with
+  // "No active browser session".
+  //
+  // A remount is not a cancellation. The flow now ends in exactly two ways:
+  //   - success, where the server has already cleaned up after itself, or
+  //   - an explicit cancel, handled by the island's cancel affordance.
+  // Abandoned sessions are reaped server-side by the idle sweep.
 
   const handlePhoneSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
