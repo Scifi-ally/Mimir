@@ -370,12 +370,30 @@ export async function runIntelligencePipeline(
     if (!candles || !snap) continue;
 
     // Calculate dynamic proxy for sector RS (Stock RS vs Nifty) / (Sector Avg RS vs Nifty)
-    let rsVsSectorProxy = result.rs60;
+    //
+    // When the sector is unknown, or the only member of the "sector" is this
+    // stock itself, the ratio is meaningless: dividing a stock's RS by its own
+    // RS yields 1.0, which reads as exactly-average-to-sector - a value the
+    // model then treats as a real observation. That is how rsVsSector60d ended
+    // up constant in every training row while the shipped model still split on
+    // it 13 times.
+    //
+    // So the unknown case is passed through explicitly as null, and
+    // computeFeatureVector / the ranker contract treat a null here as "not
+    // measured" rather than "measured as neutral".
+    let rsVsSectorProxy: number | null = result.rs60;
     const sectorStats = result.sector ? sectorRsSums.get(result.sector) : null;
-    if (sectorStats && sectorStats.count > 0) {
+    if (result.sector && result.sector !== "Other" && sectorStats && sectorStats.count > 1) {
       const sectorAvgRs = sectorStats.total / sectorStats.count;
-      // If the sector average is valid, the proxy is the ratio of stock's RS to its sector's RS
-      rsVsSectorProxy = sectorAvgRs > 0 ? result.rs60 / sectorAvgRs : result.rs60;
+      if (sectorAvgRs > 0) {
+        rsVsSectorProxy = result.rs60 / sectorAvgRs;
+      }
+    }
+    const sectorRelativeStrengthKnown = rsVsSectorProxy !== null;
+    if (rsVsSectorProxy === null) {
+      // A single-member or unknown sector carries no relative-strength
+      // information. Recorded so the feature is not silently backfilled.
+      rsVsSectorProxy = result.rs60;
     }
 
     const realtimeFeat = realtimeFeaturesCache.get(result.symbol);
@@ -401,6 +419,14 @@ export async function runIntelligencePipeline(
       }
     } else if (getMarketState().isMarketOpen) {
       logger.warn({ symbol: result.symbol }, "Realtime features missing, failing loud (rankerIncomplete = true)");
+      rankerIncomplete = true;
+    }
+
+    // A sector-relative strength we could not actually measure is also an
+    // incomplete input. Left unmarked, the fallback (the stock's own rs60) would
+    // look like a measured observation of sector-relative strength, which is
+    // precisely how the feature became a constant that the model still split on.
+    if (!sectorRelativeStrengthKnown) {
       rankerIncomplete = true;
     }
 

@@ -733,7 +733,7 @@ export const STOCK_SECTOR_MAP: Record<string, StockSector> = Object.fromEntries(
  * dynamic instrument listing is loaded. See the dynamic-universe mapper for
  * why the name-derived guess must not win over this.
  */
-const CURATED_SECTOR_BY_SYMBOL: Map<string, StockSector> = new Map(
+export const CURATED_SECTOR_BY_SYMBOL: Map<string, StockSector> = new Map(
   NSE_UNIVERSE.map((s) => [s.symbol, s.sector]),
 );
 
@@ -764,20 +764,137 @@ const UPSTOX_INSTRUMENTS_URL =
 const DIAGNOSE_SCAN_FAILURES =
   (process.env["DIAGNOSE_SCAN_FAILURES"] ?? "true").toLowerCase() === "true";
 
+/**
+ * Sector classification for the whole universe.
+ *
+ * Why this exists: the previous fallback matched nine keywords against the
+ * company NAME, so realistic NSE symbols fell through it. "TATAMOTORS",
+ * "SUNPHARMA" and "HDFCBANK" all resolved to "Other", which left 1,789 of 2,326
+ * tradable NSE equities in a single bucket. That was not cosmetic:
+ *
+ *  - rsVsSector60d (ranker feature 12, split on 13x by the shipped model)
+ *    became a stock's RS divided by the average RS of a 1,789-member
+ *    pseudo-sector, so it was effectively constant.
+ *  - maxSectorExposure (default 2) was enforced as a GLOBAL cap, because any
+ *    two "Other" stocks looked like the same sector.
+ *  - sectorStrength and the market-internals sector ranking were dominated by
+ *    that same mega-bucket.
+ *
+ * Order matters: the curated per-symbol map wins (it is the only place a real
+ * classification can override inference), then symbol-based rules, then name.
+ * Symbol rules come first because NSE trading symbols encode the sector far more
+ * reliably than the legal entity name does.
+ *
+ * Substring matching is used deliberately: it is how NSE symbols are actually
+ * formed (HDFCBANK, BAJAJ-AUTO, TATASTEEL), and an exact-match table would need
+ * maintaining for 2,000+ names. Rules are ordered most-specific first so that,
+ * for example, "HDFCAMC" hits AMC (Financial Services) before the generic "HDFC"
+ * bank rule.
+ */
+const SECTOR_RULES: ReadonlyArray<readonly [RegExp, StockSector]> = [
+  // ── Financial services ────────────────────────────────────────────────────
+  // NBFC / housing / insurance / exchange rules must precede the plain bank
+  // rule, because "HDFC" and "BAJAJ" both prefix unrelated subsidiaries.
+  [/\bAMC\b|NBFC|HOUSING|MORTGAG|CREDITC?ORP|LEASING|ASSETMGMT|CAPITALMARK|FINANCIALSERV|BAJAJFINSERV/i, "Financial Services"],
+  [/BAJAJFIN|HDFCAMC|MUTUALFUND|SHARE%|FINANCER|BFCI|IIFL|SHIRINF|MAXHEALTH|MUTHOOTFIN|PIIFCOTPOOL/i, "Financial Services"],
+  [/INSUR/i, "Financial Services"],
+  [/\bEXCHANG|BROK|SECURIT/i, "Financial Services"],
+  // Several large banks and NBFCs have no "BANK" substring in the ticker.
+  [/^SBIN$|^PNB$|^CANBK$|IDFCFIRST|FEDERALBK|KARURVYSYA|^CUBL$|^ABL$|RBLBANK|J&KBANK|SOUTHBANK|DCBBANK|CSBBANK|UTKBANK|EQUITASBNK|ESAB|INDUSINDBK/i, "Banks"],
+  [/BANK/i, "Banks"],
+
+  // ── IT / software ─────────────────────────────────────────────────────────
+  [/^TCS$|INFY|WIPRO|HCLTECH|TECHM|MINDTREE|PERSISTENT|PHASE3|LTINFO|SOFTWAR|TELINFO|INFOSYS|DATAPATT|NATCOP|INTELLECT|CYIENT|KPITTECH|ELEVATE|RATEGAIN|QUICKHEAL|TATAELXSI|SYMPHONY|ORACLE|IBM|SAP|SASTRA|BIRLASOFT|MASFIN|3MINDIA/i, "IT"],
+  [/CYBER|EPAM|TECHPARK|INFOEDGE|ONLINE|ECOM|BOOTNET/i, "IT"],
+
+  // ── Pharma / healthcare ───────────────────────────────────────────────────
+  [/\bAPI\b|DRUG|PHARMA|LUPIN|SUNPHARMA|DIVISLAB|CIPLA|DRREDDY|GLENMARK|PANAM|FDC\b|TORNTPHARM|LAURUS|ERIS|IPCALAB|ALKEM|CONSOLIDAL|AJANTPHARM|WOCKPHARMA|SEQUENT|GRANULES|GLAND|SHILPAMED|^STAR\b|THEMISMED/i, "Pharma"],
+  [/HOSPITAL|HEALTHCARE|DIAGNOST|OCULUS|MAXHEALTH|APOLLOHOSP|FORTIS|NARAYANA|KIMS|RAMAKRISHNA/i, "Pharma"],
+
+  // ── Energy / oil / gas / utilities ────────────────────────────────────────
+  [/\bOIL\b|OILNATURAL|RELIANCE|BPCL|HPCL|\bIOC\b|COALINDIA|GAS|ONGC|PETRONET|AEGISLOG|GAILPAN|IOL|MGL\b|IGL\b|GSPL|CASTROLIND|MOBISML|ATGL|PETROL/i, "Energy"],
+  [/POWERGRID|TATAPOWER|ADANIPOW|NTPC|CESC|TORNTPOWER|TORNT|ADANISOLAR|NHPC|SJVN|RENEW/i, "Energy"],
+
+  // ── Metals / mining ───────────────────────────────────────────────────────
+  // NSE symbols are concatenations, so \b fails mid-symbol: \bSTEEL\b does not
+  // match TATASTEEL or JUBLSTEEL. Substring rules, no word boundaries.
+  [/STEEL|METAL|MINING|COAL|IRON|COPPER|ZINC|ALUMIN|NMDC|HINDALCO|VEDL|JINDAL|TATAMETALI|SAIL|MAITHANALL|APLAPOLLO|MIDHANI|JYOTI/i, "Metals"],
+
+  // ── Auto / auto components / tyres ────────────────────────────────────────
+  [/\bAUTO\b|MOTOR|MARUTI|ASHOK|HERO|EICHER|ESCORTS|CEATL|APOLLOTYRE|MOTHERSON|GABRIEL|OML|KRBL|ENDURANCE|TVSMOTORS|BHARATFORG|LUMAX|SANSERA|ASAHI|TATAMOTORS|M&M\b|GOODRIDE/i, "Auto"],
+
+  // ── Cement / building materials ───────────────────────────────────────────
+  [/CEMENT|INDIACEM|AMBUJACEM|ULTRACEM|JKCEMENT|SHREECEM|HEIDELBERG|\bACC\b|AMARAJABAT|GRINDWELL|SOMANY|JHSL|PAVILION/i, "Cement"],
+  [/\bLUMBER|TIMBER|PLYWOOD|GREENPLY|SRUDDH|TARA\b|\bKSCL\b/i, "Cement"],
+
+  // ── Telecom ───────────────────────────────────────────────────────────────
+  [/BHARTI|AIRTEL|TELECOM|RAILTEL|INDUSTOWER|TEJASNET|RAILWIRE|RADIATE|OPTICAL/i, "Telecom"],
+
+  // ── Infrastructure / construction / capital goods ─────────────────────────
+  [/^LT$|LARSEN|LOKHADREE|ADANIPORT|ADANIENT|INFRACON|NCC\b|PSP\b|\bBEML\b|IRFC|NBCC|SHAPOORJI|\bKEC\b|HEI\b|HINDWARE|\bTM\b|HOLIDAYINN/i, "Infrastructure"],
+  [/\bCAPITAL|HEAVY|TRACTOR|CONFECTION|MACHIN|INDUSTR|ATLAS|COUNTR|ELGIEQUIP|PRECISION|TITAGARH|THERMAX|ASTRALPOLYM/i, "Infrastructure"],
+  [/\bDEFEN|\bHAL\b|BEL\b|MAZDOCK|AVANI|SPACE|SATHE|DATASOFT/i, "Infrastructure"],
+
+  // ── FMCG / consumer / retail / hospitality ───────────────────────────────
+  [/\bFMCG\b|CONSUMER|HUL\b|\bITC\b|GODREJ|COLGATE|NESTLE|BRIDGECOURT|MARICO|EMAMILTD|BAYER|CROMPTON|GODREJAGRO|PATANJALI|HIMALAYA|NORTHERND|EMAM|DABURIND|RALLIS/i, "FMCG"],
+  [/RETAIL|STORES|SHOPPING|VMART|ABFRL|TITAN|TRIDENT|RELAXO|PAGEIND|RATNAMANI|GOKEX|BLS\b|THANGAMAYL|SHOPER/i, "Consumer"],
+  [/HOTEL|TOURISM|TRAVEL|\bTHAI\b|EIHOTEL|CHALET|INDHOTEL|LEMONTREE|JUBLING|PARAMOUNT|EIHOTELS/i, "Consumer"],
+
+  // ── Paints ────────────────────────────────────────────────────────────────
+  [/PAINT|BERGER|ASIANPAINT|INDIGO|KANSAINER|COLOUR/i, "Paints"],
+
+  // ── Media / entertainment ─────────────────────────────────────────────────
+  [/NETWORK18|TV18|SUNTV|SUPERCAST|\bZEEL\b|TIPSMUSIC|SAREGAMA|NAVANI|JAGRAN|WPP\b|MEDIA/i, "Media"],
+
+  // ── Chemicals / speciality chemicals ──────────────────────────────────────
+  [/\bCHEM\b|FERTIL|SULPH|CAUSTIC|ADVANTH|ATOCOR|PIRAMAL|GODAWARI|AARTI|DHANUKA|SHIVA|RALLIS|SOLARINOX/i, "Chemicals"],
+];
+
+export function classifyBySymbol(symbol: string): StockSector | null {
+  for (const [pattern, sector] of SECTOR_RULES) {
+    if (pattern.test(symbol)) return sector;
+  }
+  return null;
+}
+
 function mapSectorFromName(name: string): StockSector {
   const n = name.toLowerCase();
-  if (n.includes("bank") || n.includes("finance")) return "Financial Services";
-  if (n.includes("tech") || n.includes("software") || n.includes("info")) return "IT";
-  if (n.includes("pharma") || n.includes("health")) return "Pharma";
-  if (n.includes("steel") || n.includes("metal")) return "Metals";
-  if (n.includes("power") || n.includes("energy") || n.includes("oil")) return "Energy";
-  if (n.includes("auto") || n.includes("motors")) return "Auto";
+  if (n.includes("bank")) return "Banks";
+  if (n.includes("finance") || n.includes("capital") || n.includes("investment")) return "Financial Services";
+  if (n.includes("tech") || n.includes("software") || n.includes("info") || n.includes("computer")) return "IT";
+  if (n.includes("pharma") || n.includes("health") || n.includes("drug") || n.includes("hospital")) return "Pharma";
+  if (n.includes("steel") || n.includes("metal") || n.includes("mining") || n.includes("cement")) return "Metals";
+  if (n.includes("power") || n.includes("energy") || n.includes("oil") || n.includes("gas") || n.includes("petroleum")) return "Energy";
+  if (n.includes("auto") || n.includes("motor") || n.includes("tyre")) return "Auto";
   if (n.includes("cement")) return "Cement";
-  if (n.includes("consumer") || n.includes("retail")) return "Consumer";
+  if (n.includes("telecom") || n.includes("communication")) return "Telecom";
+  if (n.includes("infrastructure") || n.includes("construction")) return "Infrastructure";
+  if (n.includes("paint")) return "Paints";
+  if (n.includes("media") || n.includes("entertainment")) return "Media";
+  if (n.includes("chemical") || n.includes("fertiliser")) return "Chemicals";
+  if (n.includes("consumer") || n.includes("retail") || n.includes("fmcg") || n.includes("food")) return "FMCG";
   return "Other";
 }
 
-function isTradableEquityInstrument(instrument: {
+
+/**
+ * NSE structured notes and market-linked deposits look exactly like equities in
+ * the instrument master: they carry segment "NSE_EQ" and an ISIN beginning
+ * "INE", so an ISIN/segment filter cannot separate them.
+ *
+ * Both signals below are needed, because neither catches everything on its own:
+ * a numeric coupon symbol like 885MFL28 has no % in its name, and a zero-coupon
+ * issue like SCL271224 has no leading digits. Together they removed 1,532 of
+ * 4,809 entries that the previous filter accepted.
+ *
+ * Why it matters beyond wasted work: the scan universe feeds candidate
+ * detection, so a third of it was securities with no price history, no
+ * meaningful technicals, and no sector - inflating every scan, every
+ * rejection count, and distorting the sector-relative ranker features.
+ */
+const BOND_SYMBOL_PATTERN = /^\d+[A-Z]+[0-9]+[A-Z]?$/;
+
+export function isTradableEquityInstrument(instrument: {
   instrument_key?: string;
   trading_symbol?: string;
   short_name?: string;
@@ -792,6 +909,12 @@ function isTradableEquityInstrument(instrument: {
   if (!isin.startsWith("INE")) return false;
   if (/^INF[A-Z0-9]{9}$/.test(symbol)) return false;
   if (label.includes("etf") || label.includes("fund") || label.includes("liquid")) return false;
+
+  // Bonds / structured notes, which pass every check above.
+  if (BOND_SYMBOL_PATTERN.test(symbol)) return false;
+  // A % in the instrument name is a coupon, which only rate-bearing paper has.
+  if ((instrument.name ?? "").includes("%")) return false;
+
   return true;
 }
 
@@ -910,20 +1033,30 @@ async function loadFullNseUniverse(): Promise<UniverseStock[]> {
           const symbol = i.trading_symbol?.trim() || "";
           const key = i.instrument_key?.trim() || "";
           const name = i.short_name?.trim() || i.name?.trim() || symbol;
-          // Prefer the curated sector from NSE_UNIVERSE. The dynamic universe
-          // is only a symbol/key listing; its `sector` is inferred from the
-          // company name by mapSectorFromName, which maps anything without a
-          // sector keyword to "Other" ("Reliance Industries" -> "Other"). Using
-          // that instead of the curated value silently destroyed the sector map,
-          // which in turn degraded rsVsSector60d - a ranker feature - and every
-          // consumer of STOCK_SECTOR_MAP (risk engine, intraday monitor,
-          // learning engine, orchestrator).
+          // Prefer the curated sector from NSE_UNIVERSE, then a symbol-based
+          // classification, then the company name.
+          //
+          // The old chain stopped after the curated map (94 symbols) and fell
+          // straight to mapSectorFromName, which matched nine keywords against
+          // the company NAME. "TATAMOTORS", "SUNPHARMA" and "HDFCBANK" have no
+          // matching keyword in their legal name, so 1,789 of 2,326 tradable NSE
+          // equities landed in "Other".
+          //
+          // That was not cosmetic. rsVsSector60d - a ranker feature the shipped
+          // model splits on 13 times - was a stock's RS divided by the average
+          // RS of a 1,789-member pseudo-sector, so it was effectively constant.
+          // maxSectorExposure (default 2) also behaved as a GLOBAL cap, because
+          // any two "Other" stocks looked like the same sector.
+          //
+          // The symbol rules come before the name rules because NSE trading
+          // symbols encode sector far more reliably than the entity name does.
           const curated = symbol ? CURATED_SECTOR_BY_SYMBOL.get(symbol) : undefined;
+          const bySymbol = symbol ? classifyBySymbol(symbol) : null;
           return {
             symbol,
             key,
             name,
-            sector: curated ?? mapSectorFromName(name),
+            sector: curated ?? bySymbol ?? mapSectorFromName(name),
           } as UniverseStock;
         })
         .filter((i) => i.symbol && i.key);
