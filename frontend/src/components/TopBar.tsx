@@ -196,20 +196,18 @@ export const TopBar = memo(function TopBar({
         // header is the only thing the user can grab to move the window.
         data-tauri-drag-region
         className={cn(
-          "fixed top-0 left-0 right-0 z-50 flex w-full shrink-0 flex-col justify-end",
-          // Fully opaque, not bg-background/90: the header used to be
-          // translucent over the page, which let the lighter native chrome bleed
-          // through and read as a washed-out band above a near-black app.
-          "bg-background",
-          "backdrop-blur-xl backdrop-saturate-150",
-          "px-4 sm:px-6 py-1.5",
-          TOPBAR_H,
-          "pt-[env(safe-area-inset-top)]",
-          // The shell has no native title bar, so the header owns the whole
-          // window width and sits under our own controls on the right.
-          isTauriRuntime() && "pr-0",
+          "fixed top-0 left-0 right-0 z-50 w-full shrink-0",
+          "bg-background backdrop-blur-xl backdrop-saturate-150",
+          "h-[calc(48px+env(safe-area-inset-top))] pt-[env(safe-area-inset-top)]",
         )}
       >
+        {/* Window controls sit above everything, pinned to the top-right corner,
+            clear of the toolbar row so they never collide with it. */}
+        {isTauriRuntime() && (
+          <div className="absolute top-0 right-2 z-20 flex items-center pt-2">
+            <WindowControls />
+          </div>
+        )}
         <div className="flex flex-col w-full">
           <div className="flex w-full min-w-0 items-center justify-between gap-3 sm:gap-4 whitespace-nowrap">
             <div className="hidden sm:flex min-w-0 flex-1 items-center gap-x-3 pr-2 relative">
@@ -230,7 +228,6 @@ export const TopBar = memo(function TopBar({
         </div>
 
         <div className="flex min-w-0 w-full sm:w-auto sm:max-w-[65vw] shrink items-center sm:justify-end gap-1.5 sm:gap-2 pl-2">
-          <WindowControls />
           <div className="flex shrink-0 items-center gap-1">
             <motion.div whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} transition={SPRING_SNAPPY}>
             <Button

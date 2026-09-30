@@ -1,16 +1,17 @@
 import { useEffect, useState } from "react";
-import { Minus, Square, Copy, X } from "lucide-react";
-import { cn } from "@/lib/format";
 import { isTauriRuntime } from "@/lib/backendOrigin";
+import { cn } from "@/lib/format";
 
 /**
- * Custom window controls.
+ * macOS-style window controls, right-aligned.
  *
- * The shell runs with `decorations: false`, which removes the native title bar
- * entirely - it was rendering as a lighter grey band above a near-black app and
- * could never match. That also removes minimise/maximise/close, so they are
- * provided here instead. Windows control placement themselves; we only invoke
- * the actions.
+ * The shell runs with `decorations: false`, so the OS chrome is gone and these
+ * replace it. Traffic lights on the right rather than the macOS left edge:
+ * right-hand placement is what the surrounding app layout expects, and it keeps
+ * the close button in the corner nearest the pointer.
+ *
+ * Windows draws these itself normally, so every action here needs a matching
+ * permission in src-tauri/capabilities/default.json.
  */
 export function WindowControls() {
   const [maximized, setMaximized] = useState(false);
@@ -18,23 +19,27 @@ export function WindowControls() {
 
   useEffect(() => {
     if (!tauri) return;
-    let cancelled = false;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+
     void (async () => {
       try {
         const { getCurrentWindow } = await import("@tauri-apps/api/window");
         const win = getCurrentWindow();
-        if (cancelled) return;
+        if (disposed) return;
         setMaximized(await win.isMaximized());
-        const un = await win.onResized(() => {
+        unlisten = await win.onResized(() => {
           void win.isMaximized().then(setMaximized).catch(() => {});
         });
-        // Keep the listener alive for the window's lifetime.
-        void un;
       } catch {
-        // Older runtimes: the controls simply do nothing rather than throwing.
+        // Older runtimes: controls render but do nothing, rather than throwing.
       }
     })();
-    return () => { cancelled = true; };
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
   }, [tauri]);
 
   if (!tauri) return null;
@@ -45,29 +50,44 @@ export function WindowControls() {
         const { getCurrentWindow } = await import("@tauri-apps/api/window");
         await fn(getCurrentWindow());
       } catch {
-        // Ignore: the window action is best-effort.
+        // Best-effort window action.
       }
     })();
   };
 
   const base =
-    "inline-flex h-[calc(48px+env(safe-area-inset-top))] w-11 items-center justify-center text-foreground/60 transition-colors hover:bg-white/[0.07] hover:text-foreground";
+    "group inline-flex h-3 w-3 shrink-0 items-center justify-center rounded-full border transition-all duration-150";
 
   return (
-    <div className="flex shrink-0 items-stretch" data-tauri-drag-region={false}>
-      <button type="button" aria-label="Minimise" className={base}
-        onClick={() => run((w) => w.minimize())}>
-        <Minus className="h-3.5 w-3.5" strokeWidth={1.75} />
+    <div className="flex shrink-0 items-center gap-1.5" data-tauri-drag-region={false}>
+      <button
+        type="button"
+        aria-label="Minimise"
+        title="Minimise"
+        className={cn(base, "border-amber-400/70 bg-amber-500/70 hover:bg-amber-400")}
+        onClick={() => run((w) => w.minimize())}
+      >
+        <span className="h-[1.5px] w-[7px] rounded-full bg-black/55 opacity-0 transition-opacity group-hover:opacity-100" />
       </button>
-      <button type="button" aria-label={maximized ? "Restore" : "Maximise"}
-        className={base} onClick={() => run((w) => w.toggleMaximize())}>
-        {maximized ? <Copy className="h-3 w-3" strokeWidth={1.75} />
-          : <Square className="h-3 w-3" strokeWidth={1.75} />}
+      <button
+        type="button"
+        aria-label={maximized ? "Restore" : "Maximise"}
+        title={maximized ? "Restore" : "Maximise"}
+        className={cn(base, "border-emerald-400/70 bg-emerald-500/70 hover:bg-emerald-400")}
+        onClick={() => run((w) => w.toggleMaximize())}
+      >
+        <span className="h-[7px] w-[7px] rounded-[1px] border-[1.5px] border-black/55 opacity-0 transition-opacity group-hover:opacity-100" />
       </button>
-      <button type="button" aria-label="Close"
-        className={cn(base, "hover:bg-red-600 hover:text-white")}
-        onClick={() => run((w) => w.close())}>
-        <X className="h-4 w-4" strokeWidth={1.75} />
+      <button
+        type="button"
+        aria-label="Close"
+        title="Close"
+        className={cn(base, "border-red-400/70 bg-red-500/70 hover:bg-red-500")}
+        onClick={() => run((w) => w.close())}
+      >
+        <svg viewBox="0 0 8 8" className="h-[7px] w-[7px] opacity-0 transition-opacity group-hover:opacity-100">
+          <path d="M1 1 L7 7 M7 1 L1 7" stroke="black" strokeWidth="1.4" strokeLinecap="round" />
+        </svg>
       </button>
     </div>
   );

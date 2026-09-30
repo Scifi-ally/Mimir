@@ -3,7 +3,7 @@ import { api } from "@/lib/api";
 import { Wallet, History, RotateCcw, TrendingUp, TrendingDown, X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { Variants } from "framer-motion";
-import { cn, fmtNum, toFixed, toFixedPct } from "@/lib/format";
+import { cn, fmtInr, fmtNum, toFixed, toFixedPct } from "@/lib/format";
 import { useStore } from "@/store/useStore";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatedNumber } from "@/components/atoms/AnimatedNumber";
@@ -355,41 +355,45 @@ export function PaperTradingPanel({ isOpen, onClose, onSelectSymbol }: { isOpen?
 
             ) : (
 
-            /* Account Metrics — Hero Row */
+            /* Account Metrics — Hero Row
+               4 columns rather than 6: at 6 the tiles were ~150px wide, so
+               "₹10,000.00" was ellipsised to "₹10,000…". Values are abbreviated
+               (fmtInr) and the tiles wrap rather than truncate, so nothing is
+               ever cut off mid-number. */
             <motion.div variants={staggerContainer} initial="hidden" animate="show" className="px-6 sm:px-8 py-5 shrink-0">
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 sm:gap-6">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-6 gap-y-5">
                 {/* Equity — Hero metric */}
-                <motion.div variants={staggerItem} className="flex flex-col gap-1 min-w-0 overflow-hidden" title={`₹${fmtNum(equity, 2)}`}>
-                  <span className="text-[10px] font-normal text-foreground/50 tracking-[0.08em] uppercase truncate">Equity</span>
-                  <span className="text-xl sm:text-2xl font-mono tabular-nums font-normal tracking-tight text-foreground truncate">
-                    ₹{fmtNum(equity, 2)}
+                <motion.div variants={staggerItem} className="flex flex-col gap-1 min-w-0" title={`₹${fmtNum(equity, 2)}`}>
+                  <span className="text-[10px] font-normal text-foreground/50 tracking-[0.08em] uppercase">Equity</span>
+                  <span className="text-2xl sm:text-3xl font-mono tabular-nums font-normal tracking-tight text-foreground leading-none">
+                    {fmtInr(equity)}
                   </span>
                   <span className={cn(
-                    "text-[10px] font-mono tabular-nums font-normal truncate",
+                    "text-[11px] font-mono tabular-nums font-normal",
                     totalReturn > 0 ? "text-bull" : totalReturn < 0 ? "text-bear" : "text-foreground/40"
                   )}>
-                    {totalReturn > 0 ? '+' : ''}{toFixed(totalReturn, 2)}% return
+                    {totalReturn > 0 ? '+' : ''}{toFixed(totalReturn, 2)}%
                   </span>
                 </motion.div>
 
-                {/* Available Margin */}
-                <motion.div variants={staggerItem} className="flex flex-col gap-1 min-w-0 overflow-hidden" title={`₹${fmtNum(available, 2)}`}>
-                  <span className="text-[10px] font-normal text-foreground/50 tracking-[0.08em] uppercase truncate">Available</span>
-                  <span className="text-xl sm:text-2xl font-mono tabular-nums font-normal tracking-tight text-foreground/80 truncate">
-                    ₹{fmtNum(available, 2)}
+                {/* Available */}
+                <motion.div variants={staggerItem} className="flex flex-col gap-1 min-w-0" title={`₹${fmtNum(available, 2)}`}>
+                  <span className="text-[10px] font-normal text-foreground/50 tracking-[0.08em] uppercase">Available</span>
+                  <span className="text-2xl sm:text-3xl font-mono tabular-nums font-normal tracking-tight text-foreground/80 leading-none">
+                    {fmtInr(available)}
                   </span>
                 </motion.div>
 
                 {/* Allocated */}
-                <motion.div variants={staggerItem} className="flex flex-col gap-1 min-w-0 overflow-hidden" title={`₹${fmtNum(allocated, 2)}`}>
-                  <span className="text-[10px] font-normal text-foreground/50 tracking-[0.08em] uppercase flex items-center justify-between gap-1">
-                    <span className="truncate">Deployed</span>
-                    <span className="shrink-0">{balance > 0 ? toFixed((allocated / balance) * 100, 0) : 0}%</span>
+                <motion.div variants={staggerItem} className="flex flex-col gap-1 min-w-0" title={`₹${fmtNum(allocated, 2)}`}>
+                  <span className="text-[10px] font-normal text-foreground/50 tracking-[0.08em] uppercase flex items-center gap-1.5">
+                    <span>Deployed</span>
+                    <span className="shrink-0 text-foreground/40">{balance > 0 ? toFixed((allocated / balance) * 100, 0) : 0}%</span>
                   </span>
-                  <span className="text-xl sm:text-2xl font-mono tabular-nums font-normal tracking-tight text-foreground/40 truncate">
-                    ₹{fmtNum(allocated, 2)}
+                  <span className="text-2xl sm:text-3xl font-mono tabular-nums font-normal tracking-tight text-foreground/40 leading-none">
+                    {fmtInr(allocated)}
                   </span>
-                  <div className="h-1 w-full bg-border/10 rounded-full overflow-hidden mt-1 shrink-0">
+                  <div className="h-1 w-full bg-border/10 rounded-full overflow-hidden mt-1.5 shrink-0">
                     <motion.div 
                       className="h-full bg-accent rounded-full" 
                       initial={{ width: 0 }} 
@@ -400,35 +404,36 @@ export function PaperTradingPanel({ isOpen, onClose, onSelectSymbol }: { isOpen?
                 </motion.div>
 
                 {/* Live PnL */}
-                <motion.div variants={staggerItem} className="flex flex-col gap-1 min-w-0 overflow-hidden" title={`₹${fmtNum(Math.abs(livePnl), 2)}`}>
-                  <span className="text-[10px] font-normal text-foreground/50 tracking-[0.08em] uppercase truncate">Unrealized</span>
-                  <span className={cn("text-xl sm:text-2xl font-mono tabular-nums font-normal tracking-tight flex items-center gap-1.5 truncate", isProfit ? "text-bull" : isLoss ? "text-bear" : "text-foreground/40")}>
-                    {isProfit ? <TrendingUp className="w-4 h-4 shrink-0" /> : isLoss ? <TrendingDown className="w-4 h-4 shrink-0" /> : null}
-                    <span className="truncate">{isProfit ? '+' : isLoss ? '-' : ''}₹{fmtNum(Math.abs(livePnl), 2)}</span>
+                <motion.div variants={staggerItem} className="flex flex-col gap-1 min-w-0" title={`₹${fmtNum(Math.abs(livePnl), 2)}`}>
+                  <span className="text-[10px] font-normal text-foreground/50 tracking-[0.08em] uppercase">Unrealized P&L</span>
+                  <span className={cn("text-2xl sm:text-3xl font-mono tabular-nums font-normal tracking-tight flex items-center gap-1.5 leading-none", isProfit ? "text-bull" : isLoss ? "text-bear" : "text-foreground/40")}>
+                    {isProfit ? <TrendingUp className="w-5 h-5 shrink-0" /> : isLoss ? <TrendingDown className="w-5 h-5 shrink-0" /> : null}
+                    {isProfit ? '+' : isLoss ? '-' : ''}{fmtInr(Math.abs(livePnl))}
                   </span>
                 </motion.div>
 
                 {/* Win Rate */}
-                <motion.div variants={staggerItem} className="flex flex-col gap-1 min-w-0 overflow-hidden">
-                  <span className="text-[10px] font-normal text-foreground/50 tracking-[0.08em] uppercase truncate">Win Rate</span>
-                  <span className={cn("text-xl sm:text-2xl font-mono tabular-nums font-normal tracking-tight truncate", stats.winRate >= 50 ? "text-bull" : stats.winRate > 0 ? "text-bear" : "text-foreground/40")}>
+                <motion.div variants={staggerItem} className="flex flex-col gap-1 min-w-0">
+                  <span className="text-[10px] font-normal text-foreground/50 tracking-[0.08em] uppercase">Win Rate</span>
+                  <span className={cn("text-2xl sm:text-3xl font-mono tabular-nums font-normal tracking-tight leading-none", stats.winRate >= 50 ? "text-bull" : stats.winRate > 0 ? "text-bear" : "text-foreground/40")}>
                     {history.length > 0 ? `${toFixed(stats.winRate, 0)}%` : '—'}
                   </span>
                   {history.length > 0 && (
-                    <span className="text-[10px] font-mono tabular-nums font-normal text-foreground/30 truncate">
+                    <span className="text-[11px] font-mono tabular-nums font-normal text-foreground/30">
                       {stats.wins}W / {stats.losses}L
                     </span>
                   )}
                 </motion.div>
 
-                {/* Total Stocks / Qty Bought */}
-                <motion.div variants={staggerItem} className="flex flex-col gap-1 min-w-0 overflow-hidden">
-                  <span className="text-[10px] font-normal text-foreground/50 tracking-[0.08em] uppercase truncate">Total Qty</span>
-                  <span className="text-xl sm:text-2xl font-mono tabular-nums font-semibold tracking-tight text-slate-200 truncate">
-                    {positions.reduce((acc, p) => acc + Math.abs(p.quantity), 0)} <span className="text-xs font-normal text-foreground/40">shares</span>
+                {/* Total Qty */}
+                <motion.div variants={staggerItem} className="flex flex-col gap-1 min-w-0">
+                  <span className="text-[10px] font-normal text-foreground/50 tracking-[0.08em] uppercase">Open Qty</span>
+                  <span className="text-2xl sm:text-3xl font-mono tabular-nums font-normal tracking-tight text-foreground/80 leading-none">
+                    {positions.reduce((acc, p) => acc + Math.abs(p.quantity), 0)}
+                    <span className="text-sm font-normal text-foreground/40 ml-1">sh</span>
                   </span>
-                  <span className="text-[10px] font-mono tabular-nums text-foreground/30 truncate">
-                    {positions.length} active position{positions.length === 1 ? '' : 's'}
+                  <span className="text-[11px] font-mono tabular-nums text-foreground/30">
+                    {positions.length} open
                   </span>
                 </motion.div>
               </div>

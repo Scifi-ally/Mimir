@@ -14,10 +14,23 @@ export class ScanWorkerPool {
   private readonly pendingPromises = new Map<string, any>();
   // Per-task deadline timers, cleared when a task settles.
   private readonly taskTimers = new Map<string, NodeJS.Timeout>();
-  private readonly taskTimeoutMs = Math.max(
-    5_000,
-    Number(process.env["SCAN_WORKER_TIMEOUT_MS"] ?? "60_000"),
-  );
+  /**
+   * Deadline for a single worker task.
+   *
+   * The default was written as the string "60_000". Underscores are valid in a
+   * TypeScript numeric literal but NOT in a string parsed by Number(), so this
+   * evaluated to NaN, Math.max(5000, NaN) stayed NaN, and setTimeout(fn, NaN)
+   * fires on the next tick - i.e. every task was killed instantly with
+   * "timed out after NaNms" and the scanner could never make progress.
+   *
+   * Parse defensively: a bad or missing value must fall back to the real
+   * default rather than silently disabling the deadline.
+   */
+  private readonly taskTimeoutMs = (() => {
+    const raw = Number(process.env["SCAN_WORKER_TIMEOUT_MS"]);
+    if (!Number.isFinite(raw) || raw <= 0) return 60_000;
+    return Math.max(5_000, raw);
+  })();
   private readonly size = Math.max(2, os.cpus().length - 1);
   private shuttingDown = false;
   // Observable counters, so a wedged-worker timeout is visible in telemetry
