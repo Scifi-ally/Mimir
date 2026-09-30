@@ -189,13 +189,21 @@ def get_status() -> Dict[str, Any]:
         "trained_at": _trained_at,
         "recommended_threshold": _recommended_threshold,
         "metrics": _metrics,
-        "gate_active": _loaded,
+        # A loaded artifact is not an armed gate. It is armed only once it has
+        # actually produced a calibrated probability for at least one candidate;
+        # before that, every candidate bypasses the veto, so reporting
+        # gate_active=True on a freshly loaded model overstated what was
+        # happening.
+        "gate_active": _loaded and predicted > 0,
         "rows_predicted": predicted,
         "width_mismatch_rows": mismatched,
         "without_features_rows": no_features,
         # Fraction of candidate rows that received a real calibrated P(win).
         # Below 1.0 means some candidates bypassed the veto entirely.
         "gate_coverage": round(coverage, 4) if coverage is not None else None,
+        # True until the model has been shown to serve predictions. Distinct
+        # from "cold start": the artifact exists, it just has not been used yet.
+        "gate_never_exercised": _loaded and predicted == 0,
     }
 
 

@@ -27,8 +27,7 @@ interface StockSubscription {
   symbol: string;
   ticks: TickData[];
   lastPrice: number | null;
-  volume: number;
-  bid: number | null;
+  volume: number;  bid: number | null;
   ask: number | null;
   openPrice: number | null;
   highPrice: number | null;
@@ -41,7 +40,75 @@ const MAX_TICKS_PER_STOCK = Math.max(
   Number(process.env["MAX_TICKS_PER_STOCK"] ?? "80"),
 );
 
+/**
+ * Quote pressure in [-1, +1], positive meaning the trade is printing toward
+ * the offer.
+ *
+ * NOTE ON NAMING: this is NOT order-book imbalance in the usual sense. True
+ * imbalance weights the two sides by resting quantity,
+ * (bidQty - askQty) / (bidQty + askQty), and the Upstox feed this project
+ * consumes does not carry bid/ask quantities - only prices. What is available
+ * is where the last trade sits inside the spread, which is a real and
+ * bounded pressure proxy, so it is computed from that rather than left at 0.
+ *
+ * The feature key is kept as `bidAskImbalance` because the 32-key ranker
+ * contract is pinned across the TypeScript source, the training manifest and
+ * ranker_meta.json, and renaming it would invalidate the trained model for no
+ * accuracy gain. The value's definition is what is documented here.
+ *
+ * Returns null when there is no usable two-sided quote, so the caller can
+ * distinguish "balanced" (0) from "unknown" (null). Collapsing those two is
+ * what let a missing quote read as a neutral reading.
+ */
+export function computeQuotePressure(
+  ltp: number,
+  bid: number | null,
+  ask: number | null,
+): number | null {
+  if (!Number.isFinite(ltp) || ltp <= 0) return null;
+  if (bid === null || ask === null) return null;
+  if (!Number.isFinite(bid) || !Number.isFinite(ask)) return null;
+  if (bid <= 0 || ask <= 0) return null;
+
+  const spread = ask - bid;
+  // Crossed or degenerate quote: the LTP is not inside a real spread, so
+  // there is no meaningful position to report.
+  if (spread <= 0) return null;
+
+  const position = (ltp - bid) / spread; // 0 at the bid, 1 at the ask
+  const scaled = 2 * position - 1; // -1 at the bid, +1 at the ask
+  return Math.max(-1, Math.min(1, scaled));
+}
+
 const subscriptions = new Map<string, StockSubscription>();
+
+/**
+ * optionsOiChangeRate has no producer anywhere in this repository: the only
+ * option-chain source is NIFTY-wide and cached, so there is no per-symbol OI
+ * series to differentiate. It is written as an explicit 0 with this note
+ * rather than being quietly omitted, so the field's absence of signal is
+ * visible at the definition site instead of surfacing as a mystery constant
+ * in a feature vector.
+ */
+const OPTIONS_OI_CHANGE_RATE_UNAVAILABLE = 0;
+
+async function publishRealtimeFeatures(
+  symbol: string,
+  ltp: number,
+  bid: number | null,
+  ask: number | null,
+  timestamp: Date | number,
+): Promise<void> {
+  const pressure = computeQuotePressure(ltp, bid, ask);
+  if (pressure === null) return; // No two-sided quote: nothing truthful to store.
+
+  const iso = timestamp instanceof Date ? timestamp.toISOString() : new Date(timestamp).toISOString();
+  await stateStore.saveRealtimeFeatures(symbol, {
+    bidAskImbalance: pressure,
+    optionsOiChangeRate: OPTIONS_OI_CHANGE_RATE_UNAVAILABLE,
+    timestamp: iso,
+  });
+}
 let redisBatchQueue: Record<string, TickData[]> = {};
 let redisBatchTimer: ReturnType<typeof setInterval> | null = null;
 let volumePollerTimer: ReturnType<typeof setInterval> | null = null;
@@ -156,6 +223,21 @@ async function doInitTickFeeder(stocks: Array<{ symbol: string; key: string }>):
       bid,
       ask,
     };
+
+    // Publish realtime features to Redis.
+    //
+    // This is the only writer for `upstox:features:<symbol>`. Nothing else in
+    // the repo wrote it, and stateStore.getRealtimeFeatures() returning null is
+    // what sets `rankerIncomplete = true` in signal_generator.ts - which sent
+    // ranker_features: null for every production candidate, disarming the only
+    // calibrated model in the system along with its confidence blend and its
+    // Kelly position sizing.
+    //
+    // Written fire-and-forget on purpose: this runs on every tick for every
+    // subscribed symbol, and blocking the feed on a Redis round-trip would
+    // couple quote latency to cache latency. A dropped write is self-healing -
+    // it just means the next tick retries, and staleness is caught downstream.
+    void publishRealtimeFeatures(sub.symbol, lastPrice, bid, ask, tickEvent.timestamp);
 
     // Maintain in-memory tick history for getTickData consumers
     sub.ticks.push(tick);

@@ -240,13 +240,46 @@ def _build_health_snapshot() -> Dict[str, Any]:
     if not laya_status.get("healthy"):
         degraded_components.append("laya")
 
-    ai_mode = "AI Mode" if core_ready else "Fallback Mode"
+    # A loaded ranker that has never produced a prediction is not healthy and
+    # not cold-start either: the artifact exists and is meant to be used, so
+    # every candidate is bypassing the only calibrated veto. This is the exact
+    # failure that let the ranker sit disarmed (rankerIncomplete was true for
+    # every production candidate) while /health stayed green.
+    ranker_gate_disarmed = bool(
+        ranker_status.get("loaded") and ranker_status.get("gate_never_exercised")
+    )
+    if ranker_gate_disarmed:
+        degraded_components.append("ranker_gate_disarmed")
+
+    # Truthful verdict. Previously status was healthy on the strength of the
+    # rule engine plus Chronos alone, so an untrained confluence model, an
+    # absent RL policy and a disarmed ranker all sat behind a green light and
+    # an "AI Mode" string that the dashboard renders as a healthy LED.
+    if not core_ready or degraded_components:
+        status = "degraded"
+    else:
+        status = "healthy"
+
+    # What is actually contributing signal to a decision right now. This is
+    # the field to read when asking "is the AI actually deciding anything".
+    contributing_to_decisions = {
+        "technical_rules": bool(technical_engine_status.get("loaded")),
+        "chronos_forecast": bool(chronos_status.get("loaded")),
+        "sentiment": not sentiment_status.get("fallback_active"),
+        "laya_checkpoint": bool(laya_status.get("weights_loaded")),
+        "ranker_calibrated_pwin": bool(ranker_status.get("gate_active")),
+    }
+    trained_model_count = sum(
+        1 for key in ("chronos_forecast", "laya_checkpoint", "ranker_calibrated_pwin")
+        if contributing_to_decisions[key]
+    )
+
+    ai_mode = "AI Mode" if status == "healthy" else "Fallback Mode"
     if degraded_components:
         ai_mode += " (degraded: " + ", ".join(degraded_components) + ")"
     elif cold_start_components:
         ai_mode += " (untrained: " + ", ".join(cold_start_components) + " - using fallbacks)"
     ranking_provider = "AI Ranking" if ranker_status.get("loaded") else "Technical Ranking"
-    status = "healthy" if core_ready else "degraded"
 
     model_load_times = [
         value
@@ -271,6 +304,11 @@ def _build_health_snapshot() -> Dict[str, Any]:
     return {
         "status": status,
         "ai_mode": ai_mode,
+        # Whether any component with real weights is actually contributing.
+        # "AI Mode" used to be printed whenever the rule engine and Chronos
+        # loaded, which is true even when every trained model is absent.
+        "trained_model_count": trained_model_count,
+        "contributing_to_decisions": contributing_to_decisions,
         "degraded_components": degraded_components,
         "cold_start_components": cold_start_components,
         "ranking_provider": ranking_provider,
@@ -569,6 +607,13 @@ LayaResponse = System1Response
 class HealthResponse(BaseModel):
     status: str
     ai_mode: str
+    # How many components with real trained weights are actually contributing to
+    # a decision, and which ones. This exists because `ai_mode` reports "AI
+    # Mode" whenever the rule engine and Chronos load, which is true even when
+    # every trained model is absent - so a green light did not mean the AI was
+    # deciding anything.
+    trained_model_count: int = 0
+    contributing_to_decisions: Dict[str, bool] = {}
     # Distinguishes genuinely faulty components from ones that simply have no
     # trained model yet on a fresh install.
     degraded_components: list[str]
@@ -603,6 +648,8 @@ async def health():
     return HealthResponse(
         status=snapshot["status"],
         ai_mode=snapshot["ai_mode"],
+        trained_model_count=snapshot.get("trained_model_count", 0),
+        contributing_to_decisions=snapshot.get("contributing_to_decisions", {}),
         degraded_components=snapshot["degraded_components"],
         cold_start_components=snapshot["cold_start_components"],
         ranking_provider=snapshot["ranking_provider"],

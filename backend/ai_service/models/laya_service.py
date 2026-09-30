@@ -165,11 +165,19 @@ class LayaService:
                 "model": self._model_id,
                 "subfolder": self._subfolder,
                 "device": self._device,
-                "loaded": True,
-                "healthy": True,
+                # "loaded" must reflect whether a real checkpoint is actually
+                # serving predictions. It used to be a hardcoded True, which is
+                # how the service reported healthy while running the
+                # deterministic surrogate instead of the neural model.
+                "loaded": self._weights_loaded,
+                "healthy": self._weights_loaded and self._enabled,
                 "enabled": self._enabled,
                 "weights_loaded": self._weights_loaded,
                 "mode": mode,
+                # True means decisions are coming from hand-written arithmetic,
+                # not the checkpoint. Surfaced so it cannot be mistaken for a
+                # healthy model.
+                "using_surrogate": not self._weights_loaded,
                 "architecture": "ModernBERT-large-RLCD",
                 "inference_count": self._inference_count,
                 "weights_call_count": self._weights_call_count,

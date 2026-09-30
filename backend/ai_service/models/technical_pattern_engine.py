@@ -69,7 +69,17 @@ def is_loaded() -> bool:
 def get_status() -> Dict[str, Any]:
     return {
         "engine": "Technical Pattern Engine",
+        # This component is a deterministic rule engine, not a trained model:
+        # it has never loaded weights and load_model() just flips two booleans.
+        # "is_model": False stops an operator reading "loaded: true" as
+        # "a model is loaded" - it was the single most misleading field in
+        # /health, because it is the largest term in the composite score.
+        "is_model": False,
+        "kind": "deterministic_rules",
+        "has_weights": False,
         "loaded": _model_loaded,
+        # "healthy" here means "the rule engine is callable", not "a model is
+        # serving predictions". Kept for compatibility with existing consumers.
         "healthy": _healthy,
         "fallback_active": not _model_loaded,
         "error": _load_error,

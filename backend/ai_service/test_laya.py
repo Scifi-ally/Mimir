@@ -28,14 +28,31 @@ def client():
 # 1. Laya Service & Surrogate Unit Tests
 # ---------------------------------------------------------------------------
 
-def test_laya_service_status():
+def test_laya_service_status_reports_real_checkpoint_state():
+    """Status must reflect whether a checkpoint is actually serving decisions.
+
+    This test previously asserted loaded/healthy are True, which the service
+    hardcoded - so it passed while the deterministic surrogate was doing all the
+    work. That is exactly the failure mode worth guarding: an operator reading
+    /health must be able to tell the difference between "a neural checkpoint is
+    answering" and "arithmetic is answering".
+    """
     status = laya_service.get_status()
-    assert "model" in status
     assert status["model"] == "convaiinnovations/laya"
-    assert status["loaded"] is True
-    assert status["healthy"] is True
     assert "mode" in status
     assert status["architecture"] == "ModernBERT-large-RLCD"
+
+    # loaded/healthy must agree with weights_loaded and with each other.
+    assert status["loaded"] == status["weights_loaded"]
+    assert status["using_surrogate"] == (not status["weights_loaded"])
+    if status["weights_loaded"]:
+        assert status["loaded"] is True
+        assert status["healthy"] is True
+        assert status["mode"] in ("laya_package", "onnx")
+    else:
+        # No weights: must not claim to be a healthy loaded model.
+        assert status["loaded"] is False
+        assert status["mode"] == "local_surrogate"
 
 
 def test_laya_local_surrogate_approval():
@@ -387,7 +404,10 @@ def test_system1_router_status_reports_no_cloud_engines():
     status = system1_service.get_status()
     assert "default_engine" in status
     assert "laya" in status
-    assert status["healthy"] is True
+    # Honest, not optimistic: the router must not claim healthy when the
+    # checkpoint it fronts is not loaded and decisions are coming from the
+    # deterministic surrogate instead.
+    assert status["healthy"] == status["laya"]["healthy"]
     # A stale SYSTEM1_ENGINE in a .env should be visible, not silently ignored.
     assert set(status["retired_engines"]) == {"jev", "consensus"}
     assert status["cloud_engines_available"] is False
@@ -413,8 +433,28 @@ def test_api_health_includes_laya_and_system1(client):
     # The cloud engine is gone; its absence from /health is the point.
     assert "jev" not in data["models"]
     assert "lara" not in data["models"]
-    assert data["models"]["laya"]["healthy"] is True
-    assert data["models"]["system1"]["healthy"] is True
+    laya_health = data["models"]["laya"]
+    # Must agree with whether a checkpoint is loaded, not be hardcoded True.
+    assert laya_health["healthy"] == laya_health["weights_loaded"]
+    assert data["models"]["system1"]["healthy"] == laya_health["healthy"]
+
+    # /health must state which components actually contribute to a decision.
+    # "AI Mode" used to be reported whenever the rule engine plus Chronos
+    # loaded, which is true even with every trained model absent.
+    assert "contributing_to_decisions" in data
+    contributing = data["contributing_to_decisions"]
+    assert contributing["laya_checkpoint"] == laya_health["weights_loaded"]
+    assert contributing["ranker_calibrated_pwin"] == data["models"]["ranker"]["gate_active"]
+    assert "trained_model_count" in data
+    assert data["trained_model_count"] == sum(
+        1 for key in ("chronos_forecast", "laya_checkpoint", "ranker_calibrated_pwin")
+        if contributing[key]
+    )
+    # The verdict must follow from the components, not from two of them.
+    if data["degraded_components"]:
+        assert data["status"] == "degraded"
+    else:
+        assert data["status"] in ("healthy", "degraded")
 
 
 def test_api_laya_endpoint(client):
