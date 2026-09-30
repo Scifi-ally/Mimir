@@ -728,6 +728,15 @@ export const STOCK_SECTOR_MAP: Record<string, StockSector> = Object.fromEntries(
   NSE_UNIVERSE.map((s) => [s.symbol, s.sector]),
 );
 
+/**
+ * Curated symbol -> sector, used to preserve hand-assigned sectors when the
+ * dynamic instrument listing is loaded. See the dynamic-universe mapper for
+ * why the name-derived guess must not win over this.
+ */
+const CURATED_SECTOR_BY_SYMBOL: Map<string, StockSector> = new Map(
+  NSE_UNIVERSE.map((s) => [s.symbol, s.sector]),
+);
+
 export interface UniverseStock {
   symbol: string;
   key: string;
@@ -894,11 +903,20 @@ async function loadFullNseUniverse(): Promise<UniverseStock[]> {
           const symbol = i.trading_symbol?.trim() || "";
           const key = i.instrument_key?.trim() || "";
           const name = i.short_name?.trim() || i.name?.trim() || symbol;
+          // Prefer the curated sector from NSE_UNIVERSE. The dynamic universe
+          // is only a symbol/key listing; its `sector` is inferred from the
+          // company name by mapSectorFromName, which maps anything without a
+          // sector keyword to "Other" ("Reliance Industries" -> "Other"). Using
+          // that instead of the curated value silently destroyed the sector map,
+          // which in turn degraded rsVsSector60d - a ranker feature - and every
+          // consumer of STOCK_SECTOR_MAP (risk engine, intraday monitor,
+          // learning engine, orchestrator).
+          const curated = symbol ? CURATED_SECTOR_BY_SYMBOL.get(symbol) : undefined;
           return {
             symbol,
             key,
             name,
-            sector: mapSectorFromName(name),
+            sector: curated ?? mapSectorFromName(name),
           } as UniverseStock;
         })
         .filter((i) => i.symbol && i.key);
