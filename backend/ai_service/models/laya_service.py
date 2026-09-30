@@ -45,6 +45,13 @@ class LayaService:
         self._model_id: str = os.getenv("LAYA_MODEL_ID", "convaiinnovations/laya")
         self._model_path: Optional[str] = os.getenv("LAYA_MODEL_PATH")
         self._onnx_path: Optional[str] = os.getenv("LAYA_ONNX_PATH")
+        # "typed-decisions" is the checkpoint tuned for choice/score/noul
+        # questions, which is what a trading verdict is. The default
+        # (english) checkpoint answers them but is not tuned for them.
+        self._subfolder: str = os.getenv("LAYA_SUBFOLDER", "typed-decisions")
+        # Windows has no Metal, so CPU is the only backend here. Laya-MLX
+        # (Apple Silicon) is a separate, faster runtime for the same weights.
+        self._device: str = os.getenv("LAYA_DEVICE", "cpu")
         self._enabled: bool = os.getenv("LAYA_ENABLED", "true").lower() in ("true", "1", "yes")
         self._inference_count: int = 0
         self._weights_call_count: int = 0
@@ -58,83 +65,106 @@ class LayaService:
         self._init_model()
 
     def _init_model(self) -> None:
-        """Attempt to load official laya package, ONNX session, or PyTorch weights."""
+        """Attempt to load the real Laya checkpoint: ONNX first, then the laya package.
+
+        Preference order is deliberate. ONNXAgent is the faithful path - it keeps
+        Laya's own tokenizer, typed-question encoding and calibration. The
+        generic onnxruntime branch in _evaluate_model_weights is a naive
+        stand-in that feeds raw logits through a softmax with no calibration,
+        so it must never win over a real agent.
+        """
         load_flag = os.getenv("LAYA_LOAD_WEIGHTS", "false").lower() in ("true", "1", "yes")
         path_exists = bool(self._model_path and os.path.exists(self._model_path))
 
-        # 1. Check for official laya package if explicitly requested or custom path exists
-        if load_flag or path_exists:
-            target = self._model_path or self._model_id
-            try:
-                import laya
+        if not (load_flag or path_exists or self._onnx_exists()):
+            self._weights_loaded = False
+            logger.info("Laya initialised with fast calibrated RLCD surrogate (no real weights requested)")
+            return
 
-                self._laya_agent = laya.load(target)
+        # 1. ONNX graph, through Laya's own ONNXAgent so calibration is preserved.
+        if self._onnx_exists():
+            try:
+                from laya.onnx_agent import ONNXAgent
+
+                self._laya_agent = ONNXAgent(
+                    onnx_path=self._onnx_path,
+                    device=self._device,
+                )
                 self._weights_loaded = True
-                logger.info(f"Loaded official Laya agent from {target}")
+                logger.info("Loaded Laya ONNX graph from %s via ONNXAgent", self._onnx_path)
                 return
             except Exception as e:
-                logger.info(f"Official laya.load not active ({e}); checking ONNX and PyTorch options")
-
-        # 2. Check for ONNX model if configured
-        if self._onnx_path and os.path.exists(self._onnx_path):
-            try:
-                import onnxruntime as ort
-
-                self._onnx_session = ort.InferenceSession(self._onnx_path)
-                self._weights_loaded = True
-                logger.info(f"Loaded Laya ONNX model from {self._onnx_path}")
-                tok_path = self._model_path if (self._model_path and os.path.exists(self._model_path)) else None
-                if tok_path:
-                    try:
-                        from transformers import AutoTokenizer
-
-                        self._tokenizer = AutoTokenizer.from_pretrained(tok_path)
-                    except Exception:
-                        pass
-                return
-            except Exception as e:
-                logger.warning(f"Failed to load Laya ONNX model: {e}")
+                logger.warning("ONNXAgent load failed (%s); falling back to the laya package", e)
                 self._last_error = str(e)
 
-        # 3. Check for local PyTorch / Transformers model if explicitly requested
+        # 2. The official laya package (PyTorch on CPU, or Metal on Apple Silicon).
+        target = self._model_path or self._model_id
+        try:
+            import laya
+
+            kwargs: Dict[str, Any] = {"device": self._device}
+            # "typed-decisions" is the checkpoint tuned for choice/score/noul
+            # questions, which is exactly what a trading verdict is.
+            if self._model_path is None and self._subfolder:
+                kwargs["subfolder"] = self._subfolder
+            self._laya_agent = laya.load(target, **kwargs)
+            self._weights_loaded = True
+            logger.info(
+                "Loaded official Laya agent from %s (subfolder=%s, device=%s)",
+                target, kwargs.get("subfolder"), self._device,
+            )
+            return
+        except Exception as e:
+            logger.info("Official laya.load not active (%s); checking PyTorch weights path", e)
+            self._last_error = str(e)
+
+        # 3. Local PyTorch / Transformers fallback.
         target_path = self._model_path or self._model_id
-        should_load = path_exists or load_flag
+        try:
+            from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
-        if should_load:
-            try:
-                from transformers import AutoModelForSequenceClassification, AutoTokenizer
+            self._tokenizer = AutoTokenizer.from_pretrained(target_path)
+            self._model = AutoModelForSequenceClassification.from_pretrained(target_path)
+            self._model.eval()
+            self._weights_loaded = True
+            logger.info("Loaded Laya PyTorch weights from %s", target_path)
+            return
+        except Exception as e:
+            logger.warning("Failed to load Laya PyTorch weights from %s: %s", target_path, e)
+            self._last_error = str(e)
 
-                self._tokenizer = AutoTokenizer.from_pretrained(target_path)
-                self._model = AutoModelForSequenceClassification.from_pretrained(target_path)
-                self._model.eval()
-                self._weights_loaded = True
-                logger.info(f"Loaded Laya PyTorch weights from {target_path}")
-                return
-            except Exception as e:
-                logger.warning(f"Failed to load Laya weights from {target_path}: {e}")
-                self._last_error = str(e)
-
-        # Lightweight default: deterministic RLCD-calibrated surrogate engine
+        # 4. Surrogate. Only reached when a real checkpoint was asked for and
+        # could not be loaded - logged loudly, because it silently changes how
+        # every decision is made.
         self._weights_loaded = False
-        logger.info("Laya initialized with fast calibrated RLCD surrogate (zero disk/GPU overhead)")
+        logger.error(
+            "Laya real weights were requested but could not be loaded; falling back to the "
+            "RLCD surrogate. Decisions will NOT come from the neural checkpoint."
+        )
+
+    def _onnx_exists(self) -> bool:
+        return bool(self._onnx_path and os.path.exists(self._onnx_path))
 
     def reload_config(self) -> None:
         with self._lock:
             self._model_id = os.getenv("LAYA_MODEL_ID", "convaiinnovations/laya")
             self._model_path = os.getenv("LAYA_MODEL_PATH")
             self._onnx_path = os.getenv("LAYA_ONNX_PATH")
+            self._subfolder = os.getenv("LAYA_SUBFOLDER", "typed-decisions")
+            self._device = os.getenv("LAYA_DEVICE", "cpu")
             self._enabled = os.getenv("LAYA_ENABLED", "true").lower() in ("true", "1", "yes")
             self._init_model()
 
     def get_status(self) -> Dict[str, Any]:
         with self._lock:
-            mode = "weights" if self._weights_loaded else "local_surrogate"
-            if self._onnx_session is not None:
-                mode = "onnx"
-            elif self._laya_agent is not None:
-                mode = "laya_package"
+            if self._weights_loaded:
+                mode = "onnx" if self._onnx_exists() and self._laya_agent is not None else "laya_package"
+            else:
+                mode = "local_surrogate"
             return {
-                "model": "convaiinnovations/laya",
+                "model": self._model_id,
+                "subfolder": self._subfolder,
+                "device": self._device,
                 "loaded": True,
                 "healthy": True,
                 "enabled": self._enabled,
@@ -149,7 +179,10 @@ class LayaService:
 
     def _check_hard_risk_gates(self, state: Dict[str, Any]) -> Optional[LayaDecision]:
         """Sub-millisecond quantitative hard circuit breakers before neural forward pass."""
-        return check_hard_risk_gates(state, provider="laya", model_id=self._model_id, source="local_surrogate")
+        # Labelled risk_gate, not local_surrogate: these fire *instead of* the
+        # checkpoint, so calling them the surrogate would misreport which
+        # component actually produced the decision.
+        return check_hard_risk_gates(state, provider="laya", model_id=self._model_id, source="risk_gate")
 
     def _evaluate_local_surrogate(self, state: Dict[str, Any], check_gates: bool = True) -> LayaDecision:
         """Deterministic RLCD-calibrated System-1 decision function."""

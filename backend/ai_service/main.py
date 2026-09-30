@@ -33,7 +33,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pydantic import BaseModel, Field, field_validator
 
 # Load .env / .env.local BEFORE importing any service module. Every service
-# singleton reads its configuration in __init__ (JEV keys and timeouts, Laya
+# singleton reads its configuration in __init__ (Laya
 # weights, ranker artifact paths), so this must run first or those values are
 # frozen to hardcoded defaults.
 from env_loader import load_env_files, resolve_env_paths
@@ -45,7 +45,6 @@ from models import ranker_service
 from models.numeric_utils import finite_clamp, safe_div, sanitize_float
 from models.system1_base import resolve_risk_reward
 from models.confluence_service import confluence_service
-from models.jev_service import jev_service, JevDecision
 from models.laya_service import laya_service, LayaDecision
 from models.system1_service import system1_service, System1Decision
 from models.rl_agent import rl_agent_service
@@ -200,7 +199,6 @@ def _build_health_snapshot() -> Dict[str, Any]:
     confluence_status = confluence_service.get_status()
     rl_status = rl_lifecycle_manager.get_status()
     rl_inference_status = rl_agent_service.get_status()
-    jev_status = jev_service.get_status()
     laya_status = laya_service.get_status()
     system1_status = system1_service.get_status()
     runtime = RuntimeDiagnostics.collect()
@@ -239,8 +237,6 @@ def _build_health_snapshot() -> Dict[str, Any]:
             cold_start_components.append("rl")
         else:
             degraded_components.append("rl")
-    if not jev_status.get("healthy"):
-        degraded_components.append("jev")
     if not laya_status.get("healthy"):
         degraded_components.append("laya")
 
@@ -292,8 +288,7 @@ def _build_health_snapshot() -> Dict[str, Any]:
             "rl_inference": rl_inference_status,
             "rl_inference_loaded": rl_agent_service.is_loaded,
             "sentiment": sentiment_status,
-            "jev": jev_status,
-            "laya": laya_status,
+                    "laya": laya_status,
             "system1": system1_status,
         },
         "hardware": runtime,
@@ -372,11 +367,6 @@ async def lifespan(app: FastAPI):
             ranker_service.load_model()
         except Exception:
             logger.exception("Failed to load learned ranker")
-
-        try:
-            jev_service.reload_config()
-        except Exception:
-            logger.exception("Failed to load JEV service config")
 
         try:
             laya_service.reload_config()
@@ -503,7 +493,7 @@ class CandidateScore(BaseModel):
     )
     jev_decision: Optional[Dict[str, Any]] = Field(
         default=None,
-        description="TypeSafe Jev System-1 decision (verdict, action, confidence, gate_reasons).",
+        description="Retired: the TypeSafe Jev cloud engine no longer exists. Always null.",
     )
     laya_decision: Optional[Dict[str, Any]] = Field(
         default=None,
@@ -527,7 +517,7 @@ class BatchResponse(BaseModel):
         description="Recommended P(win) threshold for greenlighting a trade; null when the ranker is unavailable.",
     )
     ranker_loaded: bool = Field(default=False, description="Whether the learned ranker served these scores.")
-    jev_enabled: bool = Field(default=True, description="Whether Jev System-1 triage is active.")
+    jev_enabled: bool = Field(default=False, description="Retired: there is no cloud engine to enable.")
     laya_enabled: bool = Field(default=True, description="Whether Laya System-1 triage is active.")
     system1_enabled: bool = Field(default=True, description="Whether unified System-1 triage is active.")
 
@@ -553,7 +543,6 @@ class System1Request(BaseModel):
 
 
 LayaRequest = System1Request
-JevRequest = System1Request
 
 
 class System1Response(BaseModel):
@@ -575,7 +564,6 @@ class System1Response(BaseModel):
 
 
 LayaResponse = System1Response
-JevResponse = System1Response
 
 
 class HealthResponse(BaseModel):
@@ -667,20 +655,6 @@ async def infer_chronos(req: ChronosRequest):
         raise HTTPException(status_code=500, detail=f"Inference failed: {exc}")
 
 
-@app.post("/inference/jev", response_model=JevResponse, tags=["Inference"])
-async def infer_jev(req: JevRequest):
-    """Evaluate candidate state using TypeSafe AI Jev System-1 Decision Engine."""
-    t0 = time.time()
-    try:
-        state = req.model_dump()
-        result = await asyncio.to_thread(jev_service.evaluate_decision, state)
-        InferenceStats.record((time.time() - t0) * 1000)
-        return JevResponse(**result.to_dict())
-    except Exception as exc:
-        logger.exception("Jev inference error")
-        raise HTTPException(status_code=500, detail=f"Jev decision evaluation failed: {exc}")
-
-
 @app.post("/inference/laya", response_model=LayaResponse, tags=["Inference"])
 async def infer_laya(req: LayaRequest):
     """Evaluate candidate state using Convai Innovations Laya System-1 Decision Engine."""
@@ -697,7 +671,7 @@ async def infer_laya(req: LayaRequest):
 
 @app.post("/inference/system1", response_model=System1Response, tags=["Inference"])
 async def infer_system1(req: System1Request):
-    """Evaluate candidate state using Unified System-1 Router (Laya / Jev)."""
+    """Evaluate candidate state using the local Laya System-1 checkpoint."""
     t0 = time.time()
     try:
         state = req.model_dump()
@@ -939,40 +913,16 @@ async def infer_batch(req: BatchRequest):
         *(_phase1(i, cand) for i, cand in enumerate(req.candidates))
     )
 
-    # ---- Phase 2: batched System-1 triage (JEV & LAYA) --------------------
-    # Candidates are grouped by the engine they require so each engine performs a
-    # SINGLE true-batch inference: Laya issues one ModernBERT forward pass over
-    # every prompt, and Jev fans each cache miss out concurrently over its pooled
-    # keep-alive connections. Issuing one call per candidate was the dominant
-    # cost of this endpoint.
-    default_engine = os.getenv("SYSTEM1_ENGINE", "laya").lower()
-    if default_engine not in ("laya", "jev", "consensus"):
-        default_engine = "laya"
-    evaluate_all = os.getenv("SYSTEM1_EVALUATE_ALL", "false").lower() in ("true", "1", "yes")
-
-    engine_for: List[str] = []
-    for cand, prep in zip(req.candidates, prepared):
-        if prep is None:
-            engine_for.append(default_engine)
-            continue
-        eng = str((cand.features or {}).get("preferred_engine") or default_engine).lower()
-        if eng not in ("laya", "jev", "consensus"):
-            eng = default_engine
-        if evaluate_all and eng != "consensus":
-            eng = "consensus"
-        engine_for.append(eng)
-
-    laya_idx = [
-        i for i, e in enumerate(engine_for)
-        if prepared[i] is not None and e in ("laya", "consensus")
-    ]
-    jev_idx = [
-        i for i, e in enumerate(engine_for)
-        if prepared[i] is not None and e in ("jev", "consensus")
-    ]
+    # ---- Phase 2: batched System-1 triage (local Laya) -------------------
+    # All candidates go through ONE true-batch inference: Laya issues a single
+    # ModernBERT forward pass over every prompt. Issuing one call per candidate
+    # was the dominant cost of this endpoint.
+    # There is exactly one engine now. Preferred-engine values on individual
+    # candidates are retained in the response for provenance, but they no
+    # longer select anything: "jev"/"consensus" used to require a cloud API.
+    laya_idx = [i for i, prep in enumerate(prepared) if prep is not None]
 
     laya_by_idx: Dict[int, Any] = {}
-    jev_by_idx: Dict[int, Any] = {}
 
     async def _laya_pass(idxs: List[int]) -> None:
         if not idxs:
@@ -995,25 +945,7 @@ async def infer_batch(req: BatchRequest):
                 continue
             laya_by_idx[i] = res
 
-    async def _jev_pass(idxs: List[int]) -> None:
-        if not idxs:
-            return
-        states = [prepared[i]["state"] for i in idxs]
-        try:
-            results = await asyncio.to_thread(jev_service.evaluate_batch, states)
-        except Exception as exc:
-            logger.error("Jev batch triage failed (%s); retrying per candidate", exc)
-            results = await asyncio.gather(
-                *(asyncio.to_thread(jev_service.evaluate_decision, s) for s in states),
-                return_exceptions=True,
-            )
-        for i, res in zip(idxs, results):
-            if isinstance(res, BaseException):
-                logger.error("Jev per-candidate retry failed for index %s: %s", i, res)
-                continue
-            jev_by_idx[i] = res
-
-    await asyncio.gather(_laya_pass(laya_idx), _jev_pass(jev_idx), return_exceptions=True)
+    await _laya_pass(laya_idx)
 
     # ---- Phase 3: resolve + assemble responses ---------------------------
     def _assemble(idx: int) -> CandidateScore:
@@ -1026,20 +958,12 @@ async def infer_batch(req: BatchRequest):
         cr = prep["cr"]
         sentiment_dict = prep["sentiment"]
 
-        eng = engine_for[idx]
         laya_dec = laya_by_idx.get(idx)
-        jev_dec = jev_by_idx.get(idx)
-
-        if eng == "consensus" and laya_dec is not None and jev_dec is not None:
-            sys1_dec = system1_service.resolve_decision(laya_dec, jev_dec)
-        else:
-            sys1_dec = laya_dec or jev_dec
-
-        # Surface only the per-engine decisions the router actually consumed, so
-        # a Jev-only or Laya-only run reports zero cost for the unused engine.
-        if eng != "consensus":
-            laya_dec = laya_dec if eng == "laya" else None
-            jev_dec = jev_dec if eng == "jev" else None
+        # Single engine: the System-1 decision *is* the Laya decision.
+        sys1_dec = laya_dec
+        # Kept as a field for response-shape compatibility; always None now
+        # that the cloud engine is gone.
+        jev_dec = None
 
         return CandidateScore(
             symbol=cand.symbol,
@@ -1070,15 +994,11 @@ async def infer_batch(req: BatchRequest):
 
     elapsed_ms = (time.time() - t0) * 1000
     InferenceStats.record(elapsed_ms)
-    consensus_count = sum(1 for e in engine_for if e == "consensus")
     logger.info(
-        "Batch inference: %d candidates in %.1f ms "
-        "(laya_batched=%d, jev_batched=%d, consensus=%d)",
+        "Batch inference: %d candidates in %.1f ms (laya_batched=%d)",
         len(results),
         elapsed_ms,
         len(laya_idx),
-        len(jev_idx),
-        consensus_count,
     )
 
     return BatchResponse(
@@ -1086,7 +1006,7 @@ async def infer_batch(req: BatchRequest):
         processing_time_ms=round(elapsed_ms, 2),
         ranker_loaded=ranker_service.is_loaded(),
         ranker_threshold=ranker_service.recommended_threshold(),
-        jev_enabled=jev_service.get_status().get("enabled", True),
+        jev_enabled=False,
         laya_enabled=laya_service.get_status().get("enabled", True),
         system1_enabled=system1_service.get_status().get("enabled", True),
     )

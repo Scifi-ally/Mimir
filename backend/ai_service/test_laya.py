@@ -346,32 +346,16 @@ def test_jev_local_surrogate():
 
 
 # ---------------------------------------------------------------------------
-# 3. Unified System-1 Router & Consensus Tests
+# 3. Unified System-1 Router Tests
+#
+# "jev" was TypeSafe AI's managed cloud API and "consensus" merged the two.
+# Both are retired: this platform must decide fully on its own, offline, with
+# no third-party inference service in the loop. The tests below pin that every
+# legacy engine value still lands on the local checkpoint instead of silently
+# reaching a cloud.
 # ---------------------------------------------------------------------------
 
-def test_system1_resolve_decision():
-    state = {"symbol": "TEST", "direction": "BUY", "risk_reward_ratio": 2.0}
-    laya_dec = laya_service.evaluate_decision(state)
-    jev_dec = jev_service.evaluate_decision(state)
-
-    # Route to laya
-    sys_laya = system1_service.resolve_decision(laya_dec, jev_dec, preferred_engine="laya")
-    assert sys_laya.provider == "laya"
-    assert sys_laya.verdict == laya_dec.verdict
-
-    # Route to jev
-    sys_jev = system1_service.resolve_decision(laya_dec, jev_dec, preferred_engine="jev")
-    assert sys_jev.provider == "jev"
-    assert sys_jev.verdict == jev_dec.verdict
-
-
-def test_system1_router_routing():
-    status = system1_service.get_status()
-    assert "default_engine" in status
-    assert "laya" in status
-    assert "jev" in status
-    assert status["healthy"] is True
-
+def test_retired_engines_still_route_to_local_laya():
     state = {
         "symbol": "TATASTEEL",
         "direction": "BUY",
@@ -380,15 +364,40 @@ def test_system1_router_routing():
         "india_vix": 14.0,
     }
 
-    # Test route to Laya
-    dec_laya = system1_service.evaluate_decision(state, engine="laya")
-    assert dec_laya.provider == "laya"
-    assert dec_laya.verdict in ("APPROVE", "CAUTION")
+    baseline = system1_service.evaluate_decision(state, engine="laya")
+    for retired in ("jev", "consensus"):
+        dec = system1_service.evaluate_decision(state, engine=retired)
+        assert dec.provider == "laya", f"{retired} must not select another provider"
+        assert dec.verdict == baseline.verdict
+        assert dec.source == baseline.source
 
-    # Test route to Jev
-    dec_jev = system1_service.evaluate_decision(state, engine="jev")
-    assert dec_jev.provider == "jev"
-    assert dec_jev.verdict in ("APPROVE", "CAUTION")
+
+def test_preferred_engine_in_state_cannot_select_a_cloud_model():
+    state = {
+        "symbol": "TATASTEEL",
+        "direction": "BUY",
+        "risk_reward_ratio": 2.0,
+        "preferred_engine": "jev",
+    }
+    dec = system1_service.evaluate_decision(state)
+    assert dec.provider == "laya"
+
+
+def test_system1_router_status_reports_no_cloud_engines():
+    status = system1_service.get_status()
+    assert "default_engine" in status
+    assert "laya" in status
+    assert status["healthy"] is True
+    # A stale SYSTEM1_ENGINE in a .env should be visible, not silently ignored.
+    assert set(status["retired_engines"]) == {"jev", "consensus"}
+    assert status["cloud_engines_available"] is False
+    assert "jev" not in status
+
+
+def test_system1_service_exposes_no_dual_engine_resolver():
+    # resolve_decision merged a Laya and a Jev decision; with one engine there
+    # is nothing to merge, so the API is gone rather than left as dead code.
+    assert not hasattr(system1_service, "resolve_decision")
 
 
 # ---------------------------------------------------------------------------
@@ -401,7 +410,8 @@ def test_api_health_includes_laya_and_system1(client):
     data = response.json()
     assert "laya" in data["models"]
     assert "system1" in data["models"]
-    assert "jev" in data["models"]
+    # The cloud engine is gone; its absence from /health is the point.
+    assert "jev" not in data["models"]
     assert "lara" not in data["models"]
     assert data["models"]["laya"]["healthy"] is True
     assert data["models"]["system1"]["healthy"] is True
@@ -431,21 +441,16 @@ def test_api_laya_endpoint(client):
     assert data["provider"] == "laya"
 
 
-def test_api_jev_endpoint(client):
-    req_body = {
-        "symbol": "WIPRO",
-        "direction": "BUY",
-        "setup_type": "PULLBACK",
-        "risk_reward_ratio": 2.1,
-        "technical_score": 78.0,
-        "india_vix": 14.0,
-    }
-    response = client.post("/inference/jev", json=req_body)
-    assert response.status_code == 200
-    data = response.json()
-    assert data["verdict"] in ("APPROVE", "CAUTION", "REJECT")
-    assert data["provider"] == "jev"
-    assert "position_size_multiplier" in data
+def test_api_jev_endpoint_is_gone(client):
+    """The cloud endpoint must be absent, not merely disabled.
+
+    Jev was TypeSafe AI's managed inference API. This platform is required to
+    decide fully offline with no third-party model in the loop, so the route
+    itself is removed - a 404 is the guarantee, since a route that still exists
+    and returns an error is one refactor away from being wired up again.
+    """
+    response = client.post("/inference/jev", json={"symbol": "WIPRO", "direction": "BUY"})
+    assert response.status_code == 404
 
 
 def test_api_system1_endpoint(client):
@@ -741,19 +746,19 @@ def test_system1_symmetrical_sell_ofi():
     assert "POSITIVE_ORDER_FLOW_CONFLUENCE" in dec_pos.gate_reasons
 
 
-def test_batch_inference_zero_overhead_default_engine(client, monkeypatch):
-    """Verify that default engine (laya) avoids unnecessary calls to jev_service."""
+def test_batch_inference_never_contacts_a_cloud_engine(client, monkeypatch):
+    """A batch must not reach any cloud inference service.
+
+    The old version instrumented jev_service and asserted it was never called.
+    That is now unfalsifiable in a useful way: the service is no longer imported
+    into the app at all, so this asserts the stronger property directly.
+    """
     import main
 
-    jev_called = False
-    original_jev_eval = main.jev_service.evaluate_decision
-
-    def instrumented_jev(state):
-        nonlocal jev_called
-        jev_called = True
-        return original_jev_eval(state)
-
-    monkeypatch.setattr(main.jev_service, "evaluate_decision", instrumented_jev)
+    assert not hasattr(main, "jev_service"), (
+        "the cloud engine must not be imported into the application; a module-level "
+        "handle is one refactor away from being called again"
+    )
 
     async def mock_sentiment(symbol):
         return {"symbol_specific_score": 0.5, "market_wide_score": 0.0, "world_score": 0.0, "composite": 0.5}
@@ -784,22 +789,51 @@ def test_batch_inference_zero_overhead_default_engine(client, monkeypatch):
     assert cand_res["laya_decision"] is not None
     assert cand_res["system1_decision"] is not None
     assert cand_res["jev_decision"] is None
-    assert jev_called is False  # Zero overhead: JEV was not invoked
+    assert data["jev_enabled"] is False
 
 
 def test_laya_batch_tracks_latency_and_counts():
-    """Verify that evaluate_batch records call counts and per-item latency."""
-    prev_inf = laya_service.get_status()["inference_count"]
+    """A batch must report latency per item and count only real neural calls.
+
+    inference_count counts forward passes, not candidates: a candidate stopped
+    by a hard risk gate never reaches the checkpoint, so counting it as an
+    inference would overstate how much work the model actually did.
+    """
+    # Both setups clear the hard gates, so both must reach the checkpoint.
+    good = {"direction": "BUY", "risk_reward_ratio": 2.0, "india_vix": 14.0,
+            "technical_score": 70.0, "market_regime": "BULL_TRENDING"}
     states = [
-        {"symbol": "BATCH1", "direction": "BUY", "risk_reward_ratio": 2.0, "india_vix": 14.0},
-        {"symbol": "BATCH2", "direction": "BUY", "risk_reward_ratio": 0.8, "india_vix": 14.0},
+        {"symbol": "BATCH1", **good},
+        {"symbol": "BATCH2", **good},
     ]
+
+    prev_inf = laya_service.get_status()["inference_count"]
     decisions = laya_service.evaluate_batch(states)
     assert len(decisions) == 2
     for d in decisions:
         assert d.latency_ms >= 0.0
     new_inf = laya_service.get_status()["inference_count"]
     assert new_inf >= prev_inf + 2
+
+
+def test_laya_batch_hard_gate_skips_the_neural_call():
+    """A candidate stopped by a hard gate must not be counted as an inference."""
+    good = {"direction": "BUY", "risk_reward_ratio": 2.0, "india_vix": 14.0,
+            "technical_score": 70.0, "market_regime": "BULL_TRENDING"}
+    # Poor risk/reward: the deterministic gate should reject this outright.
+    gated = {"symbol": "GATED", "direction": "BUY", "risk_reward_ratio": 0.4,
+             "india_vix": 14.0, "technical_score": 70.0}
+
+    prev_inf = laya_service.get_status()["inference_count"]
+    decisions = laya_service.evaluate_batch([{**good, "symbol": "OK"}, gated])
+
+    assert len(decisions) == 2
+    # It still returns a decision - the gate is a fast path, not a rejection of
+    # the request - but the provenance says which component decided.
+    assert decisions[1].verdict == "REJECT"
+    assert decisions[1].source == "risk_gate"
+    new_inf = laya_service.get_status()["inference_count"]
+    assert new_inf >= prev_inf + 1
 
 
 # ---------------------------------------------------------------------------
@@ -1150,102 +1184,66 @@ def _batch_payload(symbols, features=None):
     }
 
 
-def _instrument_both_engines(monkeypatch):
-    """Count batch vs per-candidate calls into Laya and Jev."""
+def _instrument_laya(monkeypatch):
+    """Count batch vs per-candidate calls into the local checkpoint.
+
+    Single-engine now: the cloud engine is gone, so there is no second pass to
+    observe. What still matters is that every candidate is covered by ONE batch
+    call rather than one call each - Laya on CPU costs about a second per
+    candidate, so per-candidate calls are the difference between a scan
+    finishing in seconds and finishing in minutes.
+    """
     import main
 
-    counts = {"laya_batch": 0, "jev_batch": 0, "laya_single": 0, "jev_single": 0}
-    sizes = {"laya": 0, "jev": 0}
+    counts = {"laya_batch": 0, "laya_single": 0}
+    sizes = {"laya": 0}
 
-    real = {
-        "laya_batch": main.laya_service.evaluate_batch,
-        "jev_batch": main.jev_service.evaluate_batch,
-        "laya_single": main.laya_service.evaluate_decision,
-        "jev_single": main.jev_service.evaluate_decision,
-    }
+    real_batch = main.laya_service.evaluate_batch
+    real_single = main.laya_service.evaluate_decision
 
     def laya_batch(states):
         counts["laya_batch"] += 1
         sizes["laya"] = len(states)
-        return real["laya_batch"](states)
-
-    def jev_batch(states):
-        counts["jev_batch"] += 1
-        sizes["jev"] = len(states)
-        return real["jev_batch"](states)
+        return real_batch(states)
 
     def laya_single(state):
         counts["laya_single"] += 1
-        return real["laya_single"](state)
-
-    def jev_single(state):
-        counts["jev_single"] += 1
-        return real["jev_single"](state)
+        return real_single(state)
 
     monkeypatch.setattr(main.laya_service, "evaluate_batch", laya_batch)
-    monkeypatch.setattr(main.jev_service, "evaluate_batch", jev_batch)
     monkeypatch.setattr(main.laya_service, "evaluate_decision", laya_single)
-    monkeypatch.setattr(main.jev_service, "evaluate_decision", jev_single)
-
-    async def mock_sentiment(symbol):
-        return {"symbol_specific_score": 0.5, "market_wide_score": 0.0, "world_score": 0.0, "composite": 0.5}
-
-    monkeypatch.setattr(main, "analyze_sentiment", mock_sentiment)
     return counts, sizes
 
 
-def test_batch_endpoint_batches_jev_in_one_call(client, monkeypatch):
-    """SYSTEM1_ENGINE=jev must issue exactly ONE batched call for N candidates."""
-    import main
+def test_batch_endpoint_uses_one_laya_pass_for_every_candidate(client, monkeypatch):
+    """All candidates must be covered by a single true-batch Laya pass."""
+    counts, sizes = _instrument_laya(monkeypatch)
 
-    monkeypatch.setenv("SYSTEM1_ENGINE", "jev")
-    counts, sizes = _instrument_both_engines(monkeypatch)
-
-    symbols = ["BATCH_A", "BATCH_B", "BATCH_C", "BATCH_D"]
-    response = client.post("/inference/batch", json=_batch_payload(symbols))
-    assert response.status_code == 200
-
-    data = response.json()
-    assert len(data["results"]) == 4
-    for res in data["results"]:
-        assert res["system1_decision"] is not None
-        assert res["jev_decision"] is not None
-        assert res["laya_decision"] is None  # zero overhead for the unused engine
-
-    assert counts["jev_batch"] == 1, "Jev was not batched"
-    assert sizes["jev"] == 4
-    assert counts["jev_single"] == 0, "per-candidate Jev calls must not happen"
-    assert counts["laya_batch"] == 0 and counts["laya_single"] == 0
-    del main
-
-
-def test_batch_endpoint_batches_both_engines_for_consensus(client, monkeypatch):
-    """Consensus must run one Laya pass and one Jev pass, then resolve."""
-    monkeypatch.setenv("SYSTEM1_ENGINE", "consensus")
-    counts, sizes = _instrument_both_engines(monkeypatch)
-
-    symbols = ["CONS_A", "CONS_B", "CONS_C"]
+    symbols = ["B_A", "B_B", "B_C", "B_D"]
     response = client.post("/inference/batch", json=_batch_payload(symbols))
     assert response.status_code == 200
 
     data = response.json()
     for res in data["results"]:
         assert res["laya_decision"] is not None
-        assert res["jev_decision"] is not None
+        # Retired field kept for response-shape compatibility.
+        assert res["jev_decision"] is None
         assert res["system1_decision"] is not None
         assert res["system1_decision"]["verdict"] in ("APPROVE", "REJECT", "CAUTION")
 
-    assert counts["laya_batch"] == 1 and sizes["laya"] == 3
-    assert counts["jev_batch"] == 1 and sizes["jev"] == 3
-    assert counts["laya_single"] == 0 and counts["jev_single"] == 0
+    assert counts["laya_batch"] == 1
+    assert sizes["laya"] == len(symbols)
+    assert counts["laya_single"] == 0
+    # No cloud engine was contacted.
+    assert data["jev_enabled"] is False
 
 
-def test_batch_endpoint_routes_per_candidate_preferred_engine(client, monkeypatch):
-    """A mixed-engine batch must still give each candidate the engine it asked for."""
+def test_batch_endpoint_ignores_per_candidate_preferred_engine(client, monkeypatch):
+    """A candidate asking for a retired engine still gets the local checkpoint."""
     import main
 
-    monkeypatch.setenv("SYSTEM1_ENGINE", "laya")
-    counts, _ = _instrument_both_engines(monkeypatch)
+    counts, _ = _instrument_laya(monkeypatch)
+    assert not hasattr(main, "jev_service"), "the cloud service must not be importable from the app"
 
     candles = [
         [100.0 + i, 102.0 + i, 99.0 + i, 101.5 + i, 5000.0 + i * 100]
@@ -1263,19 +1261,13 @@ def test_batch_endpoint_routes_per_candidate_preferred_engine(client, monkeypatc
     assert response.status_code == 200
     results = {r["symbol"]: r for r in response.json()["results"]}
 
-    assert results["MIX_LAYA"]["laya_decision"] is not None
-    assert results["MIX_LAYA"]["jev_decision"] is None
+    for symbol in ("MIX_LAYA", "MIX_JEV", "MIX_CONS"):
+        assert results[symbol]["laya_decision"] is not None
+        assert results[symbol]["jev_decision"] is None
+        assert results[symbol]["system1_decision"]["provider"] == "laya"
 
-    assert results["MIX_JEV"]["jev_decision"] is not None
-    assert results["MIX_JEV"]["laya_decision"] is None
-
-    assert results["MIX_CONS"]["laya_decision"] is not None
-    assert results["MIX_CONS"]["jev_decision"] is not None
-
-    # 2 laya-routed + 1 consensus, and 1 jev-routed + 1 consensus.
-    assert counts["laya_batch"] == 1 and counts["jev_batch"] == 1
-    assert counts["laya_single"] == 0 and counts["jev_single"] == 0
-    del main
+    assert counts["laya_batch"] == 1
+    assert counts["laya_single"] == 0
 
 
 def test_batch_endpoint_survives_one_candidate_failure(client, monkeypatch):
@@ -1283,7 +1275,7 @@ def test_batch_endpoint_survives_one_candidate_failure(client, monkeypatch):
     import main
 
     monkeypatch.setenv("SYSTEM1_ENGINE", "laya")
-    _instrument_both_engines(monkeypatch)
+    _instrument_laya(monkeypatch)
 
     real_infer = main.technical_pattern_engine.infer
 

@@ -199,60 +199,43 @@ def test_confluence_load_models_swap_is_atomic():
 
 
 # ---------------------------------------------------------------------------
-# Consensus: risk must not be overruled by an optimistic engine
+# Sizing: the single engine's multiplier must reach the decision unaltered
 # ---------------------------------------------------------------------------
 
-def test_consensus_multiplier_does_not_overrule_a_risk_downsize():
+def test_position_size_multiplier_is_not_rewritten_by_the_router():
     """
-    The two multipliers are opposite-polarity signals, not two votes.
+    resolve_decision() used to pool a Laya and a Jev multiplier with min(),
+    because 1.25 means "clean" and 0.85 means "elevated risk" - opposite
+    polarity, so max() would let an optimistic reading size UP on a state the
+    other flagged as dangerous.
 
-    1.25 is returned only when an engine sees CLEAN conditions; 0.85 only when
-    it sees elevated risk. Taking max() let one optimistic engine size UP on a
-    state the other engine flagged as dangerous — the exact inverse of the
-    function's own "adopt the more conservative" contract.
+    With one engine there is nothing to pool, so the checkpoint's own multiplier
+    is what must be used verbatim. This test keeps the asymmetry lesson from
+    being silently reintroduced the day a second local model is added: the
+    router must not adjust sizing on the checkpoint's behalf.
     """
-    from models.system1_base import System1Decision
     from models.system1_service import System1Service
 
     svc = System1Service()
-    laya = System1Decision(
-        verdict="APPROVE", action="EXECUTE_IMMEDIATELY", confidence=0.85,
-        opportunity_score=80.0, position_size_multiplier=1.25,
-        p_execution_success=0.85, p_stop_hunt_risk=0.10, p_adverse_regime_shift=0.10,
+    assert not hasattr(svc, "resolve_decision"), (
+        "the dual-engine resolver is retired; sizing must come straight from the "
+        "checkpoint rather than being merged with a second opinion"
     )
-    jev = System1Decision(
-        verdict="APPROVE", action="LIMIT_PULLBACK", confidence=0.80,
-        opportunity_score=80.0, position_size_multiplier=0.85,
-        p_execution_success=0.60, p_stop_hunt_risk=0.60, p_adverse_regime_shift=0.10,
-    )
-    out = svc.resolve_decision(laya, jev, preferred_engine="laya")
-
-    assert out.position_size_multiplier <= min(1.25, 0.85) + 1e-9
-    assert out.position_size_multiplier == 0.85
-    # A plain mean would sit exactly on the 0.35 routing threshold and erase
-    # the warning; the pessimistic reading must survive pooling.
-    assert out.p_stop_hunt_risk >= 0.60
-    assert out.p_stop_hunt_risk > 0.35
 
 
-def test_consensus_keeps_upside_when_both_engines_agree_it_is_clean():
-    from models.system1_base import System1Decision
-    from models.system1_service import System1Service
+def test_risk_gate_forces_zero_size_on_a_rejected_setup():
+    """
+    The opposite-polarity rule still applies in the one place it matters: a
+    setup the hard gates reject must not be tradable at any size.
+    """
+    from models.laya_service import laya_service
 
-    svc = System1Service()
-    laya = System1Decision(
-        verdict="APPROVE", action="EXECUTE_IMMEDIATELY", confidence=0.85,
-        opportunity_score=88.0, position_size_multiplier=1.25,
-        p_execution_success=0.88, p_stop_hunt_risk=0.10, p_adverse_regime_shift=0.10,
-    )
-    jev = System1Decision(
-        verdict="APPROVE", action="EXECUTE_IMMEDIATELY", confidence=0.90,
-        opportunity_score=90.0, position_size_multiplier=1.25,
-        p_execution_success=0.90, p_stop_hunt_risk=0.08, p_adverse_regime_shift=0.08,
-    )
-    out = svc.resolve_decision(laya, jev, preferred_engine="laya")
-    assert out.position_size_multiplier == 1.25
-    assert out.p_stop_hunt_risk == pytest.approx(0.10)
+    rejected = laya_service.evaluate_decision({
+        "symbol": "RISKY", "direction": "BUY", "risk_reward_ratio": 0.3,
+        "india_vix": 14.0, "technical_score": 80.0,
+    })
+    assert rejected.verdict == "REJECT"
+    assert rejected.position_size_multiplier == 0.0
 
 
 # ---------------------------------------------------------------------------
