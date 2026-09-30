@@ -8,6 +8,10 @@
     "core:webview:allow-internal-toggle-devtools",
     "core:window:allow-set-theme",
     "core:window:allow-theme",
-    "core:window:allow-start-dragging"
+    "core:window:allow-start-dragging",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-is-maximized",
+    "core:window:allow-close"
   ]
 }

@@ -5,6 +5,7 @@ import type { StockRow } from "@/lib/watchlist";
 import { LivePrice } from "@/components/atoms/LivePrice";
 import { LiveChangePct } from "@/components/atoms/LiveChangePct";
 import { prefetchSymbol } from "@/lib/prefetch";
+import { SymbolLogo } from "@/components/atoms/SymbolLogo";
 
 interface WatchlistCardProps {
   row: StockRow;
@@ -47,6 +48,7 @@ export const WatchlistCard = memo(({ row, selected, onSelect, onRemove }: Watchl
       <div className="grid grid-cols-[1fr_auto] gap-2.5 relative z-10 min-w-0 w-full h-full items-center">
         <div className="flex min-w-0 flex-col justify-center gap-0.5 overflow-hidden">
           <div className="flex items-center gap-2 min-w-0">
+            <SymbolLogo symbol={row.symbol} size="sm" />
             {row.activeSignalDirection && (
               <span
                 title={`Active ${row.activeSignalDirection} Signal`}

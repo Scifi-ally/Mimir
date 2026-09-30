@@ -3,6 +3,7 @@ import { X } from "lucide-react";
 import { cn } from "@/lib/format";
 import { LivePrice } from "@/components/atoms/LivePrice";
 import { LiveChangePct } from "@/components/atoms/LiveChangePct";
+import { SymbolLogo } from "@/components/atoms/SymbolLogo";
 import { useQueryClient } from "@tanstack/react-query";
 import { prefetchSymbol } from "@/lib/prefetch";
 import { useStore } from "@/store/useStore";
@@ -49,7 +50,9 @@ export function ScreenerTargetRow({ row, title, selectedSymbol, onSelect, onDele
         onPointerEnter={() => prefetchSymbol(queryClient, row.symbol)}
         className="absolute inset-0 z-0 cursor-pointer"
       />
-      <div className="flex flex-col justify-center gap-1 min-w-0 flex-1 z-10 pointer-events-none">
+      <div className="flex items-center gap-2.5 min-w-0 z-10 pointer-events-none pl-0.5">
+        <SymbolLogo symbol={row.symbol} />
+        <div className="flex flex-col justify-center gap-1 min-w-0 flex-1">
         <div className="flex items-center gap-2 min-w-0">
           <span className="truncate text-sm font-normal tracking-tight text-foreground">{row.symbol}</span>
           <span className={cn(
@@ -70,6 +73,7 @@ export function ScreenerTargetRow({ row, title, selectedSymbol, onSelect, onDele
               {row.notes ? "Matched condition" : "Added manually"}
             </span>
           )}
+        </div>
         </div>
       </div>
 

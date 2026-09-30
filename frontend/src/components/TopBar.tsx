@@ -27,6 +27,7 @@ interface TopBarProps {
 
 import { api } from "@/lib/api";
 import { isTauriRuntime } from "@/lib/backendOrigin";
+import { WindowControls } from "@/components/WindowControls";
 import { SPRING_SNAPPY } from "@/lib/motion";
 
 /** Header height plus any safe-area inset, used for the spacer and the bar itself. */
@@ -204,10 +205,9 @@ export const TopBar = memo(function TopBar({
           "px-4 sm:px-6 py-1.5",
           TOPBAR_H,
           "pt-[env(safe-area-inset-top)]",
-          // Windows draws minimise/maximise/close on top of the content in
-          // Overlay mode. Reserve their width so the right-hand controls are not
-          // sitting underneath them.
-          isTauriRuntime() && "pr-[148px]",
+          // The shell has no native title bar, so the header owns the whole
+          // window width and sits under our own controls on the right.
+          isTauriRuntime() && "pr-0",
         )}
       >
         <div className="flex flex-col w-full">
@@ -230,6 +230,7 @@ export const TopBar = memo(function TopBar({
         </div>
 
         <div className="flex min-w-0 w-full sm:w-auto sm:max-w-[65vw] shrink items-center sm:justify-end gap-1.5 sm:gap-2 pl-2">
+          <WindowControls />
           <div className="flex shrink-0 items-center gap-1">
             <motion.div whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} transition={SPRING_SNAPPY}>
             <Button
