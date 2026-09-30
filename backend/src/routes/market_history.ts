@@ -5,12 +5,86 @@ import { getAccessToken } from "../upstox/auth";
 import { logger } from "../lib/logger";
 import { getISTDateStr, shiftISTDateStr } from "../lib/ist-time";
 import { logApiError } from "../lib/api-errors";
-import { AxiosError } from "axios";
+import { AxiosError, default as axios } from "axios";
 import { db, symbolScoresTable, candlesTable } from "../../db/src/index.js";
 import { desc, eq, and, gte, asc } from "drizzle-orm";
 import { resolveIndexAsStock, isCandleInterval, CandleInterval, upstoxClient } from "./market_utils";
 
 const router = Router();
+
+/** Instrument key -> Yahoo chart symbol, for the indices we quote. */
+const INDEX_YAHOO_SYMBOL: Record<string, string> = {
+  "NSE_INDEX|Nifty 50": "^NSEI",
+  "BSE_INDEX|SENSEX": "^BSESN",
+  "BSE_INDEX|Sensex": "^BSESN",
+  "NSE_INDEX|Nifty Bank": "^NSEBANK",
+  "NSE_INDEX|NIFTY BANK": "^NSEBANK",
+  "NSE_INDEX|Nifty Fin Service": "^CNXFIN",
+  "NSE_INDEX|NIFTY FIN SERVICE": "^CNXFIN",
+  "NSE_INDEX|India VIX": "^INDIAVIX",
+};
+
+/**
+ * Index candles from Yahoo, for the window in the DB cache that only ever holds
+ * Nifty 50.
+ *
+ * The equity path is served from `candles`, but SENSEX/BANK NIFTY/FIN NIFTY/
+ * INDIA VIX are never written there, so without an Upstox token they 401'd and
+ * their charts stayed blank - even though `dashboard-indices` was already
+ * sourcing all five from Yahoo successfully. This closes that gap using the same
+ * endpoint, so a logged-out user still sees real index history.
+ */
+async function readIndexCandlesFromYahoo(
+  instrumentKey: string,
+  interval: string,
+  lookbackDays: number,
+): Promise<{ candles: Array<{ ts: string; open: number; high: number; low: number; close: number; volume: number }>; symbol: string } | null> {
+  const yahooSymbol = INDEX_YAHOO_SYMBOL[instrumentKey];
+  if (!yahooSymbol) return null;
+  if (interval !== "day") return null; // the UI only requests daily index history
+
+  const days = Math.min(Math.max(lookbackDays, 1), 730);
+  const from = Math.floor((Date.now() - days * 24 * 60 * 60 * 1000) / 1000);
+  const to = Math.floor(Date.now() / 1000) + 86400;
+
+  try {
+    const res = await axios.get(`https://query1.finance.yahoo.com/v8/finance/chart/${yahooSymbol}`, {
+      timeout: 6000,
+      params: { period1: from, period2: to, interval: "1d" },
+      headers: {
+        // Yahoo returns an empty/blocked payload for the default axios UA.
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+        Accept: "application/json",
+      },
+    });
+
+    const result = res.data?.chart?.result?.[0];
+    const stamps: number[] = result?.timestamp ?? [];
+    const q = result?.indicators?.quote?.[0];
+    if (!stamps.length || !q) return null;
+
+    const candles: Array<{ ts: string; open: number; high: number; low: number; close: number; volume: number }> = [];
+    for (let i = 0; i < stamps.length; i++) {
+      const close = q.close?.[i];
+      if (close == null) continue; // Yahoo pads non-trading days with nulls
+      candles.push({
+        ts: new Date(stamps[i]! * 1000).toISOString(),
+        open: q.open?.[i] ?? close,
+        high: q.high?.[i] ?? close,
+        low: q.low?.[i] ?? close,
+        close,
+        // Index volumes are not meaningful; the column is NOT NULL.
+        volume: q.volume?.[i] ?? 0,
+      });
+    }
+    if (candles.length === 0) return null;
+    logger.info({ yahooSymbol, candles: candles.length }, "Served index candles from Yahoo fallback");
+    return { symbol: instrumentKey, candles };
+  } catch (err) {
+    logger.warn({ err, yahooSymbol }, "Index candle fallback failed");
+    return null;
+  }
+}
 
 /**
  * Read candles from the persistent `candles` cache.
@@ -158,6 +232,15 @@ router.get("/market/candles", async (req, res) => {
         res.json({ ...cached, source: "cache" });
         return;
       }
+      // Only Nifty 50 is ever written to the `candles` table, so the other
+      // indices need their own source. dashboard-indices already sources all of
+      // them from Yahoo; use the same endpoint rather than 401-ing a chart the
+      // app can perfectly well draw.
+      const indexCandles = await readIndexCandlesFromYahoo(stock.key, intervalStr, lookbackDays);
+      if (indexCandles) {
+        res.json({ ...indexCandles, source: "yahoo" });
+        return;
+      }
       res.status(401).json({ error: "Upstox authentication required" });
       return;
     }
@@ -225,6 +308,13 @@ router.get("/market/candles", async (req, res) => {
         : null;
       if (cached) {
         res.json({ ...cached, source: "cache" });
+        return;
+      }
+      const indexCandles = cacheCtx
+        ? await readIndexCandlesFromYahoo(cacheCtx.key, cacheCtx.interval, cacheCtx.lookbackDays)
+        : null;
+      if (indexCandles) {
+        res.json({ ...indexCandles, source: "yahoo" });
         return;
       }
       res.status(401).json({ error: "Upstox authentication required (Token invalid)" });

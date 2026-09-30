@@ -26,7 +26,11 @@ interface TopBarProps {
 }
 
 import { api } from "@/lib/api";
+import { isTauriRuntime } from "@/lib/backendOrigin";
 import { SPRING_SNAPPY } from "@/lib/motion";
+
+/** Header height plus any safe-area inset, used for the spacer and the bar itself. */
+const TOPBAR_H = "h-[calc(48px+env(safe-area-inset-top))]";
 
 export const TopBar = memo(function TopBar({
   indices,
@@ -184,10 +188,26 @@ export const TopBar = memo(function TopBar({
 
   return (
     <>
-      <div className="h-[calc(48px+env(safe-area-inset-top))] w-full shrink-0" />
+      <div className={cn(TOPBAR_H, "w-full shrink-0")} />
       <header
+        // data-tauri-drag-region makes this strip the window's drag handle. With
+        // titleBarStyle "Overlay" there is no native title bar, so the app's own
+        // header is the only thing the user can grab to move the window.
+        data-tauri-drag-region
         className={cn(
-          "fixed top-0 left-0 right-0 z-50 flex w-full shrink-0 flex-col justify-end bg-background/90 backdrop-blur-xl backdrop-saturate-150 px-4 sm:px-6 py-1.5 h-[calc(48px+env(safe-area-inset-top))] pt-[env(safe-area-inset-top)]"
+          "fixed top-0 left-0 right-0 z-50 flex w-full shrink-0 flex-col justify-end",
+          // Fully opaque, not bg-background/90: the header used to be
+          // translucent over the page, which let the lighter native chrome bleed
+          // through and read as a washed-out band above a near-black app.
+          "bg-background",
+          "backdrop-blur-xl backdrop-saturate-150",
+          "px-4 sm:px-6 py-1.5",
+          TOPBAR_H,
+          "pt-[env(safe-area-inset-top)]",
+          // Windows draws minimise/maximise/close on top of the content in
+          // Overlay mode. Reserve their width so the right-hand controls are not
+          // sitting underneath them.
+          isTauriRuntime() && "pr-[148px]",
         )}
       >
         <div className="flex flex-col w-full">

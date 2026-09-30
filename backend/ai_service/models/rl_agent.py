@@ -65,18 +65,27 @@ class RLAgentService:
     def __init__(self):
         self.model = None
         self.is_loaded = False
-        
+        # Distinguishes "no model trained yet" (expected on a fresh install -
+        # RL trains on closed paper trades, of which there are none) from
+        # "the model exists but failed to load" (a real fault). Set in the
+        # except branch below.
+        self.cold_start = True
+
         if not _SB3_AVAILABLE:
             return
 
         model_path = os.getenv("RL_MODEL_PATH", os.path.join(os.path.dirname(__file__), "..", "rl_model.zip"))
-        
+
         if os.path.exists(model_path):
             try:
                 self.model = PPO.load(model_path)
                 self.is_loaded = True
+                self.cold_start = False
                 logger.info(f"Successfully loaded RL model from {model_path}")
             except Exception as e:
+                # The artifact is present but unusable: a genuine failure, so it
+                # must not be excused as a cold start.
+                self.cold_start = False
                 logger.error(f"Failed to load RL model: {e}")
         else:
             logger.info(f"RL model not found at {model_path}. Using fallback/mock mode until trained.")

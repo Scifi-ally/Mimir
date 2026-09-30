@@ -82,11 +82,23 @@ class ConfluenceService:
     def get_status(self) -> dict:
         """Return explicit artifact and fallback state for health diagnostics."""
         models = self.models
+        has_models = bool(models)
         return {
             "model": "regime-confluence-lightgbm",
-            "loaded": bool(models),
+            "loaded": has_models,
             "healthy": True,
-            "fallback_active": not bool(models),
+            "fallback_active": not has_models,
+            # No trained artifact is a COLD START, not a failure: this component
+            # trains on closed-trade history, of which a fresh install has none.
+            # Reporting it as "degraded" made an expected condition look like a
+            # fault and buried genuinely broken components in the same list.
+            "cold_start": not has_models,
+            "status_reason": (
+                None
+                if has_models
+                else "no trained confluence model yet - requires closed-trade history "
+                     "(suggestions/signal_outcomes); serving the deterministic fallback"
+            ),
             "loaded_regimes": sorted(models.keys()),
             "artifact_count": len(models),
         }

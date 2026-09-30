@@ -212,6 +212,11 @@ def _build_health_snapshot() -> Dict[str, Any]:
         and chronos_status.get("healthy")
     )
     degraded_components = []
+    # Components that are working correctly but have no trained model yet. These
+    # train on closed-trade history, which a fresh install does not have, so this
+    # is a cold start rather than a fault. Listing them next to genuinely broken
+    # components made every health check look alarming and hid real failures.
+    cold_start_components = []
     if not core_ready:
         degraded_components.append("core_forecasting")
     if sentiment_status.get("fallback_active"):
@@ -225,9 +230,15 @@ def _build_health_snapshot() -> Dict[str, Any]:
     elif ranker_status.get("width_mismatch_rows") or ranker_status.get("without_features_rows"):
         degraded_components.append("ranker_contract_mismatch")
     if confluence_status.get("fallback_active"):
-        degraded_components.append("confluence")
+        if confluence_status.get("cold_start"):
+            cold_start_components.append("confluence")
+        else:
+            degraded_components.append("confluence")
     if not rl_agent_service.is_loaded:
-        degraded_components.append("rl")
+        if getattr(rl_agent_service, "cold_start", True):
+            cold_start_components.append("rl")
+        else:
+            degraded_components.append("rl")
     if not jev_status.get("healthy"):
         degraded_components.append("jev")
     if not laya_status.get("healthy"):
@@ -236,6 +247,8 @@ def _build_health_snapshot() -> Dict[str, Any]:
     ai_mode = "AI Mode" if core_ready else "Fallback Mode"
     if degraded_components:
         ai_mode += " (degraded: " + ", ".join(degraded_components) + ")"
+    elif cold_start_components:
+        ai_mode += " (untrained: " + ", ".join(cold_start_components) + " - using fallbacks)"
     ranking_provider = "AI Ranking" if ranker_status.get("loaded") else "Technical Ranking"
     status = "healthy" if core_ready else "degraded"
 
@@ -262,6 +275,8 @@ def _build_health_snapshot() -> Dict[str, Any]:
     return {
         "status": status,
         "ai_mode": ai_mode,
+        "degraded_components": degraded_components,
+        "cold_start_components": cold_start_components,
         "ranking_provider": ranking_provider,
         "uptime_seconds": round(time.time() - _start_time, 2),
         "models": {
@@ -566,6 +581,10 @@ JevResponse = System1Response
 class HealthResponse(BaseModel):
     status: str
     ai_mode: str
+    # Distinguishes genuinely faulty components from ones that simply have no
+    # trained model yet on a fresh install.
+    degraded_components: list[str]
+    cold_start_components: list[str]
     ranking_provider: str
     uptime_seconds: float
     models: Dict[str, Any]
@@ -596,6 +615,8 @@ async def health():
     return HealthResponse(
         status=snapshot["status"],
         ai_mode=snapshot["ai_mode"],
+        degraded_components=snapshot["degraded_components"],
+        cold_start_components=snapshot["cold_start_components"],
         ranking_provider=snapshot["ranking_provider"],
         uptime_seconds=snapshot["uptime_seconds"],
         models=snapshot["models"],
