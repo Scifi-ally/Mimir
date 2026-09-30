@@ -33,6 +33,16 @@ import { SPRING_SNAPPY } from "@/lib/motion";
 /** Header height plus any safe-area inset, used for the spacer and the bar itself. */
 const TOPBAR_H = "h-[calc(48px+env(safe-area-inset-top))]";
 
+/**
+ * Extra clear space between the title bar and the content below it.
+ *
+ * The bar is `fixed`, so the spacer is what decides where page content starts.
+ * Padding inside the first card does not work: the chart card is `h-full` with
+ * `overflow-hidden`, so internal padding just squeezes the content and clips it.
+ * The gap has to live in the layout, under the bar.
+ */
+const TOPBAR_CONTENT_GAP = "h-3";
+
 export const TopBar = memo(function TopBar({
   indices,
   status,
@@ -190,6 +200,7 @@ export const TopBar = memo(function TopBar({
   return (
     <>
       <div className={cn(TOPBAR_H, "w-full shrink-0")} />
+      <div className={cn(TOPBAR_CONTENT_GAP, "w-full shrink-0")} />
       <header
         // data-tauri-drag-region makes this strip the window's drag handle. With
         // titleBarStyle "Overlay" there is no native title bar, so the app's own

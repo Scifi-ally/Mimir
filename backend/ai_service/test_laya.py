@@ -415,6 +415,47 @@ def test_cloud_engine_module_is_deleted():
     )
 
 
+def test_freshly_loaded_ranker_is_idle_not_degraded(monkeypatch):
+    """A loaded ranker that has not been asked a question yet is idle, not broken.
+
+    The first version of this check reported "ranker_gate_disarmed" whenever a
+    loaded model had zero predictions. At startup nothing has been scored, so
+    the badge was permanently amber - and a light that is always on is a light
+    you learn to ignore, which is the exact failure the honest-health work was
+    meant to remove.
+    """
+    import main
+
+    # Synthetic base rather than the live status, so the test does not depend on
+    # whether LightGBM happens to load in the test environment.
+    base = {"loaded": True, "model": "lightgbm-ranker", "feature_count": 32}
+
+    # Idle: loaded, but zero rows attempted.
+    monkeypatch.setattr(
+        main.ranker_service, "get_status",
+        lambda: {**base, "gate_active": False, "gate_never_exercised": True,
+                 "rows_predicted": 0, "without_features_rows": 0, "width_mismatch_rows": 0},
+    )
+    snap = main._build_health_snapshot()
+    assert snap["ranker_gate_idle"] is True
+    assert snap["ranker_rows_seen"] == 0
+    assert "ranker_gate_bypassed" not in snap["degraded_components"], (
+        "a ranker that has not been asked anything must not be reported as bypassed"
+    )
+
+    # Actually bypassed: rows were attempted and every one was skipped.
+    monkeypatch.setattr(
+        main.ranker_service, "get_status",
+        lambda: {**base, "gate_active": False, "gate_never_exercised": False,
+                 "rows_predicted": 0, "without_features_rows": 40, "width_mismatch_rows": 0},
+    )
+    snap = main._build_health_snapshot()
+    assert snap["ranker_gate_idle"] is False
+    assert snap["ranker_rows_seen"] == 40
+    assert "ranker_gate_bypassed" in snap["degraded_components"]
+    assert snap["status"] == "degraded"
+
+
 # ---------------------------------------------------------------------------
 # 4. FastAPI Endpoint Tests
 # ---------------------------------------------------------------------------

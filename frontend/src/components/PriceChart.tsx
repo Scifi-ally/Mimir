@@ -941,12 +941,12 @@ export const PriceChart = memo(function PriceChart({ symbol, chartMode, onChartM
 
   return (
     <Card className="flex h-full min-h-0 flex-col overflow-hidden border-0 bg-transparent">
-      {/* The timeframe / indicator / chart-mode row sits directly under the
-          custom title bar, and the Card clips its overflow. With pb-1 the
-          descenders on the price readout were sliced off and the row read as
-          jammed against the title bar. pt-4 gives it clearance from the bar and
-          pb-3 stops the bottom of the row being cut. */}
-      <CardHeader className="flex shrink-0 flex-col sm:flex-row items-start sm:items-center justify-between gap-2 px-3 pt-4 pb-3">
+      {/* Timeframe / indicator / chart-mode row. Vertical breathing room comes
+          from the layout spacer under the title bar, not from padding here: this
+          Card is h-full with overflow-hidden, so internal padding only squeezes
+          the chart and clips the price readout. pb-2 is just enough to stop the
+          descenders on that readout being sliced. */}
+      <CardHeader className="flex shrink-0 flex-col sm:flex-row items-start sm:items-center justify-between gap-2 px-3 pt-1 pb-2">
 
         <div className="flex min-w-0 items-center gap-3">
           {projMeta && (

@@ -240,16 +240,28 @@ def _build_health_snapshot() -> Dict[str, Any]:
     if not laya_status.get("healthy"):
         degraded_components.append("laya")
 
-    # A loaded ranker that has never produced a prediction is not healthy and
-    # not cold-start either: the artifact exists and is meant to be used, so
-    # every candidate is bypassing the only calibrated veto. This is the exact
-    # failure that let the ranker sit disarmed (rankerIncomplete was true for
+    # A loaded ranker that has been asked for predictions and produced none is
+    # not healthy: every candidate bypasses the only calibrated veto. That is
+    # the failure that let the ranker sit disarmed (rankerIncomplete was true for
     # every production candidate) while /health stayed green.
-    ranker_gate_disarmed = bool(
-        ranker_status.get("loaded") and ranker_status.get("gate_never_exercised")
+    #
+    # "Asked and produced none" is deliberately distinguished from "never asked".
+    # Treating a freshly loaded model as degraded made the badge permanently
+    # amber at startup - before any candidate had been scored - and a light that
+    # is always on teaches you to ignore it. Zero rows attempted is idle; rows
+    # attempted and none scored is a real fault.
+    ranker_rows_seen = (
+        (ranker_status.get("rows_predicted") or 0)
+        + (ranker_status.get("without_features_rows") or 0)
+        + (ranker_status.get("width_mismatch_rows") or 0)
     )
-    if ranker_gate_disarmed:
-        degraded_components.append("ranker_gate_disarmed")
+    ranker_gate_bypassed = bool(
+        ranker_status.get("loaded")
+        and ranker_rows_seen > 0
+        and not ranker_status.get("gate_active")
+    )
+    if ranker_gate_bypassed:
+        degraded_components.append("ranker_gate_bypassed")
 
     # Truthful verdict. Previously status was healthy on the strength of the
     # rule engine plus Chronos alone, so an untrained confluence model, an
@@ -272,6 +284,12 @@ def _build_health_snapshot() -> Dict[str, Any]:
     trained_model_count = sum(
         1 for key in ("chronos_forecast", "laya_checkpoint", "ranker_calibrated_pwin")
         if contributing_to_decisions[key]
+    )
+    # Explicitly idle, as opposed to healthy or degraded: the ranker is loaded
+    # but has not been asked a question yet. A closed market or a quiet scan is
+    # the normal reason, and it should read as "not exercised", not as a fault.
+    ranker_idle = bool(
+        ranker_status.get("loaded") and ranker_rows_seen == 0
     )
 
     ai_mode = "AI Mode" if status == "healthy" else "Fallback Mode"
@@ -309,6 +327,8 @@ def _build_health_snapshot() -> Dict[str, Any]:
         # loaded, which is true even when every trained model is absent.
         "trained_model_count": trained_model_count,
         "contributing_to_decisions": contributing_to_decisions,
+        "ranker_gate_idle": ranker_idle,
+        "ranker_rows_seen": ranker_rows_seen,
         "degraded_components": degraded_components,
         "cold_start_components": cold_start_components,
         "ranking_provider": ranking_provider,
@@ -614,6 +634,10 @@ class HealthResponse(BaseModel):
     # deciding anything.
     trained_model_count: int = 0
     contributing_to_decisions: Dict[str, bool] = {}
+    # The ranker is loaded but has not been asked a question yet. Distinct from
+    # both healthy and degraded - a quiet market is the normal cause.
+    ranker_gate_idle: bool = False
+    ranker_rows_seen: int = 0
     # Distinguishes genuinely faulty components from ones that simply have no
     # trained model yet on a fresh install.
     degraded_components: list[str]
@@ -650,6 +674,8 @@ async def health():
         ai_mode=snapshot["ai_mode"],
         trained_model_count=snapshot.get("trained_model_count", 0),
         contributing_to_decisions=snapshot.get("contributing_to_decisions", {}),
+        ranker_gate_idle=snapshot.get("ranker_gate_idle", False),
+        ranker_rows_seen=snapshot.get("ranker_rows_seen", 0),
         degraded_components=snapshot["degraded_components"],
         cold_start_components=snapshot["cold_start_components"],
         ranking_provider=snapshot["ranking_provider"],
