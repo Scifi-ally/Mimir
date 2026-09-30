@@ -105,7 +105,7 @@ export function ScreenerTargetsStack({ selectedSymbol, onSelect, headerLeft }: S
     });
   };
 
-  const renderTargetRow = (row: ScreenerTarget, title: string) => {
+  const renderTargetRow = (row: ScreenerTarget, title: string, index = 0) => {
     return (
       <ScreenerTargetRow
         key={row.id}
@@ -113,6 +113,7 @@ export function ScreenerTargetsStack({ selectedSymbol, onSelect, headerLeft }: S
         title={title}
         selectedSymbol={selectedSymbol}
         onSelect={onSelect}
+        index={index}
         onDelete={async (id) => { await deleteTargetMutation.mutateAsync(id); }}
       />
     );
@@ -254,7 +255,7 @@ export function ScreenerTargetsStack({ selectedSymbol, onSelect, headerLeft }: S
                   <div className="flex flex-col gap-2.5">
                     <div className="px-1 text-[10px] font-medium font-sans uppercase tracking-[0.12em] text-muted-foreground/70">Auto matches</div>
                     <div className="grid grid-cols-[repeat(auto-fit,minmax(310px,1fr))] gap-3">
-                      {autoTargets.map((row) => renderTargetRow(row, title))}
+                      {autoTargets.map((row, i) => renderTargetRow(row, title, i))}
                     </div>
                   </div>
                 )}
@@ -262,7 +263,7 @@ export function ScreenerTargetsStack({ selectedSymbol, onSelect, headerLeft }: S
                   <div className="flex flex-col gap-2.5">
                     <div className="px-1 text-[10px] font-medium font-sans uppercase tracking-[0.12em] text-muted-foreground/70">Manual stocks</div>
                     <div className="grid grid-cols-[repeat(auto-fit,minmax(310px,1fr))] gap-3">
-                      {manualTargets.map((row) => renderTargetRow(row, title))}
+                      {manualTargets.map((row, i) => renderTargetRow(row, title, i))}
                     </div>
                   </div>
                 )}

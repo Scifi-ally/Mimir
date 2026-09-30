@@ -15,6 +15,8 @@ interface ScreenerTargetRowProps {
   selectedSymbol: string;
   onSelect: (symbol: string) => void;
   onDelete: (id: number) => Promise<void>;
+  /** Position in its list, used to stagger the reveal. */
+  index?: number;
 }
 
 function splitBadges(notes?: string | null) {
@@ -22,7 +24,7 @@ function splitBadges(notes?: string | null) {
   return notes.split(",").map((item) => item.trim()).filter(Boolean).slice(0, 3);
 }
 
-export function ScreenerTargetRow({ row, title, selectedSymbol, onSelect, onDelete }: ScreenerTargetRowProps) {
+export function ScreenerTargetRow({ row, title, selectedSymbol, onSelect, onDelete, index = 0 }: ScreenerTargetRowProps) {
   const queryClient = useQueryClient();
   const showIsland = useStore((s) => s.showIsland);
 
@@ -32,9 +34,21 @@ export function ScreenerTargetRow({ row, title, selectedSymbol, onSelect, onDele
   return (
     <motion.div
       layout
+      // Stagger the reveal so a fresh screener result cascades in instead of
+      // appearing all at once. Capped so a long list never takes >360ms, and
+      // disabled under prefers-reduced-motion.
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.96 }}
+      transition={{
+        type: "spring",
+        stiffness: 420,
+        damping: 32,
+        // .index * 0.035s, capped at ten rows worth of delay.
+        delay: Math.min(index, 10) * 0.035,
+      }}
+      whileHover={{ x: 2 }}
+      whileTap={{ scale: 0.99 }}
       style={{ willChange: "transform, opacity" }}
       className={cn(
         "apple-hover flex h-[58px] items-center justify-between rounded-md px-3 py-1.5 w-full text-left transition-all relative overflow-hidden group border-0 font-mono shadow-none",

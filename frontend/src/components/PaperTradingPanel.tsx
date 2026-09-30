@@ -4,6 +4,7 @@ import { Wallet, History, RotateCcw, TrendingUp, TrendingDown, X } from "lucide-
 import { motion, AnimatePresence } from "framer-motion";
 import type { Variants } from "framer-motion";
 import { cn, fmtInr, fmtNum, toFixed, toFixedPct } from "@/lib/format";
+import { CountUp } from "@/components/atoms/CountUp";
 import { useStore } from "@/store/useStore";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatedNumber } from "@/components/atoms/AnimatedNumber";
@@ -366,7 +367,7 @@ export function PaperTradingPanel({ isOpen, onClose, onSelectSymbol }: { isOpen?
                 <motion.div variants={staggerItem} className="flex flex-col gap-1 min-w-0" title={`₹${fmtNum(equity, 2)}`}>
                   <span className="text-[10px] font-normal text-foreground/50 tracking-[0.08em] uppercase">Equity</span>
                   <span className="text-2xl sm:text-3xl font-mono tabular-nums font-normal tracking-tight text-foreground leading-none">
-                    {fmtInr(equity)}
+                    {<CountUp value={equity} format={fmtInr} />}
                   </span>
                   <span className={cn(
                     "text-[11px] font-mono tabular-nums font-normal",
@@ -380,7 +381,7 @@ export function PaperTradingPanel({ isOpen, onClose, onSelectSymbol }: { isOpen?
                 <motion.div variants={staggerItem} className="flex flex-col gap-1 min-w-0" title={`₹${fmtNum(available, 2)}`}>
                   <span className="text-[10px] font-normal text-foreground/50 tracking-[0.08em] uppercase">Available</span>
                   <span className="text-2xl sm:text-3xl font-mono tabular-nums font-normal tracking-tight text-foreground/80 leading-none">
-                    {fmtInr(available)}
+                    {<CountUp value={available} format={fmtInr} />}
                   </span>
                 </motion.div>
 
@@ -391,7 +392,7 @@ export function PaperTradingPanel({ isOpen, onClose, onSelectSymbol }: { isOpen?
                     <span className="shrink-0 text-foreground/40">{balance > 0 ? toFixed((allocated / balance) * 100, 0) : 0}%</span>
                   </span>
                   <span className="text-2xl sm:text-3xl font-mono tabular-nums font-normal tracking-tight text-foreground/40 leading-none">
-                    {fmtInr(allocated)}
+                    {<CountUp value={allocated} format={fmtInr} />}
                   </span>
                   <div className="h-1 w-full bg-border/10 rounded-full overflow-hidden mt-1.5 shrink-0">
                     <motion.div 
@@ -408,7 +409,7 @@ export function PaperTradingPanel({ isOpen, onClose, onSelectSymbol }: { isOpen?
                   <span className="text-[10px] font-normal text-foreground/50 tracking-[0.08em] uppercase">Unrealized P&L</span>
                   <span className={cn("text-2xl sm:text-3xl font-mono tabular-nums font-normal tracking-tight flex items-center gap-1.5 leading-none", isProfit ? "text-bull" : isLoss ? "text-bear" : "text-foreground/40")}>
                     {isProfit ? <TrendingUp className="w-5 h-5 shrink-0" /> : isLoss ? <TrendingDown className="w-5 h-5 shrink-0" /> : null}
-                    {isProfit ? '+' : isLoss ? '-' : ''}{fmtInr(Math.abs(livePnl))}
+                    {isProfit ? '+' : isLoss ? '-' : ''}{<CountUp value={Math.abs(livePnl)} format={fmtInr} />}
                   </span>
                 </motion.div>
 
