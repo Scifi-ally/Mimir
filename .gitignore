@@ -76,6 +76,13 @@ backend/.upstox_session.json
 
 # NOTE: an earlier revision of this file ended with NUL-corrupted entries that
 # decoded to `backend/ai_service/`, `backend/src/intelligence/` and
-# `backend/src/analysis/` — i.e. rules to ignore the core source trees. They are
+# `backend/src/analysis/` �?" i.e. rules to ignore the core source trees. They are
 # deliberately NOT reinstated. Those directories must stay tracked, and those
 # garbled patterns matched nothing only because the NUL bytes made them invalid.
+
+# Runtime market data, not source. The tick feed appends a JSONL per session;
+# committing it would grow the repo without bound and adds nothing reviewable.
+backend/data/ticks/
+*.jsonl.tmp
+.upstox_session.json
+
