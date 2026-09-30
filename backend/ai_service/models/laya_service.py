@@ -2,7 +2,7 @@
 LAYA Service — Convai Innovations System-1 Fast Decision Engine.
 ─────────────────────────────────────────────────────────────────────────────
 • Non-autoregressive System-1 decision architecture built on ModernBERT encoder.
-• Open-source (Apache-2.0), self-hosted counterpart to TypeSafe AI's Jev.
+• Open-source (Apache-2.0), self-hosted System-1 decision engine.
 • Trained via RLCD (Reinforcement Learning for Calibrated Decisions) against
   strictly proper scoring rules (Brier / logarithmic scoring rules) to guarantee
   honest, well-calibrated confidence probabilities without overconfidence.

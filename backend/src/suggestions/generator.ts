@@ -148,6 +148,30 @@ export function getSuggestionGenerationDiagnostics(): SuggestionGenerationDiagno
   };
 }
 
+/**
+ * The exact reasons diagnoseScanNullReason() can return when a symbol produces
+ * no ScanResult. Kept as an explicit set so summarizeRejections buckets them
+ * correctly and a new reason fails loudly in review rather than silently
+ * landing in "other".
+ */
+const SCAN_NULL_REASONS: ReadonlySet<string> = new Set([
+  "insufficient_daily_candles",
+  "insufficient_higher_tf_effective",
+  "snapshot_unavailable",
+  "no_setup_candidates",
+  "quality_or_rs_rejected",
+  "filtered_downstream",
+  "exception",
+]);
+
+/** Scan-nulls that mean the scanner could not see the data, not that it found no edge. */
+const SCAN_NULL_DATA_REASONS: ReadonlySet<string> = new Set([
+  "insufficient_daily_candles",
+  "insufficient_higher_tf_effective",
+  "snapshot_unavailable",
+  "exception",
+]);
+
 function summarizeRejections(rejectionCounts: Record<string, number>): Record<string, number> {
   const summary: Record<string, number> = {
     data_unavailable: 0,
@@ -164,13 +188,32 @@ function summarizeRejections(rejectionCounts: Record<string, number>): Record<st
     summary[key] = (summary[key] ?? 0) + value;
   };
 
+
   for (const [reason, count] of Object.entries(rejectionCounts)) {
-    if (reason.startsWith("scan_null_insufficient") || reason === "symbol_not_found" || reason === "ltp_unavailable") {
-      add("data_unavailable", count);
+    // diagnoseScanNullReason() returns BARE reasons ("no_setup_candidates",
+    // "insufficient_daily_candles", ...), not prefixed ones. This matcher only
+    // looked for a "scan_null_" prefix, so every scan null fell through to
+    // "other" - which is why data_unavailable and setup_unavailable were
+    // structurally always 0 while the UI showed rejections happening. Accept
+    // both forms so the bucket cannot silently stop matching again.
+    const scanNull = reason.startsWith("scan_null_")
+      ? reason.slice("scan_null_".length)
+      : SCAN_NULL_REASONS.has(reason)
+        ? reason
+        : null;
+
+    if (scanNull !== null) {
+      // A symbol that ran out of candles had no setup to find; one that had
+      // candles but no qualifying setup is a different operational problem.
+      if (SCAN_NULL_DATA_REASONS.has(scanNull) || reason === "symbol_not_found" || reason === "ltp_unavailable") {
+        add("data_unavailable", count);
+      } else {
+        add("setup_unavailable", count);
+      }
       continue;
     }
-    if (reason.startsWith("scan_null_no_setup") || reason.startsWith("scan_null_quality_or_rs")) {
-      add("setup_unavailable", count);
+    if (reason === "symbol_not_found" || reason === "ltp_unavailable") {
+      add("data_unavailable", count);
       continue;
     }
     if (["hourly_or_score", "min_suggestion_score", "mtf_conflict", "mtf_confluence", "confidence", "market_context"].includes(reason)) {

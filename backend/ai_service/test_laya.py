@@ -14,7 +14,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from models.laya_service import laya_service, LayaDecision
-from models.jev_service import jev_service, JevDecision
 from models.system1_service import system1_service, System1Decision
 from main import app
 
@@ -336,42 +335,6 @@ def test_laya_package_agent_integration(monkeypatch):
 # 2. Jev Service Unit Tests
 # ---------------------------------------------------------------------------
 
-def test_jev_service_status():
-    status = jev_service.get_status()
-    assert "model" in status
-    assert status["model"] == "typesafe-jev-systemone"
-    assert status["loaded"] is True
-    assert status["healthy"] is True
-    assert "mode" in status
-
-
-def test_jev_local_surrogate():
-    state = {
-        "symbol": "TATAMOTORS",
-        "direction": "BUY",
-        "setup_type": "PULLBACK",
-        "risk_reward_ratio": 2.2,
-        "technical_score": 82.0,
-        "india_vix": 14.0,
-        "order_flow_imbalance_ratio": 0.25,
-    }
-    dec = jev_service.evaluate_decision(state)
-    assert isinstance(dec, JevDecision)
-    assert dec.verdict == "APPROVE"
-    assert dec.confidence >= 0.65
-    assert dec.position_size_multiplier >= 1.0
-
-
-# ---------------------------------------------------------------------------
-# 3. Unified System-1 Router Tests
-#
-# "jev" was TypeSafe AI's managed cloud API and "consensus" merged the two.
-# Both are retired: this platform must decide fully on its own, offline, with
-# no third-party inference service in the loop. The tests below pin that every
-# legacy engine value still lands on the local checkpoint instead of silently
-# reaching a cloud.
-# ---------------------------------------------------------------------------
-
 def test_retired_engines_still_route_to_local_laya():
     state = {
         "symbol": "TATASTEEL",
@@ -418,6 +381,38 @@ def test_system1_service_exposes_no_dual_engine_resolver():
     # resolve_decision merged a Laya and a Jev decision; with one engine there
     # is nothing to merge, so the API is gone rather than left as dead code.
     assert not hasattr(system1_service, "resolve_decision")
+
+
+def test_app_module_cannot_reach_a_cloud_engine():
+    """The cloud client must be unimportable from the application, not just unused.
+
+    main.py used to hold a module-level `jev_service` handle alongside a live
+    POST /inference/jev route. Closing the router left both in place, so a
+    cloud call was one edit away. The handle itself is what has to be gone.
+    """
+    import main
+
+    assert not hasattr(main, "jev_service"), (
+        "the cloud engine must not be imported into the application; a module-level "
+        "handle is one refactor away from being called again"
+    )
+
+
+def test_cloud_engine_module_is_deleted():
+    """models/jev_service.py should not exist at all.
+
+    Kept as a test because dead-but-present cloud code is how this came back in
+    the first place: the engine was retired from the router and left on disk
+    with a full HTTP client and API-key handling.
+    """
+    import pathlib
+
+    import models
+
+    pkg = pathlib.Path(models.__file__).parent
+    assert not (pkg / "jev_service.py").exists(), (
+        "models/jev_service.py still exists; the TypeSafe cloud client was retired"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -705,32 +700,6 @@ def test_laya_batch_with_risk_gates_and_agent(monkeypatch):
     assert len(recorded_prompts) == 2
 
 
-def test_jev_hard_risk_gates_precheck(monkeypatch):
-    """Verify that JevService checks hard risk gates before attempting an API call."""
-    api_called = False
-
-    def mock_call_typesafe_api(state):
-        nonlocal api_called
-        api_called = True
-        return None
-
-    monkeypatch.setattr(jev_service, "_call_typesafe_api", mock_call_typesafe_api)
-    monkeypatch.setattr(jev_service, "_api_key", "mock-key")
-    monkeypatch.setattr(jev_service, "_enabled", True)
-
-    toxic_vix_state = {
-        "symbol": "VIX_REJECT",
-        "direction": "BUY",
-        "india_vix": 26.5,
-        "risk_reward_ratio": 2.0,
-    }
-    decision = jev_service.evaluate_decision(toxic_vix_state)
-    assert decision.verdict == "REJECT"
-    assert decision.action == "CANCEL"
-    assert any("VIX" in r for r in decision.gate_reasons)
-    assert api_called is False  # API was bypassed by pre-trade circuit breaker!
-
-
 def test_system1_short_trade_circuit_breakers():
     """Verify institutional circuit breakers for short (SELL) setups."""
     # SELL with heavy FII buying (>2500)
@@ -784,52 +753,6 @@ def test_system1_symmetrical_sell_ofi():
 
     assert dec_pos.p_execution_success > dec_neg.p_execution_success
     assert "POSITIVE_ORDER_FLOW_CONFLUENCE" in dec_pos.gate_reasons
-
-
-def test_batch_inference_never_contacts_a_cloud_engine(client, monkeypatch):
-    """A batch must not reach any cloud inference service.
-
-    The old version instrumented jev_service and asserted it was never called.
-    That is now unfalsifiable in a useful way: the service is no longer imported
-    into the app at all, so this asserts the stronger property directly.
-    """
-    import main
-
-    assert not hasattr(main, "jev_service"), (
-        "the cloud engine must not be imported into the application; a module-level "
-        "handle is one refactor away from being called again"
-    )
-
-    async def mock_sentiment(symbol):
-        return {"symbol_specific_score": 0.5, "market_wide_score": 0.0, "world_score": 0.0, "composite": 0.5}
-
-    monkeypatch.setattr(main, "analyze_sentiment", mock_sentiment)
-
-    candles = [
-        [100.0 + i, 102.0 + i, 99.0 + i, 101.5 + i, 5000.0 + i * 100]
-        for i in range(25)
-    ]
-    batch_req = {
-        "candidates": [
-            {
-                "symbol": "TCS",
-                "ohlcv": candles,
-                "features": {
-                    "direction": "BUY",
-                    "risk_reward_ratio": 2.2,
-                    "india_vix": 14.0,
-                },
-            }
-        ]
-    }
-    response = client.post("/inference/batch", json=batch_req)
-    assert response.status_code == 200
-    data = response.json()
-    cand_res = data["results"][0]
-    assert cand_res["laya_decision"] is not None
-    assert cand_res["system1_decision"] is not None
-    assert cand_res["jev_decision"] is None
-    assert data["jev_enabled"] is False
 
 
 def test_laya_batch_tracks_latency_and_counts():
@@ -894,321 +817,6 @@ def _api_state(symbol: str = "TCS") -> dict:
         "chronos_trend": "bullish",
     }
 
-
-def _fake_api(responses, calls):
-    """Build a stand-in for JevService._call_typesafe_api with a scripted reply."""
-    def _call(state):
-        calls.append(dict(state))
-        results = responses[min(len(calls) - 1, len(responses) - 1)]
-        if results is None:
-            return None
-        return jev_service._parse_response({"results": results}, state)
-    return _call
-
-
-def _force_cloud_mode(monkeypatch):
-    """Pretend a TypeSafe key is configured and the cache/breaker are cold."""
-    monkeypatch.setattr(jev_service, "_api_key", "test-key", raising=False)
-    monkeypatch.setattr(jev_service, "_enabled", True, raising=False)
-    monkeypatch.setattr(jev_service, "_cache_ttl_s", 0.0, raising=False)
-    monkeypatch.setattr(jev_service, "_cache", {}, raising=False)
-    monkeypatch.setattr(jev_service, "_fail_streak", 0, raising=False)
-    monkeypatch.setattr(jev_service, "_breaker_open_until", 0.0, raising=False)
-
-
-def test_jev_api_uses_returned_noul_not_verdict_constants(monkeypatch):
-    """Noul probabilities must come from the model, not a verdict lookup table."""
-    _force_cloud_mode(monkeypatch)
-    calls: list = []
-    monkeypatch.setattr(
-        jev_service,
-        "_call_typesafe_api",
-        _fake_api(
-            [
-                {
-                    "verdict": "APPROVE",
-                    "action": "EXECUTE_IMMEDIATELY",
-                    "confidence": 0.86,
-                    "opportunity_score": 88.0,
-                    "regime_alignment": 0.8,
-                    "p_execution_success": 0.91,
-                    "p_stop_hunt_risk": 0.06,
-                    "p_adverse_regime_shift": 0.04,
-                }
-            ],
-            calls,
-        ),
-    )
-
-    dec = jev_service.evaluate_decision(_api_state())
-    assert dec.source == "typesafe_api"
-    assert dec.provider == "jev"
-    assert dec.verdict == "APPROVE"
-    assert dec.p_execution_success == 0.91
-    assert dec.p_stop_hunt_risk == 0.06
-    assert dec.p_adverse_regime_shift == 0.04
-    assert dec.position_size_multiplier == 1.25
-
-
-def test_jev_api_noul_falls_back_to_calibrated_surrogate(monkeypatch):
-    """When the API omits Noul, use the local RLCD calibration, not constants."""
-    _force_cloud_mode(monkeypatch)
-    calls: list = []
-    adverse = {**_api_state(), "india_vix": 23.0, "order_flow_imbalance_ratio": -0.30}
-    monkeypatch.setattr(
-        jev_service,
-        "_call_typesafe_api",
-        _fake_api([{"verdict": "APPROVE", "confidence": 0.85}], calls),
-    )
-
-    dec = jev_service.evaluate_decision(adverse)
-    prior = jev_service._evaluate_local_surrogate(adverse, check_gates=False)
-    assert dec.p_stop_hunt_risk == prior.p_stop_hunt_risk
-    assert dec.p_adverse_regime_shift == prior.p_adverse_regime_shift
-    # A hostile VIX/OFI backdrop must not be scored as a clean 0.15 stop-hunt risk.
-    assert dec.p_stop_hunt_risk > 0.15
-
-
-def test_jev_api_response_schema_violation_falls_back(monkeypatch):
-    """A garbled verdict must never be passed through to the signal router."""
-    _force_cloud_mode(monkeypatch)
-    state = _api_state("SCHEMA")
-    malformed_bodies = [
-        {},                                        # no results envelope
-        {"results": "APPROVE"},                    # results is not an object
-        {"results": {}},                           # no verdict key
-        {"results": {"verdict": ""}},              # blank verdict
-        {"results": {"verdict": "MAYBE_BUY"}},     # verdict outside the contract
-        {"results": {"verdict": 7}},               # verdict is not a label at all
-    ]
-    for body in malformed_bodies:
-        assert jev_service._parse_response(body, state) is None, body
-
-    # And the service degrades to the local surrogate rather than guessing.
-    calls: list = []
-    monkeypatch.setattr(jev_service, "_call_typesafe_api", _fake_api([None], calls))
-    dec = jev_service.evaluate_decision(state)
-    assert dec.source == "local_surrogate"
-    assert dec.verdict in ("APPROVE", "REJECT", "CAUTION")
-
-
-def test_jev_api_rejects_incoherent_verdict_action_pair(monkeypatch):
-    """REJECT + EXECUTE_IMMEDIATELY must be repaired to a fail-closed pair."""
-    _force_cloud_mode(monkeypatch)
-    calls: list = []
-    monkeypatch.setattr(
-        jev_service,
-        "_call_typesafe_api",
-        _fake_api(
-            [
-                {
-                    "verdict": "REJECT",
-                    "action": "EXECUTE_IMMEDIATELY",
-                    "confidence": 0.9,
-                    "p_stop_hunt_risk": 0.8,
-                }
-            ],
-            calls,
-        ),
-    )
-    dec = jev_service.evaluate_decision(_api_state())
-    assert dec.verdict == "REJECT"
-    assert dec.action == "CANCEL"
-    assert dec.position_size_multiplier == 0.0
-
-
-def test_jev_api_position_sizing_scales_down_on_risk(monkeypatch):
-    """Elevated stop-hunt risk must reduce size even at high confidence."""
-    _force_cloud_mode(monkeypatch)
-    calls: list = []
-    monkeypatch.setattr(
-        jev_service,
-        "_call_typesafe_api",
-        _fake_api(
-            [
-                {
-                    "verdict": "APPROVE",
-                    "action": "EXECUTE_IMMEDIATELY",
-                    "confidence": 0.83,
-                    "p_execution_success": 0.62,
-                    "p_stop_hunt_risk": 0.55,
-                    "p_adverse_regime_shift": 0.12,
-                }
-            ],
-            calls,
-        ),
-    )
-    dec = jev_service.evaluate_decision(_api_state())
-    assert dec.verdict == "APPROVE"
-    assert dec.position_size_multiplier == 0.85
-    assert any("SCALED_DOWN" in r for r in dec.gate_reasons)
-
-
-def test_jev_api_pools_confidence_with_ranker(monkeypatch):
-    """Log-odds pooling pulls cloud confidence toward the learned ranker."""
-    _force_cloud_mode(monkeypatch)
-    calls: list = []
-    monkeypatch.setattr(
-        jev_service,
-        "_call_typesafe_api",
-        _fake_api([{"verdict": "APPROVE", "confidence": 0.95}], calls),
-    )
-    dec = jev_service.evaluate_decision({**_api_state(), "win_probability": 0.55})
-    assert dec.confidence < 0.95
-    assert dec.confidence > 0.55
-    assert any("RANKER_JEV_CONFIDENCE_POOLED" in r for r in dec.gate_reasons)
-
-
-def test_jev_decision_cache_avoids_repeat_api_calls(monkeypatch):
-    """An unchanged market state is served locally on the second tick."""
-    _force_cloud_mode(monkeypatch)
-    monkeypatch.setattr(jev_service, "_cache_ttl_s", 30.0, raising=False)
-    calls: list = []
-    monkeypatch.setattr(
-        jev_service,
-        "_call_typesafe_api",
-        _fake_api([{"verdict": "APPROVE", "confidence": 0.82}], calls),
-    )
-
-    state = _api_state("CACHE_HIT")
-    first = jev_service.evaluate_decision(state)
-    assert first.source == "typesafe_api"
-    second = jev_service.evaluate_decision(state)
-    assert second.source == "typesafe_api"
-    assert len(calls) == 1  # Second call short-circuited on the cached decision
-    assert second.confidence == first.confidence
-
-
-def test_jev_circuit_breaker_opens_and_short_circuits(monkeypatch):
-    """Consecutive cloud failures must stop costing a timeout per candidate."""
-    _force_cloud_mode(monkeypatch)
-    monkeypatch.setattr(jev_service, "_breaker_failures", 3, raising=False)
-
-    def _boom(state):
-        jev_service._record_api_failure("synthetic")
-        return None
-
-    monkeypatch.setattr(jev_service, "_call_typesafe_api", _boom)
-    jev_service._fail_streak = 0
-    jev_service._breaker_open_until = 0.0
-
-    for _ in range(3):
-        assert jev_service.evaluate_decision(_api_state("BRK")).source == "local_surrogate"
-
-    assert jev_service.get_status()["circuit_state"] == "open"
-    assert jev_service.get_status()["healthy"] is False
-
-    # Now every further candidate resolves locally with no cloud attempt at all.
-    attempts = {"n": 0}
-
-    def _counted(state):
-        attempts["n"] += 1
-        return None
-
-    monkeypatch.setattr(jev_service, "_call_typesafe_api", _counted)
-    dec = jev_service.evaluate_decision(_api_state("BRK2"))
-    assert dec.source == "local_surrogate"
-    assert attempts["n"] == 0
-    assert jev_service.get_status()["short_circuit_count"] > 0
-
-    # After the cooldown the breaker half-opens and probes again.
-    jev_service._breaker_open_until = 0.0
-    jev_service.evaluate_decision(_api_state("BRK3"))
-    assert attempts["n"] == 1
-
-
-def test_jev_batch_resolves_all_items_and_skips_gated(monkeypatch):
-    """Batch must return one decision per state, with toxic states gated locally."""
-    _force_cloud_mode(monkeypatch)
-    calls: list = []
-    monkeypatch.setattr(
-        jev_service,
-        "_call_typesafe_api",
-        _fake_api([{"verdict": "APPROVE", "confidence": 0.81}], calls),
-    )
-
-    states = [
-        _api_state("B_A"),
-        _api_state("B_B"),
-        {**_api_state("B_TOXIC"), "india_vix": 27.0},  # hard-gated, no cloud call
-        {**_api_state("B_BADRR"), "risk_reward_ratio": 0.5},
-    ]
-    decisions = jev_service.evaluate_batch(states)
-
-    assert len(decisions) == 4
-    assert decisions[2].verdict == "REJECT" and decisions[2].action == "CANCEL"
-    assert decisions[3].verdict == "REJECT"
-    assert all(d.source == "typesafe_api" for d in decisions[:2])
-    assert len(calls) == 2  # Only the two clean states reached the network
-    assert all(d.latency_ms >= 0.0 for d in decisions)
-
-
-def test_jev_batch_empty_and_single_item(monkeypatch):
-    _force_cloud_mode(monkeypatch)
-    assert jev_service.evaluate_batch([]) == []
-    single = jev_service.evaluate_batch([_api_state("B_SINGLE")])
-    assert len(single) == 1
-    assert single[0].verdict in ("APPROVE", "REJECT", "CAUTION")
-
-
-def test_jev_surrogate_decisions_are_memoized(monkeypatch):
-    """
-    With no API key the surrogate answers every call — it must still be cached.
-
-    The surrogate is a pure function of the state, so the scanner's repeated
-    evaluation of an unchanged symbol should not recompute it each tick.
-    """
-    _force_cloud_mode(monkeypatch)
-    monkeypatch.setattr(jev_service, "_api_key", None, raising=False)
-    monkeypatch.setattr(jev_service, "_cache_ttl_s", 30.0, raising=False)
-
-    state = _api_state("SURROGATE_MEMO")
-    first = jev_service.evaluate_decision(state)
-    assert first.source == "local_surrogate"
-
-    before = jev_service.get_status()["surrogate_call_count"]
-    second = jev_service.evaluate_decision(state)
-    after = jev_service.get_status()["surrogate_call_count"]
-
-    assert second.source == "local_surrogate"
-    assert second.verdict == first.verdict
-    assert second.p_stop_hunt_risk == first.p_stop_hunt_risk
-    # The second call was served from cache, so no new surrogate work happened.
-    assert after == before
-    assert jev_service.get_status()["cache_hit_count"] > 0
-
-
-def test_jev_batch_memoizes_surrogate_and_does_not_pollute_breaker_telemetry(monkeypatch):
-    """
-    Unconfigured API must not be counted as a circuit-breaker short circuit.
-
-    Those are different conditions: "no key" is a steady state, while a short
-    circuit means the cloud is configured but known-down. Conflating them makes
-    the health telemetry lie during normal operation.
-    """
-    _force_cloud_mode(monkeypatch)
-    monkeypatch.setattr(jev_service, "_api_key", None, raising=False)
-    monkeypatch.setattr(jev_service, "_cache_ttl_s", 0.0, raising=False)
-
-    # These counters are process-global on the singleton, so assert on deltas.
-    before_sc = jev_service.get_status()["short_circuit_count"]
-    before_sur = jev_service.get_status()["surrogate_call_count"]
-
-    states = [_api_state(f"UNCONN{i}") for i in range(4)]
-    decisions = jev_service.evaluate_batch(states)
-    assert len(decisions) == 4
-
-    status = jev_service.get_status()
-    assert status["api_key_configured"] is False
-    assert status["short_circuit_count"] == before_sc
-    assert status["circuit_state"] == "closed"
-    assert status["surrogate_call_count"] == before_sur + 4
-
-
-
-# ---------------------------------------------------------------------------
-# 8. Batch Endpoint: System-1 must run as ONE true-batch pass, not per candidate
-# ---------------------------------------------------------------------------
 
 def _batch_payload(symbols, features=None):
     candles = [
@@ -1278,38 +886,6 @@ def test_batch_endpoint_uses_one_laya_pass_for_every_candidate(client, monkeypat
     assert data["jev_enabled"] is False
 
 
-def test_batch_endpoint_ignores_per_candidate_preferred_engine(client, monkeypatch):
-    """A candidate asking for a retired engine still gets the local checkpoint."""
-    import main
-
-    counts, _ = _instrument_laya(monkeypatch)
-    assert not hasattr(main, "jev_service"), "the cloud service must not be importable from the app"
-
-    candles = [
-        [100.0 + i, 102.0 + i, 99.0 + i, 101.5 + i, 5000.0 + i * 100]
-        for i in range(25)
-    ]
-    base = {"direction": "BUY", "setup_type": "PULLBACK", "risk_reward_ratio": 2.2, "india_vix": 14.0}
-    payload = {
-        "candidates": [
-            {"symbol": "MIX_LAYA", "ohlcv": candles, "features": {**base, "preferred_engine": "laya"}},
-            {"symbol": "MIX_JEV", "ohlcv": candles, "features": {**base, "preferred_engine": "jev"}},
-            {"symbol": "MIX_CONS", "ohlcv": candles, "features": {**base, "preferred_engine": "consensus"}},
-        ]
-    }
-    response = client.post("/inference/batch", json=payload)
-    assert response.status_code == 200
-    results = {r["symbol"]: r for r in response.json()["results"]}
-
-    for symbol in ("MIX_LAYA", "MIX_JEV", "MIX_CONS"):
-        assert results[symbol]["laya_decision"] is not None
-        assert results[symbol]["jev_decision"] is None
-        assert results[symbol]["system1_decision"]["provider"] == "laya"
-
-    assert counts["laya_batch"] == 1
-    assert counts["laya_single"] == 0
-
-
 def test_batch_endpoint_survives_one_candidate_failure(client, monkeypatch):
     """A single phase-1 failure must not void the rest of the batch."""
     import main
@@ -1352,6 +928,5 @@ def test_batch_endpoint_survives_one_candidate_failure(client, monkeypatch):
     assert results["OK_TWO"]["scored"] is True
     assert results["OK_TWO"]["system1_decision"] is not None
     del main
-
 
 

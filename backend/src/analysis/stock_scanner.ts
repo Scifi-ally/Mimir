@@ -754,8 +754,15 @@ const DYNAMIC_UNIVERSE_CACHE_MS = 6 * 60 * 60 * 1000;
 const UPSTOX_INSTRUMENTS_URL =
   process.env["UPSTOX_INSTRUMENTS_URL"] ??
   "https://assets.upstox.com/market-quote/instruments/exchange/NSE.json.gz";
+
+// On by default. It was off, which meant every symbol that produced no result
+// reported the single string "No qualified setup or candle data unavailable" -
+// so a missing candle series and a genuinely absent setup were indistinguishable
+// in the UI, and the scan's false-negative rate could not be diagnosed at all.
+// The diagnosis is a second candle fetch, so it is env-gated for anyone who
+// needs the scan to stay cheap: set DIAGNOSE_SCAN_FAILURES=false to opt out.
 const DIAGNOSE_SCAN_FAILURES =
-  (process.env["DIAGNOSE_SCAN_FAILURES"] ?? "false").toLowerCase() === "true";
+  (process.env["DIAGNOSE_SCAN_FAILURES"] ?? "true").toLowerCase() === "true";
 
 function mapSectorFromName(name: string): StockSector {
   const n = name.toLowerCase();
@@ -2092,8 +2099,22 @@ export async function scanMarket(
     }
   }
 
+  // Score floor for keeping a candidate.
+  //
+  // This used to be a hardcoded 6.5. minSuggestionScore is persisted, editable
+  // through the config API and shown in the settings UI, so an operator could
+  // change it and watch nothing happen - the scan never read it. Both live on
+  // the same 0-10 setup-score scale, so the config is now the single source of
+  // truth.
+  //
+  // The configured default is 7.5, stricter than the 6.5 that was hardcoded, so
+  // this will keep fewer candidates on a default install. That is the setting
+  // doing its job; the overnight aggregation path already has a top-N fallback
+  // so the UI does not go blank.
+  const scoreFloor = getConfig().minSuggestionScore;
+
   const sorted = results
-    .filter((r) => r.score >= 6.5)
+    .filter((r) => r.score >= scoreFloor)
     .sort((a, b) => b.score - a.score);
 
   // Aggregate sector performance from the full scan results to feed the regime detector

@@ -2,7 +2,9 @@
 Unified System-1 Decision Base Primitives.
 ─────────────────────────────────────────────────────────────────────────────
 Defines canonical Choice, Score, and Noul primitives shared across
-LAYA (Convai Innovations, open-weight ModernBERT RLCD) and JEV (TypeSafe AI).
+LAYA (Convai Innovations, open-weight ModernBERT RLCD). The former "jev"
+(TypeSafe AI) was a managed cloud API and has been retired - see
+system1_service.py.
 Provides single, lean, deterministic RLCD-calibrated surrogate and hard circuit breakers.
 """
 
@@ -32,7 +34,7 @@ class System1Decision:
     p_execution_success: float = 0.5  # Noul: P(fill without adverse selection)
     p_stop_hunt_risk: float = 0.2  # Noul: P(wick-triggered stop out)
     p_adverse_regime_shift: float = 0.2  # Noul: P(regime breakdown against setup)
-    provider: str = "laya"  # "laya" | "jev" | "consensus" | "local_surrogate"
+    provider: str = "laya"  # "laya" | "risk_gate" | "local_surrogate"
     model_id: str = "convaiinnovations/laya"
     source: str = "local_surrogate"
     latency_ms: float = 0.0

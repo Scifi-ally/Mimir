@@ -454,22 +454,11 @@ async function monitorAutomationHealth(): Promise<void> {
   }
 }
 
-let reconciliationWarned = false;
-async function runStateReconciliation(): Promise<void> {
-  const config = getConfig();
-  if (config.paperTradingEnabled) return; // Only applicable for live trading reconciliation
-
-  try {
-    // Fetch live positions from Upstox (aborting safely if getPositions is unimplemented rather than mocking 0 positions)
-    if (!reconciliationWarned) {
-      reconciliationWarned = true;
-      logger.warn("State reconciliation skipped — live trading order placement (placeOrder/getPositions) is not implemented. Set paperTradingEnabled=true or implement broker integration. (logged once)");
-    }
-    return;
-  } catch (err) {
-    logger.error({ err }, "State reconciliation failed");
-  }
-}
+// State reconciliation used to live here as runStateReconciliation(): it
+// returned immediately, logged once, and ran every minute during market hours.
+// Live broker order placement (placeOrder/getPositions) is not implemented, so
+// there is nothing to reconcile against. Removed rather than left as a job that
+// occupies a scheduler slot and implies reconciliation is happening.
 
 // ── Scheduler ────────────────────────────────────────────────────────────────
 
@@ -520,12 +509,6 @@ export function startScheduler(): void {
           minutesUntilOpen: minsUntilOpen,
           opensIn: formatMinutesAsCountdown(minsUntilOpen),
         },
-      });
-    }
-    // Also run state reconciliation to catch phantom orders
-    if (isMarketOpen()) {
-      void runExclusive("state-reconciliation", async () => {
-        await runStateReconciliation();
       });
     }
   });

@@ -37,13 +37,38 @@ function Wait-Port([int]$Port, [int]$Seconds) {
     return $false
 }
 
+# Poll for a process by name instead of sleeping a fixed amount. The previous
+# `Start-Sleep -Seconds 20` was wrong in both directions: it gave up on a cold
+# Rust build that needs minutes, and it made a warm start wait 20s for a window
+# that was already up.
+function Wait-Process([string]$Name, [int]$Seconds) {
+    $deadline = (Get-Date).AddSeconds($Seconds)
+    while ((Get-Date) -lt $deadline) {
+        $p = Get-Process -Name $Name -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($p) { return $p }
+        Start-Sleep -Milliseconds 500
+    }
+    return $null
+}
+
+$script:Timings = @{}
+
 Write-Host ""
 Write-Host "Mimir desktop launcher" -ForegroundColor Cyan
 Write-Host "----------------------" -ForegroundColor Cyan
 
-# --- 1. Postgres ------------------------------------------------------------
-# The portable cluster refuses to start unless its bin directory is on PATH;
-# without it every child process dies with STATUS_DLL_INIT_FAILED (0xC0000142).
+# --- 1 & 2. Postgres and Redis, started together ---------------------------
+# These two are completely independent - neither talks to the other, and
+# neither is a prerequisite for the AI service. The launcher used to start
+# Postgres, block until it was listening, then start Redis and block again,
+# so the slower of the two was pure added latency. Both are now kicked off
+# first and awaited together.
+#
+# Postgres still needs its bin directory on PATH or every child dies with
+# STATUS_DLL_INIT_FAILED (0xC0000142).
+$dataStart = Get-Date
+
+$pgStarted = $false
 if (Test-Port 5433) {
     Write-Host "[1/5] Postgres already listening on 5433" -ForegroundColor DarkGray
 } else {
@@ -55,16 +80,15 @@ if (Test-Port 5433) {
         Start-Process -FilePath (Join-Path $pgBin "postgres.exe") `
             -ArgumentList "-D", $pgData, "-p", "5433" `
             -WindowStyle Hidden | Out-Null
-        if (Wait-Port 5433 40) { Write-Host "      ready" -ForegroundColor Green }
-        else { Write-Host "      FAILED to start - check .portable\pgsql\data" -ForegroundColor Red }
+        $pgStarted = $true
     } else {
         Write-Host "[1/5] Postgres binaries/data missing" -ForegroundColor Red
     }
 }
 
-# --- 2. Redis ---------------------------------------------------------------
-# Bundled zip build under .portable\redis. Without it the backend logs an
-# unhandled ECONNREFUSED roughly every 5s and the cache/pubsub layer is dead.
+# Without Redis the backend logs an unhandled ECONNREFUSED roughly every 5s and
+# the cache/pubsub layer is dead.
+$redisStarted = $false
 if (Test-Port 6379) {
     Write-Host "[2/5] Redis already listening on 6379" -ForegroundColor DarkGray
 } else {
@@ -74,11 +98,22 @@ if (Test-Port 6379) {
         Start-Process -FilePath (Join-Path $redisDir "redis-server.exe") `
             -ArgumentList "--port", "6379", "--bind", "127.0.0.1", "--appendonly", "yes", "--dir", $redisDir `
             -WindowStyle Hidden | Out-Null
-        if (Wait-Port 6379 25) { Write-Host "      ready" -ForegroundColor Green }
-        else { Write-Host "      FAILED to start" -ForegroundColor Red }
+        $redisStarted = $true
     } else {
         Write-Host "[2/5] Redis missing - run scripts\install-redis.ps1 once" -ForegroundColor Red
     }
+}
+
+if ($pgStarted -or $redisStarted) {
+    if ($pgStarted) {
+        if (Wait-Port 5433 40) { Write-Host "      postgres ready" -ForegroundColor Green }
+        else { Write-Host "      postgres FAILED - check .portable\pgsql\data" -ForegroundColor Red }
+    }
+    if ($redisStarted) {
+        if (Wait-Port 6379 25) { Write-Host "      redis ready" -ForegroundColor Green }
+        else { Write-Host "      redis FAILED to start" -ForegroundColor Red }
+    }
+    $script:Timings["datastores"] = [math]::Round(((Get-Date) - $dataStart).TotalSeconds, 1)
 }
 
 # --- 3. AI service ----------------------------------------------------------
@@ -112,6 +147,7 @@ if (Test-Port 5000) {
 if ($NoDesktop) {
     Write-Host "[5/5] Skipping desktop shell (-NoDesktop)" -ForegroundColor DarkGray
 } else {
+    $desktopStart = Get-Date
     $sysroot = (rustc --print sysroot 2>$null)
     if ($sysroot -and $sysroot.Contains(" ") -and (Test-Path "C:\rust-sysroot")) {
         # GNU ld receives the sysroot glob unquoted and splits on the spaces.
@@ -121,10 +157,17 @@ if ($NoDesktop) {
     Write-Host "[5/5] Launching the desktop app..." -ForegroundColor Cyan
     Start-Process -FilePath "npm.cmd" -ArgumentList "run", "tauri:dev" `
         -WorkingDirectory (Join-Path $root "frontend") -WindowStyle Hidden | Out-Null
-    Start-Sleep -Seconds 20
-    $app = Get-Process -Name "mimir" -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($app) { Write-Host "      app running (pid $($app.Id))" -ForegroundColor Green }
-    else { Write-Host "      app not detected yet - check the terminal output" -ForegroundColor Yellow }
+    # Poll for the actual process. A cold Rust build takes minutes, so the old
+    # fixed 20s sleep reported "app not detected" on every first build while
+    # still burning 20s on a warm start where the window was already up.
+    $app = Wait-Process "mimir" 420
+    if ($app) {
+        Write-Host "      app running (pid $($app.Id))" -ForegroundColor Green
+    } else {
+        Write-Host "      app not detected within 7 min - a Rust build is probably still running" -ForegroundColor Yellow
+        Write-Host "      or failed; run 'npm run tauri:dev' in frontend\ to see the error" -ForegroundColor Yellow
+    }
+    $script:Timings["desktop"] = [math]::Round(((Get-Date) - $desktopStart).TotalSeconds, 1)
 }
 
 Write-Host ""
@@ -134,5 +177,15 @@ foreach ($p in @(5433, 6379, 8001, 5000, 3000)) {
     $state = if (Test-Port $p) { "UP" } else { "down" }
     $color = if ($state -eq "UP") { "Green" } else { "DarkGray" }
     Write-Host ("  {0,-9} {1,5}  {2}" -f $label, $p, $state) -ForegroundColor $color
+}
+
+if ($script:Timings.Count -gt 0) {
+    Write-Host ""
+    Write-Host "Startup timings:" -ForegroundColor Cyan
+    foreach ($k in @("datastores", "desktop")) {
+        if ($script:Timings.ContainsKey($k)) {
+            Write-Host ("  {0,-12} {1,6} s" -f $k, $script:Timings[$k]) -ForegroundColor DarkGray
+        }
+    }
 }
 Write-Host ""
