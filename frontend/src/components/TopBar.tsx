@@ -201,13 +201,6 @@ export const TopBar = memo(function TopBar({
           "h-[calc(48px+env(safe-area-inset-top))] pt-[env(safe-area-inset-top)]",
         )}
       >
-        {/* Window controls sit above everything, pinned to the top-right corner,
-            clear of the toolbar row so they never collide with it. */}
-        {isTauriRuntime() && (
-          <div className="absolute top-0 right-2 z-20 flex items-center pt-2">
-            <WindowControls />
-          </div>
-        )}
         <div className="flex flex-col w-full">
           <div className="flex w-full min-w-0 items-center justify-between gap-3 sm:gap-4 whitespace-nowrap">
             <div className="hidden sm:flex min-w-0 flex-1 items-center gap-x-3 pr-2 relative">
@@ -494,13 +487,18 @@ export const TopBar = memo(function TopBar({
           </Button>
           </motion.div>
           
-          <span className="flex shrink-0 items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.12em] text-foreground/60 px-1 font-sans">
+            <span className="flex shrink-0 items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.12em] text-foreground/60 px-1 font-sans">
             <span className={cn(
               "h-1.5 w-1.5 rounded-full", 
               wsConnected ? "bg-[#34C759] shadow-[0_0_8px_rgba(52,199,89,0.6)] animate-[pulse-bloom_4s_ease-in-out_infinite]" : "bg-red-500/80"
             )} />
             <span className="hidden sm:inline">{wsConnected ? "Live" : "Offline"}</span>
           </span>
+
+          {/* Window controls are the last item in the row, in normal flow. They
+              used to be absolutely positioned over the header, which put them on
+              top of the theme toggle and the Live indicator. */}
+          {isTauriRuntime() && <WindowControls />}
         </div>
         </div>
           </div>

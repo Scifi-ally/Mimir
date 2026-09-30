@@ -3,14 +3,19 @@ import { isTauriRuntime } from "@/lib/backendOrigin";
 import { cn } from "@/lib/format";
 
 /**
- * macOS-style window controls, right-aligned.
+ * Custom window controls.
  *
  * The shell runs with `decorations: false`, so the OS chrome is gone and these
- * replace it. Traffic lights on the right rather than the macOS left edge:
- * right-hand placement is what the surrounding app layout expects, and it keeps
- * the close button in the corner nearest the pointer.
+ * replace it. They are deliberately NOT macOS traffic lights: no coloured
+ * circles, no glyphs hidden until hover. Just three thin monochrome marks that
+ * stay visible, so the controls are always discoverable, and they keep the
+ * Windows convention of minimise / maximise / close reading left to right.
  *
- * Windows draws these itself normally, so every action here needs a matching
+ * These sit as the last item in the header's flex row rather than being
+ * absolutely positioned over it. That makes overlap with the theme toggle and
+ * the Live indicator structurally impossible, instead of merely unlikely.
+ *
+ * Windows draws these itself normally, so every action needs a matching
  * permission in src-tauri/capabilities/default.json.
  */
 export function WindowControls() {
@@ -56,37 +61,55 @@ export function WindowControls() {
   };
 
   const base =
-    "group inline-flex h-3 w-3 shrink-0 items-center justify-center rounded-full border transition-all duration-150";
+    "inline-flex h-6 w-7 shrink-0 items-center justify-center rounded text-foreground/45 " +
+    "transition-colors duration-150 hover:bg-foreground/10 hover:text-foreground " +
+    "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-foreground/40";
 
   return (
-    <div className="flex shrink-0 items-center gap-1.5" data-tauri-drag-region={false}>
+    <div className="-mr-1 flex shrink-0 items-center" data-tauri-drag-region={false}>
       <button
         type="button"
         aria-label="Minimise"
         title="Minimise"
-        className={cn(base, "border-amber-400/70 bg-amber-500/70 hover:bg-amber-400")}
+        className={base}
         onClick={() => run((w) => w.minimize())}
       >
-        <span className="h-[1.5px] w-[7px] rounded-full bg-black/55 opacity-0 transition-opacity group-hover:opacity-100" />
+        <span className="block h-px w-2.5 bg-current" />
       </button>
+
       <button
         type="button"
         aria-label={maximized ? "Restore" : "Maximise"}
         title={maximized ? "Restore" : "Maximise"}
-        className={cn(base, "border-emerald-400/70 bg-emerald-500/70 hover:bg-emerald-400")}
+        className={base}
         onClick={() => run((w) => w.toggleMaximize())}
       >
-        <span className="h-[7px] w-[7px] rounded-[1px] border-[1.5px] border-black/55 opacity-0 transition-opacity group-hover:opacity-100" />
+        {maximized ? (
+          // Two offset outlines read as "restore" without needing a label.
+          <span className="relative block h-[7px] w-[7px]">
+            <span className="absolute left-0 top-0 h-[5px] w-[5px] rounded-[1px] border border-current" />
+            <span className="absolute bottom-0 right-0 h-[5px] w-[5px] rounded-[1px] border border-current bg-background" />
+          </span>
+        ) : (
+          <span className="block h-[7px] w-[7px] rounded-[1px] border border-current" />
+        )}
       </button>
+
       <button
         type="button"
         aria-label="Close"
         title="Close"
-        className={cn(base, "border-red-400/70 bg-red-500/70 hover:bg-red-500")}
+        // Red appears only on hover, so the resting bar stays monochrome.
+        className={cn(base, "hover:bg-destructive/15 hover:text-destructive")}
         onClick={() => run((w) => w.close())}
       >
-        <svg viewBox="0 0 8 8" className="h-[7px] w-[7px] opacity-0 transition-opacity group-hover:opacity-100">
-          <path d="M1 1 L7 7 M7 1 L1 7" stroke="black" strokeWidth="1.4" strokeLinecap="round" />
+        <svg viewBox="0 0 10 10" className="h-[9px] w-[9px]">
+          <path
+            d="M1 1 L9 9 M9 1 L1 9"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+          />
         </svg>
       </button>
     </div>
