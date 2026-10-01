@@ -83,22 +83,35 @@ class ConfluenceService:
         """Return explicit artifact and fallback state for health diagnostics."""
         models = self.models
         has_models = bool(models)
+        # The training extractor parses a "T:/K:/C:/R:/S:/E:" prefix out of the
+        # suggestion `reasoning` string. Nothing in the codebase emits that
+        # format, so every parsed feature fell through to its 50 default and the
+        # committed corpus is six rows of constant 50s. train_confluence.py
+        # requires >= 50 rows per regime, so this can never train no matter how
+        # long the platform runs.
+        #
+        # That is a broken extractor, not a cold start. Reporting it as
+        # "cold_start: requires closed-trade history" told an operator to wait
+        # for trades that would never make it trainable.
+        training_data_broken = True
         return {
             "model": "regime-confluence-lightgbm",
             "loaded": has_models,
-            "healthy": True,
+            # Was hardcoded True regardless of whether any artifact existed.
+            # It is only healthy if it is actually serving trained models.
+            "healthy": has_models,
             "fallback_active": not has_models,
-            # No trained artifact is a COLD START, not a failure: this component
-            # trains on closed-trade history, of which a fresh install has none.
-            # Reporting it as "degraded" made an expected condition look like a
-            # fault and buried genuinely broken components in the same list.
-            "cold_start": not has_models,
+            "cold_start": not has_models and not training_data_broken,
+            "training_data_broken": training_data_broken and not has_models,
             "status_reason": (
                 None
                 if has_models
-                else "no trained confluence model yet - requires closed-trade history "
-                     "(suggestions/signal_outcomes); serving the deterministic fallback"
+                else "training data extractor emits a feature format no producer writes, "
+                     "so the per-regime corpus can never reach the 50-row minimum - "
+                     "this component cannot train and its output is discarded by the "
+                     "caller. Effectively dead weight."
             ),
+            "output_consumed_by_caller": False,
             "loaded_regimes": sorted(models.keys()),
             "artifact_count": len(models),
         }

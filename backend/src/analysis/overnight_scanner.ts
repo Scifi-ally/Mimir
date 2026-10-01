@@ -1,6 +1,16 @@
 import { db } from "../../db/src";
 import { overnightWatchlistTable } from "../../db/src";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
+
+/**
+ * Tags every row this scanner writes so its delete can be scoped to itself.
+ *
+ * Four pipelines share overnight_watchlist. A blanket delete-by-date meant
+ * whichever ran last silently erased the others.
+ */
+export const WATCHLIST_SOURCE = "OFFHOURS_SCAN" as const;
+
+
 import { logger } from "../lib/logger";
 import { scanMarket, getEffectiveUniverse, getUniverseDiagnostics } from "./stock_scanner";
 import {
@@ -462,9 +472,10 @@ export async function runOvernightScanner(
     lastScanStage = "aggregating";
     const candidates = aggregateResultsBySymbol(completedDays, resultsByDay, source)
       .slice(0, 20)
-      .map((candidate) => ({
-        forDate: tomorrowStr,
-        symbol: candidate.symbol,
+.map((candidate) => ({
+    forDate: tomorrowStr,
+    source: WATCHLIST_SOURCE,
+    symbol: candidate.symbol,
         name: candidate.name ? candidate.name.substring(0, 95) : "",
         category: candidate.category ? candidate.category.substring(0, 29) : "",
         condition: fitConditionForStorage(candidate.condition),
@@ -509,7 +520,18 @@ export async function runOvernightScanner(
     if (candidates.length > 0) {
       try {
         await db.transaction(async (tx) => {
-          await tx.delete(overnightWatchlistTable).where(eq(overnightWatchlistTable.forDate, tomorrowStr));
+          // Scoped to this scanner's own rows. Several pipelines share
+          // overnight_watchlist, and a blanket delete-by-date meant whichever ran
+          // last silently erased the others - including the post-market
+          // scanner's candidates, which are computed differently.
+          await tx
+            .delete(overnightWatchlistTable)
+            .where(
+              and(
+                eq(overnightWatchlistTable.forDate, tomorrowStr),
+                eq(overnightWatchlistTable.source, WATCHLIST_SOURCE),
+              ),
+            );
           await tx.insert(overnightWatchlistTable).values(candidates);
         });
       } catch (dbErr) {

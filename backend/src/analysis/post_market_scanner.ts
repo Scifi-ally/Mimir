@@ -15,7 +15,17 @@
 import { logger } from "../lib/logger";
 import { db } from "../../db/src";
 import { overnightWatchlistTable } from "../../db/src";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
+
+/**
+ * Tags every row this scanner writes so its delete can be scoped to itself.
+ *
+ * Four pipelines share overnight_watchlist. A blanket delete-by-date meant
+ * whichever ran last silently erased the others.
+ */
+export const WATCHLIST_SOURCE = "POSTMARKET_SCAN" as const;
+
+
 import { broadcast } from "../ws/websocket_server";
 import { createServerEvent } from "../ws/events";
 import { getTargetTradingSessionDate } from "../market_data/market_state";
@@ -384,10 +394,23 @@ async function saveWatchlistCandidates(
   }
 
   try {
-    // Delete existing candidates for this date
+    // Delete only this scanner's own rows for the date.
+    //
+    // This used to delete every row for the date, which meant a manual
+    // post-market scan run after the off-hours scan replaced the off-hours
+    // output with this scanner's weaker set. The two use different scoring:
+    // this path calls analyzeMultiTimeframe, which applies none of the 15 setup
+    // detectors, the liquidity/turnover/ATR gates, the RS hard gates, the
+    // negative-expectancy kill list or the score floor that scanStock applies.
+    // The richer list was destroyed with nothing in the logs to say so.
     await db
       .delete(overnightWatchlistTable)
-      .where(eq(overnightWatchlistTable.forDate, forDate));
+      .where(
+        and(
+          eq(overnightWatchlistTable.forDate, forDate),
+          eq(overnightWatchlistTable.source, WATCHLIST_SOURCE),
+        ),
+      );
 
     // Insert new candidates
     const rows = candidates.map((c) => {
@@ -400,6 +423,7 @@ async function saveWatchlistCandidates(
       
       return {
         forDate,
+        source: WATCHLIST_SOURCE,
         symbol: c.symbol,
         name: c.name ? c.name.substring(0, 95) : "",
         category: c.category ? c.category.substring(0, 29) : "",

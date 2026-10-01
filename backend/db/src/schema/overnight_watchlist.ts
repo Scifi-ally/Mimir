@@ -22,6 +22,13 @@ export const overnightWatchlistTable = pgTable("overnight_watchlist", {
   symbol: varchar("symbol", { length: 20 }).notNull(),
   name: varchar("name", { length: 100 }),
   category: varchar("category", { length: 30 }).notNull(), // MOMENTUM | BREAKOUT_WATCH | GAP_CANDIDATE | INTRADAY_BUY | INTRADAY_SELL | AVOID
+  // Which pipeline wrote this row. Four scanners share this table
+  // (overnight, post-market, gap, intraday) and each used to delete every row
+  // for the date before inserting its own, so running the post-market scanner
+  // manually after the off-hours scan replaced the richer off-hours output with
+  // a weaker set derived from a different scoring model. Scoping deletes to a
+  // source makes that impossible.
+  source: varchar("source", { length: 30 }).notNull().default("OFFHOURS_SCAN"),
   condition: text("condition"),
   priority: integer("priority"),
   createdAt: timestamp("created_at", { withTimezone: true })

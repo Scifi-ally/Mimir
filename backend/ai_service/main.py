@@ -228,12 +228,20 @@ def _build_health_snapshot() -> Dict[str, Any]:
     elif ranker_status.get("width_mismatch_rows") or ranker_status.get("without_features_rows"):
         degraded_components.append("ranker_contract_mismatch")
     if confluence_status.get("fallback_active"):
-        if confluence_status.get("cold_start"):
+        # A broken training-data extractor is not a cold start. Filing it as one
+        # told an operator to wait for trades that could never make it trainable,
+        # which is the same mistake as reporting "healthy" with no artifact.
+        if confluence_status.get("training_data_broken"):
+            degraded_components.append("confluence_training_data_broken")
+        elif confluence_status.get("cold_start"):
             cold_start_components.append("confluence")
         else:
             degraded_components.append("confluence")
     if not rl_agent_service.is_loaded:
-        if getattr(rl_agent_service, "cold_start", True):
+        if getattr(rl_agent_service, "load_error", None):
+            # A missing dependency cannot be trained away.
+            degraded_components.append("rl_unusable")
+        elif getattr(rl_agent_service, "cold_start", True):
             cold_start_components.append("rl")
         else:
             degraded_components.append("rl")

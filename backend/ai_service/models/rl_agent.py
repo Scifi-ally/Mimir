@@ -72,6 +72,12 @@ class RLAgentService:
         self.cold_start = True
 
         if not _SB3_AVAILABLE:
+            # A missing dependency is a fault, not an expected cold start.
+            # Returning here left cold_start = True forever, so an unusable
+            # service was reported as "untrained, using fallbacks".
+            self.cold_start = False
+            self.load_error = "stable_baselines3 is not installed; the RL policy cannot run"
+            logger.error(self.load_error)
             return
 
         model_path = os.getenv("RL_MODEL_PATH", os.path.join(os.path.dirname(__file__), "..", "rl_model.zip"))
@@ -93,14 +99,28 @@ class RLAgentService:
     def get_status(self) -> Dict[str, Any]:
         """Return runtime status without exposing the model object."""
         model_path = os.getenv("RL_MODEL_PATH", os.path.join(os.path.dirname(__file__), "..", "rl_model.zip"))
+        artifact_present = os.path.exists(model_path)
         return {
             "model": "stable-baselines3-ppo",
             "policy": "MlpPolicy",
             "artifact_path": model_path,
-            "artifact_present": os.path.exists(model_path),
+            "artifact_present": artifact_present,
             "loaded": self.is_loaded,
+            # healthy == is_loaded, so this reads false on a correctly
+            # cold-started system. That is the inverse of the useful question,
+            # which is whether anything is WRONG. Kept for compatibility, with
+            # unusable/fault states broken out below.
             "healthy": self.is_loaded,
             "fallback_active": not self.is_loaded,
+            "load_error": getattr(self, "load_error", None),
+            "unusable": bool(getattr(self, "load_error", None)),
+            # Even if a policy were trained, one observation axis is dead:
+            # train_rl.py hardcodes pcr = 1.0 for every sample because it has no
+            # historical options series, and predict() feeds the same constant.
+            # The policy can never have learned anything about options
+            # positioning, so an artifact would still not see it. Saying so
+            # stops a trained policy being read as fully featured.
+            "untrainable_observations": ["pcr"],
         }
 
     def reload_model(self):
