@@ -162,6 +162,26 @@ def recommended_threshold() -> Optional[float]:
     return _recommended_threshold
 
 
+def _looks_stale() -> bool:
+    """True when the served artifact predates the available training data.
+
+    The shipped artifact reports a +1.25% greenlight expectancy from a 500-row
+    corpus with a 52.6% base win rate. The real corpus has 17,407 rows at a 6%
+    base rate, and a retrain on it measured NEGATIVE expectancy and was refused.
+    Comparing the two is the only way an operator can see that the served
+    model's headline number describes a market that does not exist.
+    """
+    m = _metrics or {}
+    base = m.get("greenlight_expectancy_pct")
+    trained = m.get("test_n")
+    if base is None or trained is None:
+        return False
+    try:
+        return float(trained) < 1000
+    except (TypeError, ValueError):
+        return False
+
+
 def get_status() -> Dict[str, Any]:
     """
     Status, plus whether the ranker is actually participating in decisions.
@@ -204,6 +224,25 @@ def get_status() -> Dict[str, Any]:
         # True until the model has been shown to serve predictions. Distinct
         # from "cold start": the artifact exists, it just has not been used yet.
         "gate_never_exercised": _loaded and predicted == 0,
+        # The metrics on the served artifact describe the data it was trained
+        # on, which is not necessarily the data available now.
+        #
+        # The currently shipped artifact reports greenlight_expectancy_pct of
+        # +1.25 from a 500-row corpus with a 52.6% base win rate. Retraining on
+        # the real corpus (17,407 rows, 6% base rate, purged, 24h embargo)
+        # measured take-all at -0.45%/trade and greenlight at -0.42%/trade, and
+        # the trainer correctly refused to write a replacement. So the served
+        # model is not merely stale: its headline number describes a dataset that
+        # does not represent this market, while a live veto uses it.
+        #
+        # Surfaced rather than left in /health as a plain metric, because
+        # "test_auc 0.723" reads as current when it is not.
+        "metrics_stale": _loaded and _looks_stale(),
+        "served_threshold": _recommended_threshold,
+        "metrics_note": (
+            "metrics describe the training corpus at trained_at, not current data; "
+            "a retrain on the real corpus was refused for failing to beat take-all"
+        ),
     }
 
 
