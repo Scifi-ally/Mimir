@@ -19,7 +19,7 @@ export type System1Action =
   | "LIMIT_PULLBACK"
   | "CANCEL";
 
-export type System1Provider = "laya" | "jev" | "consensus" | "local_surrogate" | "native_ts_surrogate";
+export type System1Provider = "laya" | "jev" | "consensus" | "local_surrogate" | "native_ts_laya";
 
 /**
  * Strongly typed System-1 decision record.
@@ -45,7 +45,7 @@ export interface System1Decision {
   position_size_multiplier?: number;
   /** Explanatory gate reasons / audit trail */
   gate_reasons: string[];
-  /** Model provider ("laya" | "jev" | "local_surrogate" | "native_ts_surrogate") */
+  /** Model provider ("laya" | "jev" | "local_surrogate" | "native_ts_laya") */
   provider: System1Provider;
   /** Identifier of the model (e.g. "convaiinnovations/laya", "jev-1") */
   model_id: string;

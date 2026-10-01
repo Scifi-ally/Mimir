@@ -42,7 +42,7 @@ describe("LAYA System-1 offline fallback", () => {
     expect(decision).toBeDefined();
     expect(decision.verdict).toBe("APPROVE");
     expect(decision.provider).toBe("laya");
-    expect(decision.source).toBe("native_ts_surrogate");
+    expect(decision.source).toBe("native_ts_laya");
   });
 
   it("should support consensus provider evaluation with confidence boost in native surrogate", async () => {
@@ -56,7 +56,7 @@ describe("LAYA System-1 offline fallback", () => {
     };
     const decision = await evaluateSystem1Decision(req, "consensus");
     expect(decision.provider).toBe("consensus");
-    expect(decision.source).toBe("native_ts_consensus");
+    expect(decision.source).toBe("native_ts_laya");
   });
 
   it("should route evaluateSystem1Decision per engine when offline", async () => {
@@ -122,7 +122,7 @@ describe("LAYA System-1 Native Decision Gatekeeper", () => {
     // neural model.
     expect(decision.model_id).toBe("native_ts_deterministic_surrogate");
     expect(decision.model_id).not.toBe("convaiinnovations/laya");
-    expect(decision.source).toBe("native_ts_surrogate");
+    expect(decision.source).toBe("native_ts_laya");
     // Noul primitives
     expect(decision.p_execution_success).toBeGreaterThan(0.5);
     expect(decision.p_stop_hunt_risk).toBeLessThan(0.5);
@@ -417,7 +417,7 @@ describe("Unified System-1 Contract & Router Parity", () => {
     expect(decConsensus.provider).toBe("consensus");
     expect(decConsensus.verdict).toBe("APPROVE");
     expect(decConsensus.gate_reasons).toContain("SYSTEM1_DUAL_ENGINE_CONSENSUS");
-    expect(decConsensus.source).toBe("native_ts_consensus");
+    expect(decConsensus.source).toBe("native_ts_laya");
 
     const decSingle = computeNativeSystem1Decision(req, "laya");
     expect(decConsensus.confidence).toBeGreaterThanOrEqual(decSingle.confidence);

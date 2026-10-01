@@ -222,9 +222,9 @@ export async function checkAIHealth(): Promise<HealthResponse> {
         sentiment: { loaded: false, healthy: false, fallback_active: true, fallback_mode: "keyword_or_neutral" },
         confluence: { loaded: false, healthy: false, fallback_active: true },
         rl_inference: { loaded: false, healthy: false, fallback_active: true },
-        jev: { loaded: true, healthy: true, fallback_active: true, mode: "native_ts_surrogate" },
-        laya: { loaded: true, healthy: true, fallback_active: true, mode: "native_ts_surrogate" },
-        system1: { loaded: true, healthy: true, fallback_active: true, mode: "native_ts_surrogate" },
+jev: { loaded: false, healthy: false, fallback_active: false },
+          laya: { loaded: true, healthy: true, fallback_active: true, mode: "native_ts_laya" },
+          system1: { loaded: true, healthy: true, fallback_active: true, mode: "native_ts_laya" },
       },
       hardware: { type: "Node.js Fallback" },
       diagnostics: { latency: "0ms", error: "FastAPI unreachable" }
@@ -866,7 +866,7 @@ export function computeNativeSystem1Decision(
       position_size_multiplier: 0.0,
       provider,
       model_id: modelId,
-      source: provider === "consensus" ? "native_ts_consensus" : "native_ts_surrogate",
+      source: "native_ts_laya",
     };
   }
 
@@ -917,7 +917,7 @@ export function computeNativeSystem1Decision(
       sizeMultiplier = 1.0;
     }
 
-    const source = provider === "consensus" ? "native_ts_consensus" : "native_ts_surrogate";
+    const source = "native_ts_laya";
 
     return {
       verdict: "APPROVE",
@@ -939,7 +939,7 @@ export function computeNativeSystem1Decision(
     if (provider === "consensus") {
       gateReasons.push("SYSTEM1_DUAL_ENGINE_CONSENSUS");
     }
-    const source = provider === "consensus" ? "native_ts_consensus" : "native_ts_surrogate";
+    const source = "native_ts_laya";
     return {
       verdict: "CAUTION",
       action: rr >= 1.5 ? "LIMIT_PULLBACK" : "CONFIRMED_ENTRY",
@@ -957,7 +957,7 @@ export function computeNativeSystem1Decision(
     };
   } else {
     gateReasons.push("LOW_OPPORTUNITY_SCORE");
-    const source = provider === "consensus" ? "native_ts_consensus" : "native_ts_surrogate";
+    const source = "native_ts_laya";
     return {
       verdict: "REJECT",
       action: "CANCEL",

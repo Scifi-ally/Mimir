@@ -42,8 +42,8 @@ describe("System-1 honest attribution", () => {
   });
 
   it("must mark the source as a native surrogate so downstream can flag it", () => {
-    expect(computeNativeLayaDecision(CLEAN_SETUP).source).toBe("native_ts_surrogate");
-    expect(computeNativeSystem1Decision(CLEAN_SETUP, "consensus").source).toBe("native_ts_consensus");
+    expect(computeNativeLayaDecision(CLEAN_SETUP).source).toBe("native_ts_laya");
+    expect(computeNativeSystem1Decision(CLEAN_SETUP, "consensus").source).toBe("native_ts_laya");
   });
 });
 
