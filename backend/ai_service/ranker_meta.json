@@ -140,15 +140,6 @@
     ]
   },
   "recommended_threshold": 0.63,
-  "metrics": {
-    "test_auc": 0.723,
-    "val_auc": 0.723,
-    "test_brier": 0.2335,
-    "take_all_expectancy_pct": 0.62,
-    "greenlight_expectancy_pct": 1.25,
-    "greenlight_n": 28,
-    "test_n": 100
-  },
   "feature_importance": {
     "rsi14": 75,
     "atr14": 9,
@@ -183,5 +174,19 @@
     "cprWidthPct": 7,
     "fiiDiiNetFlowLag": 0
   },
-  "trained_at": "2026-07-27T07:32:18Z"
+  "trained_at": "2026-07-27T07:32:18Z",
+  "legacy_unverified_metrics": {
+    "why": "Recorded by a pre-gate training run (2026-07-27) that no walk-forward validation existed to check it against. NOT current evidence.",
+    "contradicted_by": "train_ranker.py on 17407 rows: test_auc 0.5867, take_all -0.4454%, greenlight -0.4214% - and that model was correctly refused promotion.",
+    "sample_sizes_below_threshold": "greenlight_n=28 and test_n=100 are both under the 30-closed-trade bar the product itself uses for profitabilityMeasured.",
+    "values": {
+      "test_auc": 0.723,
+      "val_auc": 0.723,
+      "test_brier": 0.2335,
+      "take_all_expectancy_pct": 0.62,
+      "greenlight_expectancy_pct": 1.25,
+      "greenlight_n": 28,
+      "test_n": 100
+    }
+  }
 }

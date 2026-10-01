@@ -1,44 +1,35 @@
 import { describe, expect, it } from "vitest";
 import { toBatchInferenceCandidate } from "./inference_payload";
 import type { FeatureVector } from "./feature_engine";
+import { RANKER_FEATURE_KEYS } from "./ranker_contract";
 
+// Built FROM RANKER_FEATURE_KEYS rather than hand-written.
+//
+// This fixture used to list features by their old names (rsi, atr, ema9Distance,
+// priceRoc, bollingerWidth, cprWidth, fiiDiiFlowLag) - none of which the ranker
+// has read for some time. Every one of those silently became 0 through the
+// zero-fill in toRankerFeatureArray, so the test asserted a correct-looking
+// 32-wide payload while 19 columns were fiction.
+//
+// Deriving it from the contract means a future key change fails the build rather
+// than quietly widening this fixture's fiction.
 function featureVector(overrides: Partial<FeatureVector> = {}): FeatureVector {
+  const base = Object.fromEntries(
+    RANKER_FEATURE_KEYS.map((key, i) => [key, (i + 1) / 100]),
+  );
   return {
-    rsi: 55,
-    atr: 2,
-    adx: 20,
-    volumeRatio: 1.2,
-    vwapDistance: 0.01,
-    ema9Distance: 0.02,
-    ema21Distance: 0.03,
-    ema50Distance: 0.04,
-    ema200Distance: 0.05,
-    emaAlignment: 1,
-    trendConsistency: 0.7,
-    rsVsNifty60d: 1.05,
-    rsVsSector: 1.01,
-    pocDistance: 0.02,
-    bollingerWidth: 0.1,
-    vcpContraction: 0.4,
-    momentumScore: 70,
-    trendScore: 65,
-    volatilityScore: 50,
-    riskReward: 2,
-    priceRoc: 0.03,
-    upperWickRatio: 0.1,
-    lowerWickRatio: 0.2,
-    bodyRatio: 0.6,
-    realizedVolatility: 0.02,
-    volOfVol: 0.01,
-    cprWidth: 0.03,
-    fiiDiiFlowLag: 10,
+    ...base,
+    symbol: "RELIANCE",
+    sector: "Energy",
+    timestamp: new Date("2026-01-01T00:00:00Z").toISOString(),
+    // Context the inference payload reads, not model features.
     bidAskImbalance: 0.2,
     optionsOiChangeRate: 0.1,
-    rankerIncomplete: false,
     sectorStrength: 0.5,
     regimeScore: 70,
+    rankerIncomplete: false,
     ...overrides,
-  } as FeatureVector;
+} as unknown as FeatureVector;
 }
 
 describe("inference payload boundary", () => {

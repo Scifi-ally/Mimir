@@ -47,15 +47,20 @@ vi.mock('../config', () => ({
   getConfig: vi.fn(() => ({ minAutoConfidencePct: 60, strictRegimeGate: false }))
 }));
 
+const { RANKER_KEYS } = vi.hoisted(() => ({ RANKER_KEYS: ['rsi14', 'atr14', 'atrPct', 'adx14', 'volumeRatio', 'vwapDistance', 'ema20Dist', 'ema50Dist', 'ema200Dist', 'emaAlignment', 'trendConsistency', 'rsVsNifty60d', 'rsVsSector60d', 'pocDistancePct', 'bbWidthPct', 'vcpContraction', 'momentumScore', 'trendScore', 'volatilityScore', 'riskRewardScore', 'priceRoc5', 'priceRoc10', 'priceRoc20', 'bodyRatio', 'upperWickRatio', 'lowerWickRatio', 'closeLocation', 'realizedVol5', 'realizedVol20', 'volOfVol', 'cprWidthPct', 'fiiDiiNetFlowLag'] }));
+
 vi.mock('./feature_engine', () => ({
   computeFeatureVector: vi.fn(() => ({
+    symbol: 'RELIANCE',
+    ...Object.fromEntries(RANKER_KEYS.map((k, i) => [k, (i + 1) / 100])),
     regimeScore: 50,
     sectorStrength: 1,
-    rsVsNifty60d: 1.0,
-    atr14: 10,
-    vwapDistance: 0
+    bidAskImbalance: 0.2,
+    optionsOiChangeRate: 0.1,
+    rankerIncomplete: false
   })),
-  toRankerFeatureArray: vi.fn(() => [])
+  toRankerFeatureArray: vi.fn(() => RANKER_KEYS.map((_k, i) => (i + 1) / 100)),
+  RANKER_FEATURE_KEYS: RANKER_KEYS
 }));
 
 vi.mock('../../db/src', () => ({
