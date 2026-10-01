@@ -6,7 +6,7 @@
  * then enforces all risk gates before inserting into the DB.
  */
 import { db } from "../../db/src";
-import { suggestionsTable, overnightWatchlistTable, rejectedCandidatesTable } from "../../db/src";
+import { suggestionsTable, overnightWatchlistTable, rejectedCandidatesTable, aiScoresTable } from "../../db/src";
 import { eq, and, desc, gte, or, inArray, sql } from "drizzle-orm";
 import { getAccessToken } from "../upstox/auth";
 import { getConfig } from "../config";
@@ -915,6 +915,72 @@ async function withSymbolLock<T>(symbol: string, fn: () => Promise<T>): Promise<
 }
 
 /**
+ * Persist the model's scores for this suggestion.
+ *
+ * ai_scores had a full schema and no writer, which meant the weekly Alpha Score
+ * IC job - scheduled every Saturday, joining signal_outcomes to ai_scores - could
+ * never produce a value. It always hit its minimum-sample guard and logged "not
+ * recording IC", so the platform had no live measurement of whether its scores
+ * actually predicted outcomes. Writing the scores here is one half of that; the
+ * other half is accuracy_tracker writing the realised outcome.
+ *
+ * composite_score records the confidence that actually gated this trade, not the
+ * raw AI composite. The raw composite is telemetry - it is not an input to
+ * computeFinalConfidence - so correlating it against realised P&L would measure
+ * a number that never influenced the decision.
+ *
+ * A failure here must not lose the signal: the suggestion row is already written
+ * and the paper engine is about to be told about it.
+ */
+async function recordAiScores(
+  suggestionId: string,
+  signal: {
+    symbol: string;
+    aiScore: number;
+    patternScore: number;
+    chronosScore: number;
+    technicalScore: number;
+    sentimentScore: number;
+    confidence: number;
+    rankingProvider?: string;
+    // The full FeatureVector, not a plain record: it is a typed shape and is
+    // stored verbatim so a realised outcome can be joined back to what the model
+    // saw when it decided.
+    featureVector?: unknown;
+  },
+): Promise<void> {
+  const finite = (v: unknown): number =>
+    typeof v === "number" && Number.isFinite(v) ? v : 0;
+
+  try {
+    await db.insert(aiScoresTable).values({
+      suggestionId,
+      symbol: signal.symbol,
+      modelName: signal.rankingProvider ?? "mimir-analysis-ensemble",
+      // All inputs are 0-100; the columns are decimal(5,2).
+      kronosScore: finite(signal.patternScore).toFixed(2),
+      chronosScore: finite(signal.chronosScore).toFixed(2),
+      compositeScore: finite(signal.confidence).toFixed(2),
+      features: {
+        aiScore: finite(signal.aiScore),
+        patternScore: finite(signal.patternScore),
+        chronosScore: finite(signal.chronosScore),
+        technicalScore: finite(signal.technicalScore),
+        sentimentScore: finite(signal.sentimentScore),
+        confidence: finite(signal.confidence),
+        rankingProvider: signal.rankingProvider ?? null,
+        featureVector: signal.featureVector ?? null,
+      } as Record<string, unknown>,
+    });
+  } catch (err) {
+    logger.error(
+      { err, suggestionId, symbol: signal.symbol },
+      "failed to record ai_scores; weekly IC will be blind for this suggestion",
+    );
+  }
+}
+
+/**
  * Runs all per-signal gates and inserts the suggestion.
  * Returns null on success, or a rejection-reason string (fed into
  * rejectionCounts / summarizeRejections by the generation loop) on rejection.
@@ -1290,6 +1356,8 @@ export async function ingestSignal(
         { symbol: signal.symbol, setup: signal.setupType, direction: signal.signal },
         "Suggestion insert returned no row (conflict) — signal NOT published to trading engine",
       );
+    } else {
+      await recordAiScores(inserted.id, signal);
     }
 
     if (inserted) {
