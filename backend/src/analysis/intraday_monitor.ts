@@ -24,6 +24,10 @@ import { calculateTopSectors } from "./sector_rotation";
 import { broadcast } from "../ws/websocket_server";
 import { createServerEvent } from "../ws/events";
 import { assessRisk } from "./risk_engine";
+import { computeFeatureVector } from "./feature_engine";
+
+/** Candles required before the ranker's 32 features are trustworthy. */
+const MIN_RANKER_HISTORY = 200;
 import { buildSnapshot } from "./technical";
 import type { SetupCandidate, TechnicalSnapshot } from "./technical";
 import { ingestSignal } from "../suggestions/generator";
@@ -611,12 +615,49 @@ async function _resolveSnapshotUncached(
       const niftyCandles = await fetchNiftyDailyCandles(70);
       const scanResult = await scanStock(stock, niftyCandles);
       if (scanResult?.snapshot) {
+        const rsVsSector = await resolveSectorRelativeStrength(symbol, scanResult.rs60);
         return {
           snap: { ...scanResult.snapshot, close: currentPrice },
           source: "live_scan",
           rsVsNifty: scanResult.rs60,
-          rsVsSector: await resolveSectorRelativeStrength(symbol, scanResult.rs60),
-          scanFeatures: null,
+          rsVsSector,
+          // This path returned scanFeatures: null on EVERY branch, so
+          // buildMonitorFeatureVector always took its placeholder path and every
+          // intraday candidate carried rankerIncomplete: true. The ranker
+          // therefore abstained on 100% of intraday signals - the only
+          // calibrated model in the system never voted once - while 119k real
+          // daily candles sat unused in Postgres.
+          //
+          // scanResult already carries the candles and snapshot the engine
+          // needs, so the vector is built here rather than left null.
+          scanFeatures:
+              (scanResult.candles?.length ?? 0) >= MIN_RANKER_HISTORY &&
+              scanResult.rs60 !== null
+            ? Object.assign(
+                computeFeatureVector(
+                  symbol,
+                  scanResult.sector ?? "Other",
+                  scanResult.candles ?? [],
+                  scanResult.snapshot,
+scanResult.rs60,
+                    // Unmeasured sector RS falls back to the stock's own rs60,
+                    // matching signal_generator.ts. Sector coverage is ~41%, so
+                    // this is the common case, not an edge case.
+                    rsVsSector ?? scanResult.rs60,
+                  // The setup's derived R:R is not in scope at snapshot
+                  // resolution time; 1.5 is the same default risk_engine.ts
+                  // resolves to, and riskRewardScore is monotonic in it, so the
+                  // ordering of candidates is unaffected.
+                  1.5,
+                  0,
+                  0,
+                  false,
+                ),
+                // Genuine candle history, so the vector is ranker-safe.
+                { rankerIncomplete: false },
+              )
+: null, // No candle depth or unmeasured RS: the ranker abstains
+                  // rather than being handed a fabricated relative strength.
         };
       }
     }
