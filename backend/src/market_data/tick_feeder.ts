@@ -27,7 +27,10 @@ interface StockSubscription {
   symbol: string;
   ticks: TickData[];
   lastPrice: number | null;
-  volume: number;  bid: number | null;
+  volume: number;
+  /** Tick-rule order flow, created on first tick. */
+  flow?: TickRuleFlow;
+  bid: number | null;
   ask: number | null;
   openPrice: number | null;
   highPrice: number | null;
@@ -41,43 +44,92 @@ const MAX_TICKS_PER_STOCK = Math.max(
 );
 
 /**
- * Quote pressure in [-1, +1], positive meaning the trade is printing toward
- * the offer.
+ * Tick-rule order flow, in [-1, +1].
  *
- * NOTE ON NAMING: this is NOT order-book imbalance in the usual sense. True
- * imbalance weights the two sides by resting quantity,
- * (bidQty - askQty) / (bidQty + askQty), and the Upstox feed this project
- * consumes does not carry bid/ask quantities - only prices. What is available
- * is where the last trade sits inside the spread, which is a real and
- * bounded pressure proxy, so it is computed from that rather than left at 0.
+ * WHY THIS REPLACED QUOTE PRESSURE. The previous implementation derived this
+ * feature from where the last trade sat inside the bid-ask spread. That never
+ * fired in production: connection_manager.ts only extracts bid/ask from the `ff`
+ * (full-form) branch, and the subscribed `ltpc` feed carries no quote at all.
+ * So `upstox:features:<symbol>` was never written, and because
+ * signal_generator.ts treats a missing realtime feature as rankerIncomplete,
+ * the one calibrated model in the system was disarmed for the whole session -
+ * the exact failure this writer exists to prevent.
  *
- * The feature key is kept as `bidAskImbalance` because the 32-key ranker
- * contract is pinned across the TypeScript source, the training manifest and
- * ranker_meta.json, and renaming it would invalidate the trained model for no
- * accuracy gain. The value's definition is what is documented here.
+ * Upstox's ltpc payload DOES carry ltp and volume on every tick. Tick-rule
+ * order flow uses only those two, so it is available on the feed we already pay
+ * for, with no subscription change.
  *
- * Returns null when there is no usable two-sided quote, so the caller can
- * distinguish "balanced" (0) from "unknown" (null). Collapsing those two is
- * what let a missing quote read as a neutral reading.
+ * METHOD. Each tick's volume is classified by the tick rule - a trade at a
+ * higher price than the previous tick is buyer-initiated, lower is
+ * seller-initiated - and the running buy/sell totals give
+ * (buy - sell) / (buy + sell). Positive means buyers are lifting more volume
+ * than sellers are hitting.
+ *
+ * This is a proxy for order flow, not order-book imbalance, which needs resting
+ * bid/ask quantities from the market-depth feed. The feature key stays
+ * `bidAskImbalance` because the 32-key ranker contract is pinned across the
+ * TypeScript source, the training manifest and ranker_meta.json; renaming it
+ * would invalidate the trained model for no accuracy gain.
+ *
+ * Returns null when there is nothing to classify yet, so "no data" stays
+ * distinguishable from "balanced" - collapsing those is what let a missing
+ * quote read as a neutral reading.
  */
-export function computeQuotePressure(
-  ltp: number,
-  bid: number | null,
-  ask: number | null,
-): number | null {
-  if (!Number.isFinite(ltp) || ltp <= 0) return null;
-  if (bid === null || ask === null) return null;
-  if (!Number.isFinite(bid) || !Number.isFinite(ask)) return null;
-  if (bid <= 0 || ask <= 0) return null;
+export class TickRuleFlow {
+  /** Direction of the last price move: 1 up, -1 down, 0 unknown. */
+  private prevPrice = 0;
+  private buyVol = 0;
+  private sellVol = 0;
+  /** Direction carried through unchanged ticks, per the standard tick rule. */
+  private lastDir = 0;
 
-  const spread = ask - bid;
-  // Crossed or degenerate quote: the LTP is not inside a real spread, so
-  // there is no meaningful position to report.
-  if (spread <= 0) return null;
+  constructor(private readonly window: number = 200) {}
 
-  const position = (ltp - bid) / spread; // 0 at the bid, 1 at the ask
-  const scaled = 2 * position - 1; // -1 at the bid, +1 at the ask
-  return Math.max(-1, Math.min(1, scaled));
+  /**
+   * Fold in one tick. `volume` is the CUMULATIVE session volume from the feed,
+   * not a per-tick delta, so the first difference is used to avoid counting the
+   * whole day's volume on tick one.
+   */
+  push(price: number, cumulativeVolume: number): number | null {
+    if (!Number.isFinite(price) || price <= 0) return null;
+    if (!Number.isFinite(cumulativeVolume) || cumulativeVolume < 0) return null;
+
+    const delta = this.prevPrice === 0 ? 0 : cumulativeVolume - this.lastVolume;
+    this.lastVolume = cumulativeVolume;
+
+    if (this.prevPrice !== 0) {
+      if (price > this.prevPrice) this.lastDir = 1;
+      else if (price < this.prevPrice) this.lastDir = -1;
+      // An unchanged price carries the previous direction forward, which is the
+      // standard tick rule and is why a flat tape does not read as neutral flow.
+    }
+    this.prevPrice = price;
+
+    if (delta > 0 && this.lastDir !== 0) {
+      if (this.lastDir > 0) this.buyVol += delta;
+      else this.sellVol += delta;
+      if (this.buyVol + this.sellVol > this.window) {
+        // Decay rather than reset: the feature stays responsive instead of
+        // snapping to zero each time the window fills.
+        this.buyVol *= 0.5;
+        this.sellVol *= 0.5;
+      }
+    }
+
+    const total = this.buyVol + this.sellVol;
+    if (total <= 0) return null;
+    return Math.max(-1, Math.min(1, (this.buyVol - this.sellVol) / total));
+  }
+
+  private lastVolume = 0;
+
+  reset(): void {
+    this.prevPrice = 0;
+    this.lastVolume = 0;
+    this.lastDir = 0;
+    this.buyVol = 0;
+    this.sellVol = 0;
+  }
 }
 
 const subscriptions = new Map<string, StockSubscription>();
@@ -94,17 +146,16 @@ const OPTIONS_OI_CHANGE_RATE_UNAVAILABLE = 0;
 
 async function publishRealtimeFeatures(
   symbol: string,
-  ltp: number,
-  bid: number | null,
-  ask: number | null,
+  flow: number | null,
   timestamp: Date | number,
 ): Promise<void> {
-  const pressure = computeQuotePressure(ltp, bid, ask);
-  if (pressure === null) return; // No two-sided quote: nothing truthful to store.
+  // null means nothing could be classified yet. Writing 0 instead would report
+  // "balanced flow" for a symbol we have never actually observed.
+  if (flow === null) return;
 
   const iso = timestamp instanceof Date ? timestamp.toISOString() : new Date(timestamp).toISOString();
   await stateStore.saveRealtimeFeatures(symbol, {
-    bidAskImbalance: pressure,
+    bidAskImbalance: flow,
     optionsOiChangeRate: OPTIONS_OI_CHANGE_RATE_UNAVAILABLE,
     timestamp: iso,
   });
@@ -237,7 +288,11 @@ async function doInitTickFeeder(stocks: Array<{ symbol: string; key: string }>):
     // subscribed symbol, and blocking the feed on a Redis round-trip would
     // couple quote latency to cache latency. A dropped write is self-healing -
     // it just means the next tick retries, and staleness is caught downstream.
-    void publishRealtimeFeatures(sub.symbol, lastPrice, bid, ask, tickEvent.timestamp);
+    void publishRealtimeFeatures(
+    sub.symbol,
+    (sub.flow ??= new TickRuleFlow()).push(lastPrice, volume),
+    tickEvent.timestamp,
+  );
 
     // Maintain in-memory tick history for getTickData consumers
     sub.ticks.push(tick);

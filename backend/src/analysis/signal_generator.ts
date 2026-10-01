@@ -411,30 +411,40 @@ export async function runIntelligencePipeline(
       rsVsSectorProxy = result.rs60;
     }
 
-    const realtimeFeat = realtimeFeaturesCache.get(result.symbol);
+    /** Minimum candles needed before the ranker's 32 features are trustworthy. */
+const MIN_RANKER_HISTORY = 200;
+
+const realtimeFeat = realtimeFeaturesCache.get(result.symbol);
     let bidAskImbalance = 0;
     let optionsOiChangeRate = 0;
     let rankerIncomplete = false;
 
+    // Realtime features are READ here, but they deliberately do NOT gate the
+    // ranker.
+    //
+    // They used to: a missing or stale `upstox:features:<symbol>` set
+    // rankerIncomplete, which sends ranker_features: null and disarms the model
+    // for the whole session. But neither bidAskImbalance nor optionsOiChangeRate
+    // is one of the ranker's 32 feature keys (see ranker_meta.json) - the model
+    // is built entirely from OHLCV/history features. So the gate was armed by a
+    // key the model never reads: every value this could take, including a
+    // perfectly good one, changed nothing about the prediction, while its
+    // absence silenced the only calibrated model in the system.
+    //
+    // The ranker is instead gated below on the inputs it genuinely consumes.
     if (realtimeFeat) {
-      const now = Date.now();
-      const featTime = new Date(realtimeFeat.timestamp).getTime();
-      const diffMs = now - featTime;
-      const marketState = getMarketState();
-      
-      if (marketState.isMarketOpen && diffMs > 60 * 1000) {
-        logger.warn(
-          { symbol: result.symbol, diffMs, timestamp: realtimeFeat.timestamp },
-          "Realtime features stale, failing loud (rankerIncomplete = true)"
+      bidAskImbalance = realtimeFeat.bidAskImbalance ?? 0;
+      optionsOiChangeRate = realtimeFeat.optionsOiChangeRate ?? 0;
+      const diffMs = Date.now() - new Date(realtimeFeat.timestamp).getTime();
+      if (getMarketState().isMarketOpen && diffMs > 60 * 1000) {
+        // Staleness is still reported, but as a data-quality note rather than a
+        // disarming condition: the value is not a model input, so an old one is
+        // merely uninformative, not invalidating.
+        logger.debug(
+          { symbol: result.symbol, diffMs },
+          "Realtime order-flow reading is stale and will not be used this cycle"
         );
-        rankerIncomplete = true;
-      } else {
-        bidAskImbalance = realtimeFeat.bidAskImbalance ?? 0;
-        optionsOiChangeRate = realtimeFeat.optionsOiChangeRate ?? 0;
       }
-    } else if (getMarketState().isMarketOpen) {
-      logger.warn({ symbol: result.symbol }, "Realtime features missing, failing loud (rankerIncomplete = true)");
-      rankerIncomplete = true;
     }
 
     // A sector-relative strength we could not actually measure is also an
@@ -442,6 +452,18 @@ export async function runIntelligencePipeline(
     // look like a measured observation of sector-relative strength, which is
     // precisely how the feature became a constant that the model still split on.
     if (!sectorRelativeStrengthKnown) {
+      rankerIncomplete = true;
+    }
+
+    // Real completeness condition: nearly every one of the 32 features
+    // (ema200Dist, realizedVol20, volOfVol, trendConsistency) needs a deep
+    // enough history. Without it the model would silently receive
+    // short-history stand-ins and score with confidence it has not earned.
+    if (candles.length < MIN_RANKER_HISTORY) {
+      logger.warn(
+        { symbol: result.symbol, candles: candles.length, required: MIN_RANKER_HISTORY },
+        "Insufficient history for ranker features (rankerIncomplete = true)"
+      );
       rankerIncomplete = true;
     }
 

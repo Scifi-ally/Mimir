@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { runIntelligencePipeline } from './signal_generator';
+import { computeFeatureVector } from './feature_engine';
 import * as aiClient from './ai_client';
 import type { ScanResult } from './stock_scanner';
 
@@ -418,5 +419,58 @@ describe('runIntelligencePipeline', () => {
         delete process.env.SYSTEM1_ENGINE;
       }
     }
+  });
+
+  // Regression guard for the defect that disarmed the ranker.
+  //
+  // A missing `upstox:features:<symbol>` used to set rankerIncomplete = true,
+  // which sends ranker_features: null and silences the only calibrated model in
+  // the system. But neither bidAskImbalance nor optionsOiChangeRate is among the
+  // ranker's 32 feature keys, so the gate was keyed on data the model never
+  // reads. With the analysis Upstox feed unable to serve two-sided quotes on the
+  // ltpc stream, that meant no buy/sell suggestion was ever ranker-scored.
+  it('does NOT disarm the ranker when realtime features are absent', async () => {
+    const aiResults = new Map();
+    aiResults.set('RELIANCE', {
+      composite_score: 80,
+      win_probability: 0.65,
+      ranker_threshold: 0.5,
+      ranker_loaded: true,
+      isFallback: false,
+      technicalRanking: { bullish_probability: 0.8, detected_patterns: [] },
+      chronos: { trend: 'bullish', forecast_return_pct: 2 },
+      sentiment_score: 60
+    });
+    vi.mocked(aiClient.batchInference).mockResolvedValue(aiResults);
+
+    // Deep enough history that the genuine completeness gate passes.
+    const deep = Array.from({ length: 260 }, (_, i) => ({
+      open: 1990, high: 2010, low: 1980, close: 2000 + i * 0.1, volume: 1000 + i,
+      timestamp: 123456 + i * 86400000
+    }));
+    const scan = { ...mockScanResult, candles: deep } as unknown as ScanResult;
+
+    await runIntelligencePipeline([scan]);
+
+    const call = vi.mocked(computeFeatureVector).mock.calls.at(-1);
+    expect(call).toBeDefined();
+    // rankerIncomplete is the 10th positional arg.
+    expect(call![9]).toBe(false);
+  });
+
+  it('still disarms the ranker when the history is too short for its features', async () => {
+    const aiResults = new Map();
+    aiResults.set('RELIANCE', {
+      composite_score: 80, win_probability: 0.65, ranker_threshold: 0.5,
+      ranker_loaded: true, isFallback: false,
+      technicalRanking: { bullish_probability: 0.8, detected_patterns: [] },
+      chronos: { trend: 'bullish', forecast_return_pct: 2 }, sentiment_score: 60
+    });
+    vi.mocked(aiClient.batchInference).mockResolvedValue(aiResults);
+
+    await runIntelligencePipeline([mockScanResult]); // 1 candle
+
+    const call = vi.mocked(computeFeatureVector).mock.calls.at(-1);
+    expect(call![9]).toBe(true);
   });
 });

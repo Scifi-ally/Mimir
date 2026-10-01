@@ -319,6 +319,13 @@ export class UpstoxConnectionManager {
         if ((feed as any).ltpc) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           lastPrice = Number((feed as any).ltpc.ltp ?? 0);
+          // `vol` is CUMULATIVE session volume. Reading it here is what makes
+          // tick-rule order flow possible at all: the previous implementation
+          // only extracted volume on the `ff` branch, so on the ltpc feed (the
+          // one we subscribe to) volume stayed 0 forever and the realtime
+          // feature writer had nothing to classify.
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          volume = Number((feed as any).ltpc.vol ?? 0) || volume;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         } else if ((feed as any).ff) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
