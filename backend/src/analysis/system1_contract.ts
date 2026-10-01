@@ -2,8 +2,7 @@
  * Unified System-1 Fast Decision Contract.
  * ─────────────────────────────────────────────────────────────────────────────
  * Canonical, single source of truth for System-1 fast-decision primitives across
- * LAYA (Convai Innovations, open-weight ModernBERT RLCD) and JEV (TypeSafe AI, cloud API).
- *
+  *
  * Core Primitives:
  * 1. Choice: Discrete categorical classifications (Verdict, Action).
  * 2. Score: Continuous calibrated metrics in bounded domains (Confidence, Opportunity, Regime Alignment).
@@ -19,7 +18,7 @@ export type System1Action =
   | "LIMIT_PULLBACK"
   | "CANCEL";
 
-export type System1Provider = "laya" | "jev" | "consensus" | "local_surrogate" | "native_ts_laya";
+export type System1Provider = "laya" | "native_ts_laya";
 
 /**
  * Strongly typed System-1 decision record.
@@ -45,9 +44,9 @@ export interface System1Decision {
   position_size_multiplier?: number;
   /** Explanatory gate reasons / audit trail */
   gate_reasons: string[];
-  /** Model provider ("laya" | "jev" | "local_surrogate" | "native_ts_laya") */
+  /** Model provider: the Laya weights, or the native fallback scorer. */
   provider: System1Provider;
-  /** Identifier of the model (e.g. "convaiinnovations/laya", "jev-1") */
+  /** Identifier of the model (e.g. "convaiinnovations/laya"). */
   model_id: string;
   /** Source descriptor for telemetry */
   source: string;
@@ -75,5 +74,5 @@ export interface System1DecisionRequest {
   india_vix?: number;
   market_regime?: string;
   win_probability?: number | null;
-  preferred_engine?: "laya" | "jev" | "auto";
+  preferred_engine?: "laya";
 }

@@ -216,7 +216,6 @@ export async function checkAIHealth(): Promise<HealthResponse> {
         sentiment: { loaded: false, healthy: false, fallback_active: true, fallback_mode: "keyword_or_neutral" },
         confluence: { loaded: false, healthy: false, fallback_active: true },
         rl_inference: { loaded: false, healthy: false, fallback_active: true },
-jev: { loaded: false, healthy: false, fallback_active: false },
           laya: { loaded: true, healthy: true, fallback_active: true, mode: "native_ts_laya" },
           system1: { loaded: true, healthy: true, fallback_active: true, mode: "native_ts_laya" },
       },

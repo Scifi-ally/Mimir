@@ -754,16 +754,16 @@ const realtimeFeat = realtimeFeaturesCache.get(result.symbol);
       confidence = Math.round(rankerConfidence * 0.7 + confidence * 0.3);
     }
 
-    // ── System-1 Fast Decision Gatekeepers (Unified Laya / Jev / Consensus) ──────
+
     // System-1 gatekeeper. Laya is the only System-1 engine.
     //
     // It runs locally on the real Apache-2.0 typed-decisions weights via PyTorch
     // CPU, so there is no cloud dependency and no second opinion to reconcile.
     //
-    // Jev and the dual-engine consensus mode are removed. The previous config was
-    // already inert - the Jev rejection path sat inside the
-    // system1Engine === 'consensus' branch, so under SYSTEM1_ENGINE=laya it never
-    // executed. This is dead-contract cleanup, not a behaviour change.
+    // No dual-engine consensus and no retired cloud engine: Laya is the only
+    // System-1 authority. The removed rejection path sat inside a consensus-only
+    // branch, so under SYSTEM1_ENGINE=laya it never executed - this is
+    // dead-contract cleanup, not a behaviour change.
     const layaEnabled = (process.env.LAYA_ENABLED ?? 'true').toLowerCase() !== 'false';
     const layaDecision = aiResult?.laya_decision;
 

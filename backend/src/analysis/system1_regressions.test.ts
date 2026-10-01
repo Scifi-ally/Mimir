@@ -26,7 +26,7 @@ const CLEAN_SETUP: System1DecisionRequest = {
 };
 
 describe("System-1 honest attribution", () => {
-  it("must not impersonate the real Laya or Jev models from the native surrogate", () => {
+  it("must not impersonate the real Laya model from the native fallback scorer", () => {
     for (const dec of [
       computeNativeLayaDecision(CLEAN_SETUP),
       computeNativeLayaDecision(CLEAN_SETUP),
@@ -36,7 +36,6 @@ describe("System-1 honest attribution", () => {
       // calibrated neural model corrupts every metric keyed on model_id.
       expect(dec.model_id).toBe("native_ts_deterministic_surrogate");
       expect(dec.model_id).not.toBe("convaiinnovations/laya");
-      expect(dec.model_id).not.toBe("jev-1");
     }
   });
 
