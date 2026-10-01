@@ -91,6 +91,8 @@ interface AppStore {
   savedPin: string;
   setSavedPin: (pin: string) => void;
   getDecryptedPin: () => string;
+  /** Erase every stored credential and turn the options off. */
+  clearSavedCredentials: () => void;
   modelDecayTelemetry: ModelDecayTelemetry | null;
   setModelDecayTelemetry: (data: ModelDecayTelemetry | null) => void;
 }
@@ -109,20 +111,47 @@ export const useStore = create<AppStore>()(
       setLayoutMode: (mode) => set({ layoutMode: mode }),
       theme: "dark",
       setTheme: (theme) => set({ theme }),
-      saveMobileNumber: false,
-      setSaveMobileNumber: (save) => set({ saveMobileNumber: save }),
+saveMobileNumber: false,
+      setSaveMobileNumber: (save) =>
+        // Turning the option off must erase what was already stored. Flipping
+        // only the boolean left the mobile number in localStorage forever, so
+        // the setting did not describe what was actually on disk - and turning
+        // it back on appeared to "remember" a value the user believed had been
+        // discarded.
+        set(
+          save
+            ? { saveMobileNumber: true }
+            : { saveMobileNumber: false, savedMobileNumber: "" },
+        ),
       savedMobileNumber: "",
-      setSavedMobileNumber: (number) => set({ savedMobileNumber: number }),
+      setSavedMobileNumber: (number) => set({ savedMobileNumber: number || "" }),
       savePin: false,
-      setSavePin: (save) => set({ savePin: save }),
+      // Same rule as the mobile number: off means the secret is gone, not just
+      // un-referenced.
+      setSavePin: (save) =>
+        set(
+          save ? { savePin: true } : { savePin: false, savedPin: "" },
+        ),
       savedPin: "",
-      // SECURITY FIX (Issue #61): Removed fake client-side PIN encryption. 
-      // The PIN is a UX convenience for auto-filling the headless Upstox login form. 
-      // It was previously "encrypted" with a hardcoded key shipped in the JS bundle, 
-      // which is security theatre. It is now stored in plain text in localStorage. 
-      // If true security is needed here, the backend must use proper sessions.
+      // Stored in plain text in localStorage. A previous version "encrypted"
+      // with a key hardcoded into the JS bundle, which is security theatre - the
+      // key ships to every client, so the ciphertext protected nothing. The
+      // label in Settings was corrected to match this reality rather than
+      // implying protection that does not exist.
+      //
+      // The PIN is a convenience for auto-filling the headless Upstox login
+      // form. Anything needing real protection belongs in the backend session.
       setSavedPin: (pin) => set({ savedPin: pin || "" }),
       getDecryptedPin: () => get().savedPin,
+      // Explicit, so "forget my details" does not have to be expressed as two
+      // toggles that can drift apart.
+      clearSavedCredentials: () =>
+        set({
+          savePin: false,
+          savedPin: "",
+          saveMobileNumber: false,
+          savedMobileNumber: "",
+        }),
       modelDecayTelemetry: null,
       setModelDecayTelemetry: (data) => set({ modelDecayTelemetry: data }),
       scanState: { scanning: false, current: 0, total: 0, phase: "idle" },

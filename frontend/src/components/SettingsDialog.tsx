@@ -488,8 +488,21 @@ export function SettingsDialog({ isOpen, onClose }: SettingsDialogProps) {
                               onChange={(e) => setSavePin(e.target.checked)}
                               className="accent-primary w-3 h-3"
                             />
-                            <span className="text-xs font-normal text-foreground">Save PIN (Encrypted locally)</span>
+                            <span className="text-xs font-normal text-foreground">
+                              Save PIN for Headless Login
+                            </span>
                           </label>
+                          {/* Saying "encrypted" would be a lie. An earlier version
+                              encrypted the PIN with a key hardcoded into the JS
+                              bundle, so the key shipped to every client and the
+                              ciphertext protected nothing. It is plain text in
+                              localStorage. Turning either option off now erases
+                              the stored value, rather than only un-referencing it. */}
+                          <p className="text-[10px] leading-relaxed text-foreground/45 mt-1">
+                            Stored as plain text in this browser&apos;s local storage. Turning
+                            either option off deletes the saved value immediately. Do not
+                            use it on a shared machine.
+                          </p>
                         </div>
                       </div>
                     </div>

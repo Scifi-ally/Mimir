@@ -31,13 +31,13 @@ export function UpstoxHeadlessLogin({ type, onSuccess }: Props) {
   const savedMobileNumber = useStore(s => s.savedMobileNumber);
   const setSavedMobileNumber = useStore(s => s.setSavedMobileNumber);
   const savePin = useStore(s => s.savePin);
-  const getDecryptedPin = useStore(s => s.getDecryptedPin);
+  const savedPin = useStore(s => s.savedPin);
   const setSavedPin = useStore(s => s.setSavedPin);
 
   const [step, setStep] = useState<"detecting" | "phone" | "otp" | "pin">("detecting");
-  const [phone, setPhone] = useState(saveMobileNumber ? savedMobileNumber : "");
+  const [phone, setPhone] = useState("");
   const [otp, setOtp] = useState("");
-  const [pin, setPin] = useState(savePin ? getDecryptedPin() : "");
+  const [pin, setPin] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -50,6 +50,34 @@ export function UpstoxHeadlessLogin({ type, onSuccess }: Props) {
     if (step === "otp") otpRef.current?.focus();
     if (step === "pin") pinRef.current?.focus();
   }, [step]);
+
+  // Auto-fill from the stored credentials.
+  //
+  // This was previously `useState(savePin ? getDecryptedPin() : "")`, which is
+  // why the feature appeared broken: useState ignores its initializer on every
+  // render after the first, so the saved value was read once at mount and never
+  // again. If the option was off when the dialog opened, the field was empty
+  // for the whole session and turning the option on afterwards did nothing -
+  // which is precisely the behaviour reported.
+  //
+  // Keyed on the step, the toggle and the stored values instead, so it responds
+  // when the user enables the option in Settings without reopening the app, and
+  // when rehydration lands after the first render. The `phone.length === 0`
+  // guard means it only ever fills an empty field, so it cannot overwrite
+  // something being typed or submitted.
+  useEffect(() => {
+    if (step === "phone" && saveMobileNumber && savedMobileNumber && phone.length === 0) {
+      setPhone(savedMobileNumber);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, saveMobileNumber, savedMobileNumber]);
+
+  useEffect(() => {
+    if (step === "pin" && savePin && savedPin && pin.length === 0) {
+      setPin(savedPin);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, savePin, savedPin]);
 
   const hasSucceeded = useRef(false);
 
@@ -66,7 +94,7 @@ export function UpstoxHeadlessLogin({ type, onSuccess }: Props) {
           hasSucceeded.current = true;
           onSuccess();
         } else if (res.status === "awaiting_pin") {
-          const savedPinVal = savePin ? getDecryptedPin() : "";
+const savedPinVal = savePin ? savedPin : "";
           if (savedPinVal) {
             try {
               const pinRes = await api.headlessAuth.submitPin(savedPinVal);
@@ -135,7 +163,7 @@ export function UpstoxHeadlessLogin({ type, onSuccess }: Props) {
     try {
       const res = await api.headlessAuth.submitOtp(otp);
       if (res.status === "awaiting_pin") {
-        const savedPinVal = savePin ? getDecryptedPin() : "";
+        const savedPinVal = savePin ? savedPin : "";
         if (savedPinVal) {
           try {
             const pinRes = await api.headlessAuth.submitPin(savedPinVal);
