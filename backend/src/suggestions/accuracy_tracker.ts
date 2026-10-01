@@ -1,5 +1,5 @@
 import { db } from "../../db/src";
-import { suggestionsTable, rejectedCandidatesTable } from "../../db/src";
+import { suggestionsTable, rejectedCandidatesTable, signalOutcomesTable } from "../../db/src";
 import { eq, and, lt, lte, or, inArray, isNull, sql } from "drizzle-orm";
 import { broadcast } from "../ws/websocket_server";
 import { createServerEvent } from "../ws/events";
@@ -21,6 +21,133 @@ const COST_RATE_PER_SIDE = 0.0005; // 0.05% per side
 function netPnl(entry: number, exit: number, qty: number, gross: number): number {
   const costs = (entry + exit) * qty * COST_RATE_PER_SIDE;
   return gross - costs;
+}
+
+/**
+ * Excursions in R-multiples.
+ *
+ * R is the per-share risk at the entry, i.e. |entry - stopLoss|. R-multiples
+ * are comparable across a stock priced at Rs 20 and one at Rs 2,000, which a
+ * percentage excursion is not - so setup demotion and per-symbol metrics can
+ * pool them instead of silently weighting by share price.
+ *
+ * Returns null rather than 0 when there is no usable stop: without a risk unit
+ * an R multiple is undefined, and reporting 0 would read as "no excursion".
+ */
+function excursionInR(
+  direction: string,
+  entryPrice: number,
+  stopLoss: number | null,
+  highest: number | null,
+  lowest: number | null,
+): { mfeR: number | null; maeR: number | null } {
+  if (
+    !Number.isFinite(entryPrice) ||
+    entryPrice <= 0 ||
+    stopLoss == null ||
+    !Number.isFinite(stopLoss) ||
+    entryPrice === stopLoss ||
+    highest == null ||
+    lowest == null ||
+    !Number.isFinite(highest) ||
+    !Number.isFinite(lowest)
+  ) {
+    return { mfeR: null, maeR: null };
+  }
+  const risk = Math.abs(entryPrice - stopLoss);
+  if (risk <= 0) return { mfeR: null, maeR: null };
+
+  // Direction matters: on a BUY the high is the favourable extreme and the low
+  // the adverse one, and vice versa for a SELL. Both are expressed so that
+  // favourable >= 0 and adverse <= 0 BEFORE the clamp below. Writing adverse as
+  // "entry - lowest" looks equivalent but is not: on a long whose low is below
+  // entry that is a POSITIVE number, so clamping to <= 0 would silently discard
+  // every adverse excursion and report 0R for all of them.
+  const isBuy = direction.toUpperCase() !== "SELL";
+  const favourable = isBuy ? highest - entryPrice : entryPrice - lowest;
+  const adverse = isBuy ? lowest - entryPrice : entryPrice - highest;
+
+  return {
+    mfeR: Number((Math.max(0, favourable) / risk).toFixed(3)),
+    maeR: Number((Math.min(0, adverse) / risk).toFixed(3)),
+  };
+}
+
+/**
+ * Persist one realised outcome so the learning loop has something to read.
+ *
+ * Failures here must never take down the tracker: the suggestion row is already
+ * closed and broadcast by the time this runs, so losing the outcome record would
+ * be bad but losing the close would be worse.
+ */
+async function recordSignalOutcome(
+  row: {
+    id: string;
+    symbol: string;
+    direction: string;
+    entryPrice: string | null;
+    stopLoss: string | null;
+    highestPrice: string | null;
+    lowestPrice: string | null;
+    marketRegime: string | null;
+    setupType: string | null;
+    tradeType: string | null;
+    confidence: number | null;
+    featureVector: unknown;
+    activatedAt: Date | null;
+    expiresAt: Date | null;
+  },
+  outcome: { status: string; outcomePrice: number; pnlInr: number | null },
+): Promise<void> {
+  const entry = Number(row.entryPrice);
+  if (!Number.isFinite(entry) || entry <= 0) {
+    logger.warn({ id: row.id, symbol: row.symbol }, "outcome has no usable entry price; not recording");
+    return;
+  }
+
+  const { mfeR, maeR } = excursionInR(
+    row.direction,
+    entry,
+    row.stopLoss == null ? null : Number(row.stopLoss),
+    row.highestPrice == null ? null : Number(row.highestPrice),
+    row.lowestPrice == null ? null : Number(row.lowestPrice),
+  );
+
+  // suggestions has no createdAt, so duration is measured from activation, or
+  // from the expiry stamp as a coarse fallback for a PENDING row that was
+  // closed MISSED and therefore never activated.
+  const openedAt = row.activatedAt ?? row.expiresAt;
+  const durationMinutes = openedAt && Number.isFinite(openedAt.getTime())
+    ? Math.max(0, Math.round((Date.now() - openedAt.getTime()) / 60000))
+    : null;
+
+  try {
+    await db
+      .insert(signalOutcomesTable)
+      .values({
+        suggestionId: row.id,
+        symbol: row.symbol,
+        direction: row.direction,
+        entryPrice: entry.toFixed(2),
+        exitPrice: Number(outcome.outcomePrice).toFixed(2),
+        pnl: (outcome.pnlInr ?? 0).toFixed(2),
+        durationMinutes,
+        status: outcome.status,
+        marketRegime: row.marketRegime,
+        featureVector: (row.featureVector ?? null) as Record<string, unknown> | null,
+        setupType: row.setupType,
+        tradeType: row.tradeType,
+        confidence: row.confidence ?? null,
+        mfeR: mfeR != null ? mfeR.toFixed(3) : null,
+        maeR: maeR != null ? maeR.toFixed(3) : null,
+        closedAt: new Date(),
+      })
+      // Idempotent: if a concurrent verifier closed the same row first, this
+      // records nothing rather than double-counting the trade.
+      .onConflictDoNothing();
+  } catch (err) {
+    logger.error({ err, id: row.id, symbol: row.symbol }, "failed to record signal outcome");
+  }
 }
 
 // Outcome polling runs every 60s; look slightly further back so a tick landing
@@ -304,9 +431,42 @@ export async function checkSuggestionOutcomes(prices: PriceMap): Promise<void> {
           closedAt: new Date(),
         })
         .where(and(eq(suggestionsTable.id, outcome.id), eq(suggestionsTable.status, priorStatus)))
-        .returning({ id: suggestionsTable.id });
+        .returning({
+          id: suggestionsTable.id,
+          symbol: suggestionsTable.symbol,
+          direction: suggestionsTable.direction,
+          entryPrice: suggestionsTable.entryPrice,
+          target1: suggestionsTable.target1,
+          target2: suggestionsTable.target2,
+          stopLoss: suggestionsTable.stopLoss,
+          marketRegime: suggestionsTable.marketRegime,
+          setupType: suggestionsTable.setupType,
+          tradeType: suggestionsTable.tradeType,
+          confidence: suggestionsTable.confidence,
+          featureVector: suggestionsTable.featureVector,
+          highestPrice: suggestionsTable.highestPrice,
+          lowestPrice: suggestionsTable.lowestPrice,
+          activatedAt: suggestionsTable.activatedAt,
+          expiresAt: suggestionsTable.expiresAt,
+        });
       promotedAtMs.delete(outcome.id);
       if (updated.length === 0) continue;
+
+      const row = updated[0]!;
+
+      // Record the realised outcome.
+      //
+      // signal_outcomes was the only missing link in the learning loop: it had a
+      // full schema (featureVector, mfeR, maeR, confidence, setup context) and
+      // zero rows, because nothing ever wrote to it. Every learned path in the
+      // system reads from it - setup demotion, regime learning, per-symbol
+      // metrics, calibration and the weekly Alpha Score IC - so all of them
+      // were permanently cold regardless of how many paper trades ran.
+      //
+      // Written only after the guarded UPDATE succeeded, so it cannot record an
+      // outcome for a row this pass did not actually close. onConflictDoNothing
+      // keeps it idempotent if a concurrent verifier wins the same row.
+      await recordSignalOutcome(row, outcome);
 
       // Broadcast each outcome update
       broadcast(
