@@ -947,7 +947,23 @@ function buildMonitorFeatureVector(
     optionsOiChangeRate: 0,
     fiiDiiNetFlowLag: 0,
 
-    rankerIncomplete: !Number.isFinite(snap.rsi14) || snap.rsi14 <= 0,
+    // ALWAYS incomplete, unconditionally.
+      //
+      // This branch is reached only when `scanFeatures` is absent, and it
+      // fabricates roughly fourteen of the ranker's 32 inputs outright:
+      // bbWidthPct 0, vcpContraction 1, priceRoc5/10/20 0, bodyRatio 0,
+      // upperWickRatio 0, lowerWickRatio 0, realizedVol5/20 0, volOfVol 0,
+      // cprWidthPct 0, momentumScore/trendScore/volatilityScore 50,
+      // fiiDiiNetFlowLag 0, sectorStrength 0.
+      //
+      // It previously reported rankerIncomplete based only on whether
+      // `snap.rsi14` was finite - so a tick-derived snapshot with a valid RSI
+      // produced a vector full of invented numbers that the ranker happily
+      // scored, and those fabricated columns went into real buy/sell calls.
+      //
+      // The fabricated values are still useful for the risk engine and the UI,
+      // which is why they are kept. They must never reach the model.
+      rankerIncomplete: true,
   };
 }
 
