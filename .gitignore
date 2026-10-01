@@ -86,3 +86,7 @@ backend/data/ticks/
 *.jsonl.tmp
 .upstox_session.json
 
+
+# Derived export used by scripts/sweep_geometry.ts - regenerated from the
+# candles table, not source. 8 MB of JSON does not belong in history.
+backend/data/candles_cache.json
