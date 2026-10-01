@@ -43,6 +43,12 @@ export interface AdaptiveWeights {
 
 let adaptiveWeightsCache: AdaptiveWeights | null = null;
 let lastWeightFetch = 0;
+// Logged once rather than every hour, so the absence is visible without
+// spamming. No writer for the ADAPTIVE_WEIGHTS row exists anywhere in the repo,
+// so these weights are permanently the defaults; saying so is better than the
+// alternative, which was a "[LEARNING ENABLED]" string on every signal implying
+// the weights adapted.
+let loggedMissingLearnedWeights = false;
 
 async function getAdaptiveWeights(): Promise<AdaptiveWeights> {
   const defaultWeights = { tech: 0.25, technicalRanking: 0.15, chronos: 0.10, rs: 0.15, sector: 0.15, regime: 0.10, sentiment: 0.10 };
@@ -82,7 +88,16 @@ async function getAdaptiveWeights(): Promise<AdaptiveWeights> {
   } catch (err) {
     logger.warn({ err }, "Failed to fetch adaptive weights, using defaults");
   }
-  
+
+  if (!loggedMissingLearnedWeights) {
+    loggedMissingLearnedWeights = true;
+    logger.warn(
+      "No ADAPTIVE_WEIGHTS row in learning_analytics and nothing in this codebase " +
+        "writes one, so the confidence weights are the hardcoded defaults. Any UI " +
+        "text implying they adapt is misleading until a writer exists.",
+    );
+  }
+
   return defaultWeights;
 }
 
@@ -862,9 +877,12 @@ export async function runIntelligencePipeline(
     const chronosCont = chronosScore * adaptiveWeights.chronos;
     const regimeCont = regimeScore * adaptiveWeights.regime;
 
-    const dynamicReasoning = aiContributing
-      ? `[LEARNING ENABLED] Reasons: Relative Strength +${rsCont.toFixed(1)}, Sector Rank +${sectorCont.toFixed(1)}, Volume Expansion +${features.volumeRatio ? ((features.volumeRatio - 1) * 100).toFixed(0) : "0"}%, Nifty50GPT Pattern Score +${patternCont.toFixed(1)}, Chronos Forecast Score +${chronosCont.toFixed(1)}, Total Composite Score ${confidence}. Contributions: Tech Quality +${techCont.toFixed(1)}, RS +${rsCont.toFixed(1)}, Sector +${sectorCont.toFixed(1)}, Nifty50GPT +${patternCont.toFixed(1)}, Chronos +${chronosCont.toFixed(1)}, Regime +${regimeCont.toFixed(1)}.`
-      : `[LEARNING DISABLED] Reasons: Relative Strength +${rsCont.toFixed(1)}, Sector Rank +${sectorCont.toFixed(1)}, Volume Expansion +${features.volumeRatio ? ((features.volumeRatio - 1) * 100).toFixed(0) : "0"}%, Technical Score ${technicalScore}, Total Composite Score ${confidence}. Contributions: Tech Quality +${techCont.toFixed(1)}, RS +${rsCont.toFixed(1)}, Sector +${sectorCont.toFixed(1)}, Regime +${regimeCont.toFixed(1)}.`;
+// Says whether the AI models contributed to this score, NOT whether any
+  // weights were learned - nothing writes ADAPTIVE_WEIGHTS, so the old
+  // "[LEARNING ENABLED]" wording claimed an adaptation loop that does not exist.
+  const dynamicReasoning = aiContributing
+    ? `[AI SCORED] Reasons: Relative Strength +${rsCont.toFixed(1)}, Sector Rank +${sectorCont.toFixed(1)}, Volume Expansion +${features.volumeRatio ? ((features.volumeRatio - 1) * 100).toFixed(0) : "0"}%, Nifty50GPT Pattern Score +${patternCont.toFixed(1)}, Chronos Forecast Score +${chronosCont.toFixed(1)}, Total Composite Score ${confidence}. Contributions: Tech Quality +${techCont.toFixed(1)}, RS +${rsCont.toFixed(1)}, Sector +${sectorCont.toFixed(1)}, Nifty50GPT +${patternCont.toFixed(1)}, Chronos +${chronosCont.toFixed(1)}, Regime +${regimeCont.toFixed(1)}.`
+    : `[RULES ONLY] Reasons: Relative Strength +${rsCont.toFixed(1)}, Sector Rank +${sectorCont.toFixed(1)}, Volume Expansion +${features.volumeRatio ? ((features.volumeRatio - 1) * 100).toFixed(0) : "0"}%, Technical Score ${technicalScore}, Total Composite Score ${confidence}. Contributions: Tech Quality +${techCont.toFixed(1)}, RS +${rsCont.toFixed(1)}, Sector +${sectorCont.toFixed(1)}, Regime +${regimeCont.toFixed(1)}.`;
 
     // ── Confidence threshold check ────────────────────────────────────
     let minConfidence = aiContributing ? cfg.minAutoConfidencePct : Math.min(55, cfg.minAutoConfidencePct);
