@@ -857,22 +857,35 @@ export function classifyBySymbol(symbol: string): StockSector | null {
   return null;
 }
 
-function mapSectorFromName(name: string): StockSector {
+/**
+ * Name-based fallback. Exported so the coverage test measures the real chain
+ * (curated -> symbol -> name) rather than only the symbol half, which is what
+ * under-reported coverage by 4x.
+ */
+export function mapSectorFromName(name: string): StockSector {
   const n = name.toLowerCase();
   if (n.includes("bank")) return "Banks";
-  if (n.includes("finance") || n.includes("capital") || n.includes("investment")) return "Financial Services";
-  if (n.includes("tech") || n.includes("software") || n.includes("info") || n.includes("computer")) return "IT";
-  if (n.includes("pharma") || n.includes("health") || n.includes("drug") || n.includes("hospital")) return "Pharma";
-  if (n.includes("steel") || n.includes("metal") || n.includes("mining") || n.includes("cement")) return "Metals";
-  if (n.includes("power") || n.includes("energy") || n.includes("oil") || n.includes("gas") || n.includes("petroleum")) return "Energy";
-  if (n.includes("auto") || n.includes("motor") || n.includes("tyre")) return "Auto";
-  if (n.includes("cement")) return "Cement";
-  if (n.includes("telecom") || n.includes("communication")) return "Telecom";
-  if (n.includes("infrastructure") || n.includes("construction")) return "Infrastructure";
+  if (n.includes("finance") || n.includes("capital") || n.includes("investment") || n.includes("financial")) return "Financial Services";
+  if (n.includes("insurance") || n.includes("asset management")) return "Financial Services";
+  if (n.includes("tech") || n.includes("software") || n.includes("info") || n.includes("computer") || n.includes("it ") || n.includes(" data") || n.includes("consult")) return "IT";
+  if (n.includes("pharma") || n.includes("health") || n.includes("drug") || n.includes("hospital") || n.includes("biotech") || n.includes("laborator")) return "Pharma";
+  if (n.includes("steel") || n.includes("metal") || n.includes("mining") || n.includes("iron") || n.includes("aluminium") || n.includes("aluminum")) return "Metals";
+  if (n.includes("power") || n.includes("energy") || n.includes("oil") || n.includes("gas") || n.includes("petroleum") || n.includes("refiner") || n.includes("electric")) return "Energy";
+  if (n.includes("auto") || n.includes("motor") || n.includes("tyre") || n.includes("tire") || n.includes("automobile")) return "Auto";
+  if (n.includes("cement") || n.includes("construction material")) return "Cement";
+  if (n.includes("telecom") || n.includes("communication") || n.includes("cable")) return "Telecom";
+  if (n.includes("infrastructure") || n.includes("construction") || n.includes("engineering") || n.includes("capital goods")) return "Infrastructure";
   if (n.includes("paint")) return "Paints";
-  if (n.includes("media") || n.includes("entertainment")) return "Media";
-  if (n.includes("chemical") || n.includes("fertiliser")) return "Chemicals";
-  if (n.includes("consumer") || n.includes("retail") || n.includes("fmcg") || n.includes("food")) return "FMCG";
+  if (n.includes("media") || n.includes("entertainment") || n.includes("broadcast") || n.includes("publishing")) return "Media";
+  if (n.includes("chemical") || n.includes("fertiliser") || n.includes("fertilizer")) return "Chemicals";
+  if (n.includes("realty") || n.includes("real estate") || n.includes("property")) return "Infrastructure";
+  if (n.includes("hotel") || n.includes("tourism") || n.includes("travel") || n.includes("hospitality")) return "Consumer";
+  if (n.includes("food") || n.includes("dairy") || n.includes("consumer") || n.includes("retail") || n.includes("fmcg") || n.includes("beverage") || n.includes("brew")) return "FMCG";
+  if (n.includes("agriculture") || n.includes("agro") || n.includes("fertiliser")) return "Chemicals";
+  if (n.includes("shipping") || n.includes("shipyard") || n.includes("logistics")) return "Infrastructure";
+  if (n.includes("rail") || n.includes("transport") || n.includes("aviation")) return "Infrastructure";
+  if (n.includes("textile") || n.includes("cotton") || n.includes("garment") || n.includes("apparel")) return "Consumer";
+  if (n.includes("paper") || n.includes("packaging") || n.includes("plywood")) return "Cement";
   return "Other";
 }
 
@@ -1032,15 +1045,21 @@ async function loadFullNseUniverse(): Promise<UniverseStock[]> {
         .map((i) => {
           const symbol = i.trading_symbol?.trim() || "";
           const key = i.instrument_key?.trim() || "";
-          const name = i.short_name?.trim() || i.name?.trim() || symbol;
+const name = i.short_name?.trim() || i.name?.trim() || symbol;
+          // The instrument master's `short_name` is usually just the ticker
+          // ("TATVA", "IOLCP"), not a company name, so the classification has
+          // to see `name` as well. Passing only short_name - which is what the
+          // previous chain did - meant the name rules almost never matched
+          // anything that the symbol rules missed.
+          const fullName = `${i.short_name ?? ""} ${i.name ?? ""}`.trim() || name;
           // Prefer the curated sector from NSE_UNIVERSE, then a symbol-based
           // classification, then the company name.
           //
           // The old chain stopped after the curated map (94 symbols) and fell
           // straight to mapSectorFromName, which matched nine keywords against
           // the company NAME. "TATAMOTORS", "SUNPHARMA" and "HDFCBANK" have no
-          // matching keyword in their legal name, so 1,789 of 2,326 tradable NSE
-          // equities landed in "Other".
+          // matching keyword in their legal name, so 1,789 of 2,326 equities
+          // landed in "Other".
           //
           // That was not cosmetic. rsVsSector60d - a ranker feature the shipped
           // model splits on 13 times - was a stock's RS divided by the average
@@ -1048,15 +1067,15 @@ async function loadFullNseUniverse(): Promise<UniverseStock[]> {
           // maxSectorExposure (default 2) also behaved as a GLOBAL cap, because
           // any two "Other" stocks looked like the same sector.
           //
-          // The symbol rules come before the name rules because NSE trading
-          // symbols encode sector far more reliably than the entity name does.
+          // The symbol rules come before the name rules because NSE tickers
+          // encode sector reliably, and the legal name is the fallback.
           const curated = symbol ? CURATED_SECTOR_BY_SYMBOL.get(symbol) : undefined;
           const bySymbol = symbol ? classifyBySymbol(symbol) : null;
           return {
             symbol,
             key,
             name,
-            sector: curated ?? bySymbol ?? mapSectorFromName(name),
+            sector: curated ?? bySymbol ?? mapSectorFromName(fullName),
           } as UniverseStock;
         })
         .filter((i) => i.symbol && i.key);
