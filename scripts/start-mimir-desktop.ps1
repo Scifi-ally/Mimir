@@ -51,6 +51,30 @@ function Wait-Process([string]$Name, [int]$Seconds) {
     return $null
 }
 
+# A listening port is not the same as a usable service. A Postgres cluster that
+# crashed on recovery keeps port 5433 open while refusing every connection, so
+# the launcher would report UP, the backend would boot and then die with a
+# connection timeout, and the failure would point at the backend rather than at
+# the datastore. This actually opens a connection.
+function Test-Postgres([int]$Port) {
+    $py = Join-Path $root ".venv\Scripts\python.exe"
+    if (-not (Test-Path $py)) { return $true } # Cannot verify; do not block startup.
+    $probe = "import psycopg2,sys
+try:
+    c=psycopg2.connect(host='127.0.0.1',port=$Port,dbname='upstox_bot',user='postgres',password='postgres',connect_timeout=5)
+    c.close(); print('OK')
+except Exception:
+    print('NO')"
+    $f = Join-Path $env:TEMP "mimir_pg_probe.py"
+    Set-Content -Path $f -Value $probe -Encoding ASCII
+    try {
+        $out = & $py $f 2>$null
+        return ($out -join "").Trim() -eq "OK"
+    } catch {
+        return $true
+    }
+}
+
 $script:Timings = @{}
 
 Write-Host ""
@@ -70,7 +94,32 @@ $dataStart = Get-Date
 
 $pgStarted = $false
 if (Test-Port 5433) {
-    Write-Host "[1/5] Postgres already listening on 5433" -ForegroundColor DarkGray
+    if (Test-Postgres 5433) {
+        Write-Host "[1/5] Postgres already listening and answering on 5433" -ForegroundColor DarkGray
+    } else {
+        # Holds the port but refuses connections - almost always a stale
+        # postmaster.pid left by an unclean shutdown. Recover it in place rather
+        # than starting the backend against a datastore it cannot reach.
+        Write-Host "[1/5] Postgres holds 5433 but refuses connections - recovering..." -ForegroundColor Yellow
+        $pgBinR = Join-Path $root ".portable\pgsql\bin"
+        $pgDataR = Join-Path $root ".portable\pgsql\data"
+        $pgctl = Join-Path $pgBinR "pg_ctl.exe"
+        if ((Test-Path $pgctl) -and (Test-Path $pgDataR)) {
+            $env:Path = "$pgBinR;$env:Path"
+            Get-Process -Name "postgres" -ErrorAction SilentlyContinue | Stop-Process -Force
+            Start-Sleep -Seconds 3
+            $pidFile = Join-Path $pgDataR "postmaster.pid"
+            if (Test-Path $pidFile) { Remove-Item $pidFile -Force -ErrorAction SilentlyContinue }
+            Start-Process -FilePath (Join-Path $pgBinR "postgres.exe") `
+                -ArgumentList "-D", $pgDataR, "-p", "5433" -WindowStyle Hidden | Out-Null
+            if (Wait-Port 5433 40) {
+                if (Test-Postgres 5433) { Write-Host "      recovered and answering" -ForegroundColor Green }
+                else { Write-Host "      STILL refusing connections - check .portable\pgsql\data\startup.log" -ForegroundColor Red }
+            } else {
+                Write-Host "      recovery FAILED to bind 5433" -ForegroundColor Red
+            }
+        }
+    }
 } else {
     $pgBin = Join-Path $root ".portable\pgsql\bin"
     $pgData = Join-Path $root ".portable\pgsql\data"
