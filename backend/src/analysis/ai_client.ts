@@ -7,7 +7,6 @@ import { getFiiDiiDivergence } from "./divergence_engine";
 import { computeOFI } from "./order_flow";
 import { fetchFIIDIIData } from "../market_data/fii_dii";
 import { buildSnapshot, computeMACD, type OHLCV } from "./technical";
-import type { JevDecision, JevVerdict, JevAction, JevDecisionRequest } from "./jev_contract";
 import type { LayaDecision, LayaVerdict, LayaAction, LayaDecisionRequest } from "./laya_contract";
 import type {
   System1Decision,
@@ -18,10 +17,7 @@ import type {
 } from "./system1_contract";
 
 export type {
-  JevDecision,
-  JevVerdict,
-  JevAction,
-  JevDecisionRequest,
+
   LayaDecision,
   LayaVerdict,
   LayaAction,
@@ -74,7 +70,6 @@ export interface BatchResult {
   ranker_threshold?: number | null;
   ranker_loaded?: boolean;
   shap_values?: Record<string, number>;
-  jev_decision?: JevDecision;
   laya_decision?: LayaDecision;
   system1_decision?: System1Decision;
 }
@@ -84,7 +79,6 @@ export interface BatchResponse {
   processing_time_ms: number;
   ranker_threshold?: number | null;
   ranker_loaded?: boolean;
-  jev_enabled?: boolean;
   laya_enabled?: boolean;
   system1_enabled?: boolean;
 }
@@ -339,8 +333,7 @@ export async function batchInference(
   ]);
   const macroState = getGlobalMacroState();
   const marketState = getMarketState();
-  const envEngine = (process.env.SYSTEM1_ENGINE ?? "laya").toLowerCase();
-  const defaultEngine: "laya" | "jev" | "consensus" = envEngine === "jev" ? "jev" : (envEngine === "consensus" ? "consensus" : "laya");
+    const defaultEngine = "laya" as const;
 
   for (const c of candidates) {
     if (c.ohlcv.length < 55) continue; // We need at least 55 for a good technical snapshot
@@ -552,9 +545,6 @@ export async function batchInference(
     const nativeLaya: LayaDecision = defaultEngine === "laya"
       ? nativeDecision
       : computeNativeLayaDecision(sys1Req);
-    const nativeJev: JevDecision = defaultEngine === "jev"
-      ? nativeDecision
-      : computeNativeJevDecision(sys1Req);
 
     aiResults.set(c.symbol, {
       symbol: c.symbol,
@@ -576,7 +566,6 @@ export async function batchInference(
       // price-derived number masquerading as news sentiment.
       sentiment_score: 50,
       composite_score,
-      jev_decision: nativeJev,
       laya_decision: nativeLaya,
       system1_decision: nativeDecision,
     });
@@ -749,12 +738,12 @@ export async function triggerConfluenceTraining(): Promise<boolean> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// System-1 (LAYA & JEV) Service Integrations & Native Fallbacks
+// System-1 (LAYA) Service Integrations & Native Fallbacks
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function computeNativeSystem1Decision(
   req: System1DecisionRequest,
-  provider: "laya" | "jev" | "consensus" = "laya",
+  provider: "laya" = "laya",
 ): System1Decision {
   const safeNum = (v: unknown, fallback: number): number => {
     return typeof v === "number" && Number.isFinite(v) ? v : fallback;
@@ -898,10 +887,6 @@ export function computeNativeSystem1Decision(
       gateReasons.push("STRONG_SYSTEM_ONE_CONVICTION");
     }
     let confidence = Math.min(0.95, 0.65 + (oppScore - 70.0) * 0.01);
-    if (provider === "consensus") {
-      confidence = Math.min(0.98, confidence + 0.05);
-      gateReasons.push("SYSTEM1_DUAL_ENGINE_CONSENSUS");
-    }
     const ofiAligned = (direction === "BUY" && ofi > 0.1) || (direction === "SELL" && ofi < -0.1);
     // Size from calibrated probabilities, mirroring the Python tiers: scale up
     // only on clean execution odds, and scale *down* when stop-hunt or
@@ -936,9 +921,6 @@ export function computeNativeSystem1Decision(
     };
   } else if (oppScore >= 50.0) {
     gateReasons.push("MODERATE_OPPORTUNITY_REQUIRE_CONFIRMATION");
-    if (provider === "consensus") {
-      gateReasons.push("SYSTEM1_DUAL_ENGINE_CONSENSUS");
-    }
     const source = "native_ts_laya";
     return {
       verdict: "CAUTION",
@@ -982,12 +964,6 @@ export function computeNativeLayaDecision(
   return computeNativeSystem1Decision(req, "laya");
 }
 
-export function computeNativeJevDecision(
-  req: JevDecisionRequest,
-): JevDecision {
-  return computeNativeSystem1Decision(req, "jev");
-}
-
 export async function evaluateLayaDecision(
   req: System1DecisionRequest,
 ): Promise<LayaDecision> {
@@ -1008,11 +984,10 @@ export async function evaluateLayaDecision(
 
 export async function evaluateSystem1Decision(
   req: System1DecisionRequest,
-  preferredEngine?: "laya" | "jev" | "consensus" | "auto",
+  _preferredEngine?: "auto",
 ): Promise<System1Decision> {
-  const envEngine = (process.env.SYSTEM1_ENGINE ?? "laya").toLowerCase();
-  const defaultEngine: "laya" | "jev" | "consensus" = envEngine === "jev" ? "jev" : (envEngine === "consensus" ? "consensus" : "laya");
-  const targetEngine = preferredEngine && preferredEngine !== "auto" ? preferredEngine : defaultEngine;
+    const defaultEngine = "laya" as const;
+  const targetEngine = defaultEngine;
   const url = `${getAiServiceUrl()}/inference/system1`;
   try {
     const payload = { ...req, preferred_engine: targetEngine };

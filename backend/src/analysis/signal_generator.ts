@@ -184,8 +184,6 @@ export interface DecisionTrace {
   threshold?: number;
   shap_values?: Record<string, number>;
   analysisTraceId?: string;
-  jev_verdict?: string;
-  jev_action?: string;
   laya_verdict?: string;
   laya_action?: string;
   system1_verdict?: string;
@@ -666,8 +664,6 @@ const realtimeFeat = realtimeFeaturesCache.get(result.symbol);
         threshold: thresholdVal,
         shap_values: aiResult?.shap_values,
         analysisTraceId: analysisTrace.traceId,
-        jev_verdict: aiResult?.jev_decision?.verdict,
-        jev_action: aiResult?.jev_decision?.action,
         laya_verdict: aiResult?.laya_decision?.verdict,
         laya_action: aiResult?.laya_decision?.action,
         system1_verdict: aiResult?.system1_decision?.verdict,
@@ -759,78 +755,36 @@ const realtimeFeat = realtimeFeaturesCache.get(result.symbol);
     }
 
     // ── System-1 Fast Decision Gatekeepers (Unified Laya / Jev / Consensus) ──────
-    const system1Engine = (process.env.SYSTEM1_ENGINE ?? "laya").toLowerCase();
-    const layaEnabled = (process.env.LAYA_ENABLED ?? "true").toLowerCase() !== "false";
-    const jevEnabled = (process.env.JEV_ENABLED ?? "true").toLowerCase() !== "false";
+    // System-1 gatekeeper. Laya is the only System-1 engine.
+    //
+    // It runs locally on the real Apache-2.0 typed-decisions weights via PyTorch
+    // CPU, so there is no cloud dependency and no second opinion to reconcile.
+    //
+    // Jev and the dual-engine consensus mode are removed. The previous config was
+    // already inert - the Jev rejection path sat inside the
+    // system1Engine === 'consensus' branch, so under SYSTEM1_ENGINE=laya it never
+    // executed. This is dead-contract cleanup, not a behaviour change.
+    const layaEnabled = (process.env.LAYA_ENABLED ?? 'true').toLowerCase() !== 'false';
     const layaDecision = aiResult?.laya_decision;
-    const jevDecision = aiResult?.jev_decision;
 
-    // Canonical active decision resolution:
-    // If consensus is configured or resolved, use system1_decision as the single source of truth.
-    // Otherwise route based on system1Engine, falling back to whichever engine is present.
-    let activeSys1Decision: System1Decision | undefined;
-    let activeSys1Name = "LAYA";
-    let activeTag = "laya_decision";
-
-    if (system1Engine === "consensus") {
-      activeSys1Decision = aiResult?.system1_decision ?? (
-        layaDecision && jevDecision
-          ? (layaDecision.verdict === "REJECT" || jevDecision.verdict === "REJECT"
-              ? (layaDecision.verdict === "REJECT" ? layaDecision : jevDecision)
-              : layaDecision)
-          : (layaDecision ?? jevDecision)
-      );
-      if (activeSys1Decision?.provider === "jev") {
-        activeSys1Name = "JEV";
-        activeTag = "jev_decision";
-      } else if (activeSys1Decision?.provider === "consensus" || (layaDecision && jevDecision)) {
-        activeSys1Name = "Consensus";
-        activeTag = "system1_decision";
-      } else {
-        activeSys1Name = "LAYA";
-        activeTag = "laya_decision";
-      }
-    } else if (system1Engine === "jev") {
-      activeSys1Decision = (jevEnabled && jevDecision)
-        ? jevDecision
-        : ((aiResult?.system1_decision?.provider === "jev" ? aiResult.system1_decision : undefined)
-            ?? (layaEnabled ? (layaDecision ?? aiResult?.system1_decision) : undefined));
-      activeSys1Name = (activeSys1Decision === jevDecision || activeSys1Decision?.provider === "jev") ? "JEV" : "LAYA";
-      activeTag = activeSys1Name === "JEV" ? "jev_decision" : "laya_decision";
-    } else {
-      activeSys1Decision = (layaEnabled && layaDecision)
-        ? layaDecision
-        : ((aiResult?.system1_decision?.provider !== "jev" ? aiResult?.system1_decision : undefined)
-            ?? (jevEnabled ? (jevDecision ?? aiResult?.system1_decision) : undefined));
-      activeSys1Name = (activeSys1Decision === jevDecision || activeSys1Decision?.provider === "jev") ? "JEV" : "LAYA";
-      activeTag = activeSys1Name === "JEV" ? "jev_decision" : "laya_decision";
-    }
+    const activeSys1Decision: System1Decision | undefined =
+      layaEnabled && layaDecision ? layaDecision : (aiResult?.system1_decision ?? undefined);
+    const activeSys1Name = 'LAYA';
+    const activeTag = 'laya_decision';
 
     let rejectedBySystem1 = false;
-    if (system1Engine === "consensus") {
-      if (layaEnabled && layaDecision?.verdict === "REJECT" && layaDecision.confidence >= 0.70) {
-        rejectedByAI++;
-        rejectedSignals.push(buildRejectedSignal("laya_decision", layaDecision.action, 0.70));
-        rejectedBySystem1 = true;
-      } else if (jevEnabled && jevDecision?.verdict === "REJECT" && jevDecision.confidence >= 0.70) {
-        rejectedByAI++;
-        rejectedSignals.push(buildRejectedSignal("jev_decision", jevDecision.action, 0.70));
-        rejectedBySystem1 = true;
-      } else if (activeSys1Decision?.verdict === "REJECT" && activeSys1Decision.confidence >= 0.70) {
-        rejectedByAI++;
-        rejectedSignals.push(buildRejectedSignal(activeTag, activeSys1Decision.action, 0.70));
-        rejectedBySystem1 = true;
-      }
-    } else {
-      if (activeSys1Decision?.verdict === "REJECT" && activeSys1Decision.confidence >= 0.70) {
-        rejectedByAI++;
-        rejectedSignals.push(buildRejectedSignal(activeTag, activeSys1Decision.action, 0.70));
-        logger.debug(
-          { symbol: result.symbol, action: activeSys1Decision.action, reasons: activeSys1Decision.gate_reasons },
-          `Signal rejected — ${activeSys1Name} triage gatekeeper rejected setup`,
-        );
-        rejectedBySystem1 = true;
-      }
+    if (layaDecision?.verdict === 'REJECT' && layaDecision.confidence >= 0.70) {
+      rejectedByAI++;
+      rejectedSignals.push(buildRejectedSignal('laya_decision', layaDecision.action, 0.70));
+      rejectedBySystem1 = true;
+    } else if (activeSys1Decision?.verdict === 'REJECT' && activeSys1Decision.confidence >= 0.70) {
+      rejectedByAI++;
+      rejectedSignals.push(buildRejectedSignal(activeTag, activeSys1Decision.action, 0.70));
+      logger.debug(
+        { symbol: result.symbol, action: activeSys1Decision.action, reasons: activeSys1Decision.gate_reasons },
+        'Signal rejected - ' + activeSys1Name + ' triage gatekeeper rejected setup',
+      );
+      rejectedBySystem1 = true;
     }
     if (rejectedBySystem1) continue;
 
@@ -1008,8 +962,8 @@ const realtimeFeat = realtimeFeaturesCache.get(result.symbol);
       );
     }
 
-    const sys1Label = activeSys1Name === "Consensus" ? "SYSTEM-1 Consensus" : `${activeSys1Name} System-1`;
-    const sys1Prefix = activeSys1Name === "Consensus" ? "SYSTEM-1 Consensus" : activeSys1Name;
+    const sys1Label = `${activeSys1Name} System-1`;
+    const sys1Prefix = activeSys1Name;
 
     if (activeSys1Decision?.verdict === "CAUTION") {
       riskAssessment.warningReasons.push(
@@ -1199,8 +1153,6 @@ const realtimeFeat = realtimeFeaturesCache.get(result.symbol);
         rankerBlendApplied: !!(aiResult?.ranker_loaded && typeof aiResult?.win_probability === "number"),
         shap_values: aiResult?.shap_values,
         analysisTraceId: analysisTrace.traceId,
-        jev_verdict: aiResult?.jev_decision?.verdict,
-        jev_action: aiResult?.jev_decision?.action,
         laya_verdict: aiResult?.laya_decision?.verdict,
         laya_action: aiResult?.laya_decision?.action,
         system1_verdict: aiResult?.system1_decision?.verdict,

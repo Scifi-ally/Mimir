@@ -8,7 +8,6 @@
 import { describe, it, expect } from "vitest";
 import {
   computeNativeLayaDecision,
-  computeNativeJevDecision,
   computeNativeSystem1Decision,
   type System1DecisionRequest,
 } from "./ai_client";
@@ -30,8 +29,8 @@ describe("System-1 honest attribution", () => {
   it("must not impersonate the real Laya or Jev models from the native surrogate", () => {
     for (const dec of [
       computeNativeLayaDecision(CLEAN_SETUP),
-      computeNativeJevDecision(CLEAN_SETUP),
-      computeNativeSystem1Decision(CLEAN_SETUP, "consensus"),
+      computeNativeLayaDecision(CLEAN_SETUP),
+      computeNativeSystem1Decision(CLEAN_SETUP),
     ]) {
       // This is a hand-written deterministic heuristic. Attributing it to a
       // calibrated neural model corrupts every metric keyed on model_id.
@@ -43,7 +42,7 @@ describe("System-1 honest attribution", () => {
 
   it("must mark the source as a native surrogate so downstream can flag it", () => {
     expect(computeNativeLayaDecision(CLEAN_SETUP).source).toBe("native_ts_laya");
-    expect(computeNativeSystem1Decision(CLEAN_SETUP, "consensus").source).toBe("native_ts_laya");
+    expect(computeNativeSystem1Decision(CLEAN_SETUP).source).toBe("native_ts_laya");
   });
 });
 
@@ -119,7 +118,7 @@ describe("System-1 Noul primitives are state-sensitive", () => {
   });
 
   it("keeps all probabilities within [0, 1]", () => {
-    const dec = computeNativeJevDecision({ ...CLEAN_SETUP, india_vix: 26, risk_reward_ratio: 0.5 });
+    const dec = computeNativeLayaDecision({ ...CLEAN_SETUP, india_vix: 26, risk_reward_ratio: 0.5 });
     for (const p of [dec.p_execution_success, dec.p_stop_hunt_risk, dec.p_adverse_regime_shift]) {
       expect(Number.isFinite(p)).toBe(true);
       expect(p).toBeGreaterThanOrEqual(0);
