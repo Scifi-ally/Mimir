@@ -16,6 +16,50 @@ import { isLiveModeActive, placeLiveOrder } from "./broker_orders";
 import { stateStore } from "../lib/redis_state";
 import { getCalibration, ensureFresh } from "../analysis/calibration_engine";
 import Decimal from "decimal.js";
+import { computeAdx14, ADX_TREND_THRESHOLD } from "./adx_gate";
+
+/**
+ * Session-cached ADX per symbol.
+ *
+ * Reads daily candles once per symbol per process. The trailing-stop gate runs
+ * on every tick for every open position, so recomputing ADX from raw candles
+ * each time would be pure waste; ADX(14) on daily bars barely moves intraday.
+ *
+ * TTL keeps it from going stale across sessions. A miss returns null, which the
+ * caller treats as "trend unmeasured" and leaves the stop untouched - the safe
+ * direction, since inventing a value could tighten a stop on no evidence.
+ */
+const adxCache = new Map<string, { adx: number | null; at: number }>();
+const ADX_CACHE_TTL_MS = 15 * 60 * 1000;
+
+async function getCachedAdx(symbol: string): Promise<number | null> {
+  const hit = adxCache.get(symbol);
+  if (hit && Date.now() - hit.at < ADX_CACHE_TTL_MS) return hit.adx;
+
+  let adx: number | null = null;
+  try {
+    const rows = await db
+      .select({ high: sql<number>`high`, low: sql<number>`low`, close: sql<number>`close` })
+      .from(sql`candles`)
+      .where(
+        and(
+          sql`instrument_key = ${symbol}`,
+          sql`interval = 'day'`,
+        ),
+      )
+      .orderBy(sql`timestamp desc`)
+      .limit(60);
+    if (rows.length >= 29) {
+      // Query is newest-first; ADX needs oldest-first.
+      adx = computeAdx14([...rows].reverse() as { high: number; low: number; close: number }[]);
+    }
+  } catch (err) {
+    logger.debug({ err, symbol }, "PaperEngine: ADX unavailable; trailing ratchet stays capped at breakeven");
+  }
+
+  adxCache.set(symbol, { adx, at: Date.now() });
+  return adx;
+}
 
 /**
  * Resolve the final order quantity, honouring the upstream risk decision.
@@ -617,33 +661,54 @@ export async function initPaperEngine() {
         
         const risk = entryPrice.minus(originalStop).abs();
         
-        if (isBuy) {
-          if (ltp.gte(target)) exitReason = "TARGET_EXIT";
-          if (ltp.lte(currentStop)) exitReason = "STOP_EXIT";
-          
-          if (!exitReason && risk.gt(0)) {
-            const steps = ltp.minus(entryPrice).div(risk).floor();
-            if (steps.gt(0)) {
-              const trailed = originalStop.plus(steps.mul(risk));
-              if (trailed.gt(currentStop)) {
-                newTrailingStop = trailed;
+if (isBuy) {
+            if (ltp.gte(target)) exitReason = "TARGET_EXIT";
+            if (ltp.lte(currentStop)) exitReason = "STOP_EXIT";
+            
+            if (!exitReason && risk.gt(0)) {
+              // The breakeven step itself is EV-safe and always allowed: for a
+              // 2R target the EV-neutral threshold is 1/(1+2) = 33% of the path,
+              // and breakeven at +1R is 50%, i.e. later than required.
+              //
+              // Everything PAST breakeven is ratcheting the stop up the ladder,
+              // and that only has positive expectancy in a trend. In chop it
+              // converts recoverable trades into locked-in breakeven, which is
+              // where the round-trip loss came from. So the ratchet is gated on
+              // measured trend strength, and unknown ADX leaves the stop alone.
+              const trendAdx = await getCachedAdx(pos.symbol);
+              const trending = trendAdx !== null && trendAdx >= ADX_TREND_THRESHOLD;
+              const steps = ltp.minus(entryPrice).div(risk).floor();
+              if (steps.gt(0)) {
+                // steps >= 1 is the breakeven move: always allowed. Any step
+                // beyond 1R is ratcheting the stop up the ladder, which only
+                // has positive expectancy in a trend - so without a trend the
+                // ratchet is capped at breakeven instead of disabled.
+                const applied = trending ? steps : Decimal.min(steps, 1);
+                const trailed = originalStop.plus(applied.mul(risk));
+                if (trailed.gt(currentStop)) {
+                  newTrailingStop = trailed;
+                }
+              }
+            }
+          } else {
+if (ltp.lte(target)) exitReason = "TARGET_EXIT";
+            if (ltp.gte(currentStop)) exitReason = "STOP_EXIT";
+  
+            if (!exitReason && risk.gt(0)) {
+              // Same ADX gate as the long side: breakeven always, ratchet past
+              // breakeven only when the regime is trending.
+              const trendAdx = await getCachedAdx(pos.symbol);
+              const trending = trendAdx !== null && trendAdx >= ADX_TREND_THRESHOLD;
+              const steps = entryPrice.minus(ltp).div(risk).floor();
+              if (steps.gt(0)) {
+                const applied = trending ? steps : Decimal.min(steps, 1);
+                const trailed = originalStop.minus(applied.mul(risk));
+                if (trailed.lt(currentStop)) {
+                  newTrailingStop = trailed;
+                }
               }
             }
           }
-        } else {
-          if (ltp.lte(target)) exitReason = "TARGET_EXIT";
-          if (ltp.gte(currentStop)) exitReason = "STOP_EXIT";
-
-          if (!exitReason && risk.gt(0)) {
-            const steps = entryPrice.minus(ltp).div(risk).floor();
-            if (steps.gt(0)) {
-              const trailed = originalStop.minus(steps.mul(risk));
-              if (trailed.lt(currentStop)) {
-                newTrailingStop = trailed;
-              }
-            }
-          }
-        }
 
         if (exitReason) {
           // MEDIUM FIX (Issue #22): Enhanced circuit limit detection with tracking
