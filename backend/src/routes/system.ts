@@ -59,6 +59,11 @@ import {
   getMonitoredSubscriptionStocks,
 } from "../market_data/monitored_symbols";
 import { getAllCalibrations, getDemotedSetups } from "../analysis/calibration_engine";
+import {
+  agentCognition,
+  liveOutcomeCounts,
+  summariseRejectionReasons,
+} from "../analysis/agent_cognition";
 
 const router = Router();
 const AUTH_STATE_COOKIE = "upstox_auth_state";
@@ -569,6 +574,31 @@ router.post("/system/headless/cancel", async (_req, res) => {
 // GET /api/system/offhours-scan
 router.get("/system/offhours-scan", (_req, res) => {
   res.json(getUnifiedScanStatus());
+});
+
+// GET /api/system/agent/status
+//
+// What the autonomous loop is doing and why. The scan -> signal -> suggestion
+// cycle has always run on its own via the scheduler; there was simply no way to
+// ask it what it decided. A blank suggestions list is indistinguishable from a
+// broken pipeline, which is exactly the confusion this removes.
+router.get("/system/agent/status", async (_req, res) => {
+  const cycles = agentCognition.recent(10);
+  const live = await liveOutcomeCounts();
+  res.json({
+    running: agentCognition.running(),
+    recentCycles: cycles,
+    topRejectionReasons: summariseRejectionReasons(cycles).slice(0, 10),
+    live,
+    // Deliberately does NOT claim profitability. Outcomes are recorded now, but
+    // until there are enough of them for a confidence interval to mean anything,
+    // their expectancy says nothing either way.
+    profitabilityMeasured: live.closedOutcomes >= 30,
+    note:
+      live.closedOutcomes === 0
+        ? "No closed trades yet - expectancy cannot be measured, only counted."
+        : `${live.closedOutcomes} closed outcomes; treat expectancy as indicative until 30+.`,
+  });
 });
 
 // GET /api/system/scan-observability

@@ -23,6 +23,7 @@ import {
 import { runIntelligencePipeline, type IntelligenceSignal } from "../analysis/signal_generator";
 import { checkSuggestionOutcomes, expireOldSuggestions, resolveCounterfactuals } from "./accuracy_tracker";
 import { fetchCorporateActionBlacklist } from "../market_data/corporate_actions";
+import { agentCognition } from "../analysis/agent_cognition";
 import { isSymbolBanned, getDeliveryPct, getBulkDealSignal, refreshNSEFreeData } from "../market_data/nse_free_data";
 import { calibrateConfidence, isSetupDemoted, isSetupDemotedForRegime } from "../analysis/calibration_engine";
 import { checkMarketInternals } from "../analysis/market_internals";
@@ -519,6 +520,13 @@ export async function generateSuggestionsFromWatchlist(options?: {
       "Generation cycle started",
     );
 
+    // Open the agent's cognition record for this cycle. Every rejection below
+    // feeds it, so "no suggestions appeared" becomes explainable rather than a
+    // blank screen. Opened here rather than at entry because the interval guard
+    // above returns early on a skipped cycle, and a skipped cycle is not a cycle.
+    agentCognition.begin(options?.source ?? "scheduler");
+    agentCognition.evaluated(candidates.length);
+
     const regime = state.regime;
     // Strict mode blocks counter-trend generation at any VIX; legacy only >18.
     const vixHigh = !!state.indiaVix && state.indiaVix > 18;
@@ -593,8 +601,11 @@ export async function generateSuggestionsFromWatchlist(options?: {
 
     let generated = 0;
     const rejectionCounts: Record<string, number> = {};
+    // Single funnel for every rejection, so this is the one place the agent's
+    // reasoning has to be recorded - no gate can bypass it.
     const addRejection = (reason: string) => {
       rejectionCounts[reason] = (rejectionCounts[reason] ?? 0) + 1;
+      agentCognition.reject(reason);
     };
 
     // Counterfactual capture: persist rejected candidates with their feature
@@ -827,8 +838,10 @@ export async function generateSuggestionsFromWatchlist(options?: {
         confidenceCalibrated: true,
       });
 
-      if (rejectionReason === null) {
-        generated++;
+if (rejectionReason === null) {
+      generated++;
+      // A survivor: reached the end of every gate and became a suggestion.
+      agentCognition.suggested();
         sectorCounts[sector] = (sectorCounts[sector] ?? 0) + 1;
         directionCounts[signal.signal] = (directionCounts[signal.signal] ?? 0) + 1;
       } else {
@@ -840,6 +853,12 @@ export async function generateSuggestionsFromWatchlist(options?: {
     const rejectionSummary = summarizeRejections(rejectionCounts);
     const durationMs = Date.now() - nowMs;
     totalGenerationDurationMs += durationMs;
+
+    // Close the agent's cognition record for this cycle so the autonomous loop
+    // can be inspected after the fact: what it looked at, what it let through,
+    // and - the part that matters when nothing happened - why everything else
+    // was blocked.
+    agentCognition.finish(true);
     const completedRunCount = lastGenerationDiagnostics.runCount + 1;
     lastGenerationDiagnostics = {
       running: false,
