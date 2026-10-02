@@ -2,6 +2,7 @@ import { db, suggestionsTable } from "../../db/src";
 import { eq, sql, gte, and } from "drizzle-orm";
 import { intelligenceBus } from "../intelligence/event_bus";
 import { getConfig } from "../config";
+import { calculateIntradayCharges, totalCharges } from "../lib/trading_costs";
 import { logger } from "../lib/logger";
 import { 
   paperAccountsTable, 
@@ -678,11 +679,14 @@ export async function initPaperEngine() {
           
           const grossPnl = isBuy ? slippedLtp.minus(entryPrice).mul(qty) : entryPrice.minus(slippedLtp).mul(qty);
           const brokeragePerOrder = new Decimal(getConfig().brokeragePerOrderInr ?? 20);
-          const totalBrokerage = brokeragePerOrder.mul(2); // Entry + Exit orders
+          const buyValue = isBuy ? entryPrice.mul(qty) : slippedLtp.mul(qty);
           const sellValue = isBuy ? slippedLtp.mul(qty) : entryPrice.mul(qty);
-          const sttTax = sellValue.mul(0.00025); // 0.025% STT on sell leg for intraday equity
-          const totalCharges = totalBrokerage.add(sttTax);
-          const realizedPnl = grossPnl.minus(totalCharges);
+          const charges = calculateIntradayCharges(
+            buyValue.toNumber(),
+            sellValue.toNumber(),
+            brokeragePerOrder.toNumber(),
+          );
+          const realizedPnl = grossPnl.minus(totalCharges(charges));
 
           const isSwingExit = pos.symbol.includes("-SWING");
           const exitLeverage = isSwingExit ? 1 : 5;

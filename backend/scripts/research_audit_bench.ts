@@ -16,7 +16,8 @@
 import { db, candlesTable, pool } from "../db/src";
 import { eq, asc } from "drizzle-orm";
 
-const COST = 0.0005;
+import { DELIVERY_COST_RATE_PER_SIDE, resolveCostPerSide } from "../src/lib/trading_costs";
+const COST = resolveCostPerSide(process.argv, DELIVERY_COST_RATE_PER_SIDE);
 const TRAIN_END = new Date("2026-04-30T23:59:59+05:30").getTime();
 
 interface Row { ts: number; o: number; h: number; l: number; c: number; v: number }

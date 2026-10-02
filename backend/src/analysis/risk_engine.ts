@@ -373,11 +373,18 @@ export async function assessRisk(
   }
 
   // ── Position Sizing Calculation ───────────────────────────────────────────────────
-  const effectiveMaxRiskPct = Math.min(cfg.maxRiskPerTradePct, autoRisk.maxRiskPerTradePct);
+  const effectiveMaxRiskPct = cfg.rankerEnabled
+    ? Math.min(cfg.maxRiskPerTradePct, autoRisk.maxRiskPerTradePct)
+    : Math.min(
+      cfg.maxRiskPerTradePct,
+      cfg.fixedFractionalRiskPct ?? 0.5,
+      autoRisk.maxRiskPerTradePct,
+    );
   // Edge-proportional sizing: when the learned ranker gave a calibrated win
   // probability, size via quarter-Kelly on the setup's own payoff ratio. Without
   // one, fall back to the flat configured max (unchanged behaviour).
   const kelly =
+    cfg.rankerEnabled &&
     typeof winProbability === "number" && winProbability > 0 && riskReward > 0
       ? { winProbability, payoffRatio: riskReward }
       : undefined;

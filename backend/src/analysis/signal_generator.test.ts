@@ -42,8 +42,10 @@ vi.mock('./mtf_filter', () => ({
   mtfFilter: vi.fn(() => ({ passed: true, reason: 'Mocked MTF passed', trend: 'UP' }))
 }));
 
+const testConfig = { minAutoConfidencePct: 60, strictRegimeGate: false, rankerEnabled: true };
+
 vi.mock('../config', () => ({
-  getConfig: vi.fn(() => ({ minAutoConfidencePct: 60, strictRegimeGate: false }))
+  getConfig: vi.fn(() => testConfig)
 }));
 
 vi.mock('./feature_engine', () => ({
@@ -148,6 +150,28 @@ describe('runIntelligencePipeline', () => {
     expect(trace?.rejectionGate).toBe('ranker_threshold');
     expect(trace?.rejectionValue).toBe(0.45);
     expect(trace?.confidencePath).toBe('python_confluence');
+  });
+
+  it('does not apply the ranker gate or blend when disabled', async () => {
+    testConfig.rankerEnabled = false;
+    const aiResults = new Map();
+    aiResults.set('RELIANCE', {
+      composite_score: 80,
+      win_probability: 0.45,
+      ranker_threshold: 0.5,
+      ranker_loaded: true,
+      isFallback: false,
+      technicalRanking: { bullish_probability: 0.8, detected_patterns: [] },
+      chronos: { trend: 'bullish', forecast_return_pct: 2 },
+      sentiment_score: 60
+    });
+    vi.mocked(aiClient.batchInference).mockResolvedValue(aiResults);
+
+    const result = await runIntelligencePipeline([mockScanResult]);
+    expect(result.rejectedSignals?.length).toBe(0);
+    expect(result.signals.length).toBe(1);
+    expect(result.signals[0]?.decisionTrace?.rankerBlendApplied).toBe(false);
+    testConfig.rankerEnabled = true;
   });
 
   it('should fallback to native_math_fallback when AI is unhealthy', async () => {

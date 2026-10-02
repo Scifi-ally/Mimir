@@ -56,7 +56,8 @@ const DETECTORS = [
   detectMacdCrossover,
 ];
 
-const COST_RATE_PER_SIDE = 0.0005; // keep in sync with accuracy_tracker + backtest_setups
+import { DELIVERY_COST_RATE_PER_SIDE, resolveCostPerSide } from "../src/lib/trading_costs";
+const COST_RATE_PER_SIDE = resolveCostPerSide(process.argv, DELIVERY_COST_RATE_PER_SIDE);
 const WARMUP_BARS = 60;
 const NIFTY_KEY = "NSE_INDEX|Nifty 50";
 

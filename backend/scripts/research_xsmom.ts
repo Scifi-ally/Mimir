@@ -26,7 +26,8 @@
 import { db, candlesTable } from "../db/src";
 import { eq, asc } from "drizzle-orm";
 
-const COST_RATE_PER_SIDE = 0.0005; // keep in sync with backtest_setups.ts
+import { DELIVERY_COST_RATE_PER_SIDE, resolveCostPerSide } from "../src/lib/trading_costs";
+const COST_RATE_PER_SIDE = resolveCostPerSide(process.argv, DELIVERY_COST_RATE_PER_SIDE);
 const TRAIN_END = "2026-04-30";
 const VAL_START = "2026-05-01";
 const GLOBAL_WARMUP = 45; // regime EMA50 (recursively seeded) needs runway

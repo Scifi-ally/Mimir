@@ -7,6 +7,7 @@ import { createUpstoxClient } from "../lib/upstox-client";
 import { getAccessToken } from "../upstox/auth";
 import { findStockBySymbol } from "../analysis/stock_scanner";
 import { getISTDateStr } from "../lib/ist-time";
+import { INTRADAY_COST_RATE_PER_SIDE } from "../lib/trading_costs";
 
 // Dedicated client: outcome verification runs off the hot path, so a longer
 // candle cache is fine and keeps us from re-hitting Upstox for the same window.
@@ -14,7 +15,7 @@ const verifierClient = createUpstoxClient({ cacheTimeMs: 10 * 60 * 1000 });
 
 // Same flat round-trip cost model as accuracy_tracker.netPnl, duplicated here to
 // avoid importing the polling module (which pulls in the tick distribution).
-const COST_RATE_PER_SIDE = 0.0005;
+const COST_RATE_PER_SIDE = INTRADAY_COST_RATE_PER_SIDE;
 function netPnl(entry: number, exit: number, qty: number, gross: number): number {
   const costs = (entry + exit) * qty * COST_RATE_PER_SIDE;
   return gross - costs;

@@ -578,7 +578,7 @@ export async function runIntelligencePipeline(
         win_probability: aiResult?.win_probability,
         bullish_probability: aiResult?.technicalRanking?.bullish_probability,
         confidencePath: usedConfluence ? "python_confluence" : "native_math_fallback",
-        rankerBlendApplied: !!(aiResult?.ranker_loaded && typeof aiResult?.win_probability === "number"),
+        rankerBlendApplied: !!(getConfig().rankerEnabled && aiResult?.ranker_loaded && typeof aiResult?.win_probability === "number"),
         rejectionGate: gate,
         rejectionValue: value,
         threshold: thresholdVal,
@@ -641,7 +641,7 @@ export async function runIntelligencePipeline(
     // (null win_probability), nothing here fires and the composite score
     // continues to rank exactly as before (graceful degradation).
     const winProb = aiResult?.win_probability;
-    const rankerLoaded = aiResult?.ranker_loaded === true;
+    const rankerLoaded = getConfig().rankerEnabled && aiResult?.ranker_loaded === true;
     if (rankerLoaded && typeof winProb === "number") {
       // Threshold from the trained model's meta (expectancy-maximising on the
       // held-out slice), with a conservative floor so a loose auto-threshold
@@ -905,7 +905,7 @@ export async function runIntelligencePipeline(
         win_probability: aiResult?.win_probability,
         bullish_probability: aiResult?.technicalRanking?.bullish_probability,
         confidencePath: usedConfluence ? "python_confluence" : "native_math_fallback",
-        rankerBlendApplied: !!(aiResult?.ranker_loaded && typeof aiResult?.win_probability === "number"),
+      rankerBlendApplied: !!(getConfig().rankerEnabled && aiResult?.ranker_loaded && typeof aiResult?.win_probability === "number"),
         shap_values: aiResult?.shap_values,
         analysisTraceId: analysisTrace.traceId
       }

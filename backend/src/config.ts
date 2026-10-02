@@ -29,6 +29,8 @@ export interface TradingConfig {
   // Minimum multi-timeframe confluence (%) required to accept suggestions automatically
   minMtfConfluencePct: number;
   minAutoConfidencePct: number;
+  rankerEnabled: boolean;
+  fixedFractionalRiskPct: number;
   brokeragePerOrderInr: number;
   slippageBps: number;
   confidenceThresholdByRegimeJson: string;
@@ -75,6 +77,8 @@ export const defaultConfig: TradingConfig = {
   minMtfConfluencePct: 75,   // Raised for strong multi-timeframe alignment
   // Temporarily dropped to 65% for Phase 4 to allow signals to flow to frontend
   minAutoConfidencePct: 65,
+  rankerEnabled: false,
+  fixedFractionalRiskPct: 0.5,
   brokeragePerOrderInr: 20,
   slippageBps: 5,
   confidenceThresholdByRegimeJson: '{"TRENDING_UP":70,"TRENDING_DOWN":70,"RANGING":74,"VOLATILE":78,"UNKNOWN":72}',
@@ -147,6 +151,8 @@ function rowToConfig(row: typeof tradingConfigTable.$inferSelect): TradingConfig
     minSuggestionScore: numberOrDefault(row.minSuggestionScore, defaultConfig.minSuggestionScore),
     minMtfConfluencePct: numberOrDefault(row.minMtfConfluencePct, defaultConfig.minMtfConfluencePct),
     minAutoConfidencePct: numberOrDefault(row.minAutoConfidencePct, defaultConfig.minAutoConfidencePct),
+    rankerEnabled: process.env["RANKER_ENABLED"] === "true",
+    fixedFractionalRiskPct: numberOrDefault(process.env["FIXED_FRACTIONAL_RISK_PCT"], defaultConfig.fixedFractionalRiskPct),
     brokeragePerOrderInr: numberOrDefault(row.brokeragePerOrderInr, defaultConfig.brokeragePerOrderInr),
     slippageBps: numberOrDefault(row.slippageBps, defaultConfig.slippageBps),
     confidenceThresholdByRegimeJson: row.confidenceThresholdByRegimeJson ?? defaultConfig.confidenceThresholdByRegimeJson,

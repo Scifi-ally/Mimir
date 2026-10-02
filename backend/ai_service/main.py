@@ -187,7 +187,7 @@ def _build_health_snapshot() -> Dict[str, Any]:
         degraded_components.append("core_forecasting")
     if sentiment_status.get("fallback_active"):
         degraded_components.append("sentiment")
-    if not ranker_status.get("loaded"):
+    if ranker_status.get("enabled", False) and not ranker_status.get("loaded"):
         degraded_components.append("ranker")
     if confluence_status.get("fallback_active"):
         degraded_components.append("confluence")
@@ -197,7 +197,7 @@ def _build_health_snapshot() -> Dict[str, Any]:
     ai_mode = "AI Mode" if core_ready else "Fallback Mode"
     if degraded_components:
         ai_mode += " (degraded: " + ", ".join(degraded_components) + ")"
-    ranking_provider = "AI Ranking" if ranker_status.get("loaded") else "Technical Ranking"
+    ranking_provider = "AI Ranking" if ranker_status.get("enabled") and ranker_status.get("loaded") else "Technical Ranking"
     status = "healthy" if core_ready else "degraded"
 
     model_load_times = [

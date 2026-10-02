@@ -29,7 +29,8 @@
 import { db, candlesTable, pool } from "../db/src";
 import { eq, asc } from "drizzle-orm";
 
-const COST_RATE_PER_SIDE = 0.0005; // keep in sync with backtest_setups.ts
+import { DELIVERY_COST_RATE_PER_SIDE, resolveCostPerSide } from "../src/lib/trading_costs";
+const COST_RATE_PER_SIDE = resolveCostPerSide(process.argv, DELIVERY_COST_RATE_PER_SIDE);
 const WARMUP_BARS = 41; // longest EMA (40) + 1; signals never earlier
 const MIN_TURNOVER = 5e7; // 20-bar avg close*volume >= 5 crore INR
 const MIN_PRICE = 20; // no penny stocks
