@@ -13,6 +13,8 @@ const config = {
   minSuggestionScore: 5.5,
   minMtfConfluencePct: 45,
   minAutoConfidencePct: 55,
+  rankerEnabled: false,
+  fixedFractionalRiskPct: 0.5,
   brokeragePerOrderInr: 20,
   slippageBps: 5,
   confidenceThresholdByRegimeJson: "{}",
@@ -129,6 +131,24 @@ describe("risk engine", async () => {
     expect(result.investmentAmount).toBe(20_000);
     expect(result.maxRiskInr).toBe(400);
     expect(result.riskPercentage).toBe(0.4);
+  });
+
+  it("uses fixed fractional risk when the ranker is disabled", async () => {
+    config.rankerEnabled = false;
+    config.fixedFractionalRiskPct = 0.5;
+    const result = await risk.assessRisk(
+      { ...setup, entryPrice: 10, stopLoss: 9, target1: 12, target2: 14 },
+      { ...snapshot, close: 10, atr14: 1 },
+      "IT",
+    );
+    expect(result.positionSize).toBe(500);
+    expect(result.maxRiskInr).toBe(500);
+  });
+
+  it("uses ranker probability for Kelly sizing only when explicitly enabled", async () => {
+    config.rankerEnabled = true;
+    const result = await risk.assessRisk(setup, snapshot, "IT", undefined, 0.9);
+    expect(result.positionSize).toBeGreaterThan(100);
   });
 
   it("uses configured minimum risk-reward instead of a hardcoded threshold", async () => {

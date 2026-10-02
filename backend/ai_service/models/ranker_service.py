@@ -32,7 +32,7 @@ _width_warned = False
 try:
     import lightgbm as lgb  # noqa: F401
     _LGB_AVAILABLE = True
-except ImportError:
+except Exception:
     _LGB_AVAILABLE = False
     logger.warning("lightgbm not installed — learned ranker disabled, callers use composite fallback.")
 
@@ -55,11 +55,18 @@ _loaded: bool = False
 _load_error: Optional[str] = None
 
 
+def is_enabled() -> bool:
+    return os.getenv("RANKER_ENABLED", "false").lower() == "true"
+
+
 def load_model() -> None:
     """Load the booster + calibration meta once. Safe to call repeatedly."""
     global _booster, _feature_keys, _iso_x, _iso_y, _metrics, _trained_at, _loaded, _load_error, _recommended_threshold
 
     with _lock:
+        if not is_enabled():
+            _load_error = "disabled by RANKER_ENABLED"
+            return
         if _loaded or not _LGB_AVAILABLE:
             return
         model_path = os.getenv("RANKER_MODEL_PATH", _MODEL_PATH)
@@ -116,6 +123,7 @@ def recommended_threshold() -> Optional[float]:
 def get_status() -> Dict[str, Any]:
     return {
         "model": "lightgbm-ranker",
+        "enabled": is_enabled(),
         "available": _LGB_AVAILABLE,
         "loaded": _loaded,
         "error": _load_error,

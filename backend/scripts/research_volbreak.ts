@@ -28,7 +28,8 @@
 import { db, candlesTable, pool } from "../db/src";
 import { eq, asc } from "drizzle-orm";
 
-const COST_RATE_PER_SIDE = 0.0005; // keep in sync with backtest_setups.ts
+import { DELIVERY_COST_RATE_PER_SIDE, resolveCostPerSide } from "../src/lib/trading_costs";
+const COST_RATE_PER_SIDE = resolveCostPerSide(process.argv, DELIVERY_COST_RATE_PER_SIDE);
 const WARMUP_BARS = 45;            // min history before a signal may fire
 const HH_LOOKBACK = 60;            // position-in-range high lookback (capped by history)
 const PCT_WINDOW = 60;             // width-percentile trailing window (capped by history)

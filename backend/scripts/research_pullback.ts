@@ -30,7 +30,8 @@
 import { db, candlesTable } from "../db/src";
 import { and, eq, asc } from "drizzle-orm";
 
-const COST_RATE_PER_SIDE = 0.0005; // keep in sync with backtest_setups.ts
+import { DELIVERY_COST_RATE_PER_SIDE, resolveCostPerSide } from "../src/lib/trading_costs";
+const COST_RATE_PER_SIDE = resolveCostPerSide(process.argv, DELIVERY_COST_RATE_PER_SIDE);
 const WARMUP_BARS = 55;            // EMA50 seed + 40-bar-high lookback
 const MAX_GAP_PCT = 0.015;         // skip fills gapping >1.5% above signal close
 const MAX_RISK_PCT = 0.08;         // skip setups risking >8% of entry (mirrors prod)

@@ -7,6 +7,7 @@ import { logger } from "../lib/logger";
 import { intelligenceBus } from "../intelligence/event_bus";
 import { todayStartUTC } from "../lib/ist-time";
 import { tickDistribution } from "../market_data/tick_distribution";
+import { INTRADAY_COST_RATE_PER_SIDE } from "../lib/trading_costs";
 
 interface PriceMap {
   [symbol: string]: number;
@@ -15,7 +16,7 @@ interface PriceMap {
 // Round-trip transaction costs as fraction of traded value per side:
 // brokerage + STT + exchange charges + slippage approximation for NSE intraday.
 // Flat rate; replace with per-broker fee schedule if live-order accuracy needed.
-const COST_RATE_PER_SIDE = 0.0005; // 0.05% per side
+const COST_RATE_PER_SIDE = INTRADAY_COST_RATE_PER_SIDE;
 
 /** Net PnL after transaction costs on both legs. */
 function netPnl(entry: number, exit: number, qty: number, gross: number): number {

@@ -87,6 +87,7 @@ def test_ranker_graceful_degradation(monkeypatch):
     # install depends on this never raising.
     from models import ranker_service
 
+    monkeypatch.setenv("RANKER_ENABLED", "false")
     monkeypatch.setenv("RANKER_MODEL_PATH", "/nonexistent/ranker_model.txt")
     monkeypatch.setenv("RANKER_META_PATH", "/nonexistent/ranker_meta.json")
     ranker_service._loaded = False
@@ -97,6 +98,7 @@ def test_ranker_graceful_degradation(monkeypatch):
     status = ranker_service.get_status()
     assert "loaded" in status
     assert status["loaded"] is False
+    assert status["enabled"] is False
 
     probs = ranker_service.predict_batch([[0.0] * 27, [1.0] * 27])
     assert probs == [None, None]
@@ -104,6 +106,13 @@ def test_ranker_graceful_degradation(monkeypatch):
     assert ranker_service.predict_batch([]) == []
     # No model -> no gate.
     assert ranker_service.recommended_threshold() is None
+
+    monkeypatch.setenv("RANKER_ENABLED", "true")
+    ranker_service._loaded = False
+    ranker_service._booster = None
+    ranker_service.load_model()
+    assert ranker_service.get_status()["enabled"] is True
+    assert ranker_service.is_loaded() is False
 
 
 def test_sentiment_deduplicates_headlines_and_exposes_status(monkeypatch):

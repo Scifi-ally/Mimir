@@ -44,7 +44,8 @@ const DETECTORS = [
   detectLiquiditySweep,
 ];
 
-const COST_RATE_PER_SIDE = 0.0005; // keep in sync with accuracy_tracker
+import { DELIVERY_COST_RATE_PER_SIDE, resolveCostPerSide } from "../src/lib/trading_costs";
+const COST_RATE_PER_SIDE = resolveCostPerSide(process.argv, DELIVERY_COST_RATE_PER_SIDE);
 const WARMUP_BARS = 60;
 
 function argNum(name: string, dflt: number): number {
