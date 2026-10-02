@@ -76,6 +76,13 @@ export function ema(values: number[], period: number): number[] {
   return out;
 }
 
+export function regimeDates(benchmark: Map<string, number>): Set<string> {
+  const dates = [...benchmark.keys()].sort();
+  const levels = dates.map((date) => benchmark.get(date)!);
+  const benchmarkEma = ema(levels, 50);
+  return new Set(dates.filter((date, index) => index >= 50 && levels[index]! > benchmarkEma[index]!));
+}
+
 export function atr(candles: Candle[], period = 14): number[] {
   const out = new Array<number>(candles.length).fill(0);
   for (let index = 1; index < candles.length; index++) {
@@ -102,7 +109,7 @@ function median(values: number[]): number {
   return ordered.length % 2 ? ordered[middle]! : (ordered[middle - 1]! + ordered[middle]!) / 2;
 }
 
-export function pullback(series: Series, costPerSide: number): Trade[] {
+export function pullback(series: Series, costPerSide: number, regime?: Set<string>): Trade[] {
   const candles = series.candles, close = candles.map((candle) => candle.close);
   const ema20 = ema(close, 20), ema50 = ema(close, 50), atr14 = atr(candles);
   const volSma20 = candles.map((_, index) => {
@@ -114,6 +121,7 @@ export function pullback(series: Series, costPerSide: number): Trade[] {
   for (let index = 55; index < candles.length - 1; index++) {
     if (index - lastSignal < 15) continue;
     const current = candles[index]!, currentAtr = atr14[index]!;
+    if (regime && !regime.has(current.date)) continue;
     if (current.close < 20 || current.close * volSma20[index]! < 10_000_000) continue;
     if (!(ema20[index]! > ema50[index]! && current.close > ema50[index]! && ema50[index]! > ema50[index - 10]!)) continue;
     const high40 = Math.max(...candles.slice(index - 39, index + 1).map((candle) => candle.high));
@@ -146,12 +154,13 @@ export function pullback(series: Series, costPerSide: number): Trade[] {
   return trades;
 }
 
-export function meanReversion(series: Series, costPerSide: number): Trade[] {
+export function meanReversion(series: Series, costPerSide: number, regime?: Set<string>): Trade[] {
   const candles = series.candles, close = candles.map((candle) => candle.close);
   const ema5 = ema(close, 5), ema40 = ema(close, 40), atr14 = atr(candles), rsi = rsi2(candles);
   const trades: Trade[] = [];
   let busyUntil = -1;
   for (let index = 41; index < candles.length - 11; index++) {
+    if (regime && !regime.has(candles[index]!.date)) continue;
     if (index <= busyUntil || candles[index]!.close < 20 || candles[index]!.close <= ema40[index]! || rsi[index]! >= 10) continue;
     const turnover = candles.slice(index - 19, index + 1).reduce((sum, candle) => sum + candle.close * candle.volume, 0) / 20;
     if (turnover < 5e7) continue;

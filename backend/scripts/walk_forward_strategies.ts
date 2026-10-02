@@ -3,7 +3,7 @@ import path from "node:path";
 import { asc, eq } from "drizzle-orm";
 import { candlesTable, db, pool } from "../db/src";
 import { DELIVERY_COST_RATE_PER_SIDE, resolveCostPerSide } from "../src/lib/trading_costs";
-import { equalWeightIndex, matchedWindowAlpha, meanReversion, median, pullback, type Series, type Trade } from "./walk_forward_strategies_lib";
+import { equalWeightIndex, matchedWindowAlpha, meanReversion, median, pullback, regimeDates, type Series, type Trade } from "./walk_forward_strategies_lib";
 
 const COST = resolveCostPerSide(process.argv, DELIVERY_COST_RATE_PER_SIDE);
 const FOLD_YEARS = [2022, 2023, 2024, 2025];
@@ -17,17 +17,10 @@ function arg(name: string): string | undefined {
 function momentum(series: Series[], costPerSide: number, benchmark: Map<string, number>, regimeGate: boolean): Trade[] {
   const calendar = [...new Set(series.flatMap((item) => item.candles.map((candle) => candle.date)))].sort();
   const rebalanceDates = new Set(calendar.filter((date, index) => index === 0 || date.slice(0, 7) !== calendar[index - 1]!.slice(0, 7)));
-  const regime = new Set<string>();
-  if (regimeGate) {
-    for (let index = 50; index < calendar.length; index++) {
-      const values = calendar.slice(index - 49, index + 1).map((date) => benchmark.get(date) ?? NaN);
-      const ema50 = values.reduce((sum, value) => sum + value, 0) / values.length;
-      if ((benchmark.get(calendar[index]!) ?? 0) > ema50) regime.add(calendar[index]!);
-    }
-  }
+  const regime = regimeGate ? regimeDates(benchmark) : undefined;
   const trades: Trade[] = [];
   for (const date of rebalanceDates) {
-    if (regimeGate && !regime.has(date)) continue;
+    if (regime && !regime.has(date)) continue;
     const candidates: Array<{ series: Series; index: number; score: number }> = [];
     for (const item of series) {
       const index = item.candles.findIndex((candle) => candle.date === date);
@@ -97,7 +90,8 @@ async function main(): Promise<void> {
   }
   const series = [...grouped.values()];
   const benchmark = equalWeightIndex(series);
-  const runs = [["pullback", series.flatMap((item) => pullback(item, COST))], ["mean_reversion", series.flatMap((item) => meanReversion(item, COST))], ["momentum_12_1", momentum(series, COST, benchmark, regimeGate)]] as const;
+  const regime = regimeGate ? regimeDates(benchmark) : undefined;
+  const runs = [["pullback", series.flatMap((item) => pullback(item, COST, regime))], ["mean_reversion", series.flatMap((item) => meanReversion(item, COST, regime))], ["momentum_12_1", momentum(series, COST, benchmark, regimeGate)]] as const;
   const results = runs.map(([strategy, trades]) => {
     const folds = FOLD_YEARS.map((year) => {
       const foldMetrics = metrics(trades.filter((trade) => trade.exitDate.startsWith(String(year))), benchmark);

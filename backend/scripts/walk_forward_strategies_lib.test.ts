@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { matchedWindowAlpha, passesGapGuard, simulateLong, type Candle } from "./walk_forward_strategies_lib";
+import { matchedWindowAlpha, passesGapGuard, pullback, simulateLong, type Candle } from "./walk_forward_strategies_lib";
 
 function candles(...bars: Array<Partial<Candle>>): Candle[] {
   return bars.map((bar, index) => ({ date: `2024-01-0${index + 1}`, open: 100, high: 101, low: 99, close: 100, volume: 1, ...bar }));
@@ -39,5 +39,11 @@ describe("matched-window alpha", () => {
       ["2024-01-01", 1],
       ["2024-01-03", 1.04],
     ]))).toBeCloseTo(6);
+  });
+});
+
+describe("regime gate", () => {
+  it("produces no trade when the signal date is gated off", () => {
+    expect(pullback({ key: "TEST", candles: [] }, 0, new Set())).toEqual([]);
   });
 });
