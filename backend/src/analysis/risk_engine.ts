@@ -375,7 +375,11 @@ export async function assessRisk(
   // ── Position Sizing Calculation ───────────────────────────────────────────────────
   const effectiveMaxRiskPct = cfg.rankerEnabled
     ? Math.min(cfg.maxRiskPerTradePct, autoRisk.maxRiskPerTradePct)
-    : Math.min(cfg.fixedFractionalRiskPct ?? 0.5, autoRisk.maxRiskPerTradePct);
+    : Math.min(
+      cfg.maxRiskPerTradePct,
+      cfg.fixedFractionalRiskPct ?? 0.5,
+      autoRisk.maxRiskPerTradePct,
+    );
   // Edge-proportional sizing: when the learned ranker gave a calibrated win
   // probability, size via quarter-Kelly on the setup's own payoff ratio. Without
   // one, fall back to the flat configured max (unchanged behaviour).

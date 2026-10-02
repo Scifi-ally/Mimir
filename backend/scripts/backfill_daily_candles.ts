@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { db, candlesTable, pool } from "../db/src";
 import { createUpstoxClient } from "../src/lib/upstox-client";
 import { getAccessToken } from "../src/upstox/auth";
+import { NSE_UNIVERSE } from "../src/analysis/stock_scanner";
 import type { SplitAdjustment } from "../src/market_data/corporate_actions";
 import { mapAdjustedCandles } from "./backfill_daily_candles_lib";
 
@@ -35,10 +36,10 @@ function dateChunks(start: string, end: string): Array<[string, string]> {
 }
 
 async function main(): Promise<void> {
-  const instrumentKeys = (arg("instrumentKeys") ?? "").split(",").map((value) => value.trim()).filter(Boolean);
-  if (instrumentKeys.length === 0) {
-    throw new Error("Pass at least one --instrumentKeys value (comma-separated Upstox instrument keys).");
-  }
+  const instrumentKeys = process.argv.includes("--all")
+    ? NSE_UNIVERSE.map((stock) => stock.key)
+    : (arg("instrumentKeys") ?? "").split(",").map((value) => value.trim()).filter(Boolean);
+  if (instrumentKeys.length === 0) throw new Error("Pass --instrumentKeys or use --all.");
   const token = getAccessToken("data") ?? getAccessToken("trading");
   if (!token) throw new Error("No Upstox access token available; refusing to fabricate candle data.");
 
@@ -52,7 +53,16 @@ async function main(): Promise<void> {
 
   for (const instrumentKey of instrumentKeys) {
     for (const [fromDate, toDate] of dateChunks(START_DATE, endDate)) {
-      const raw = await client.fetchHistoricalCandles(instrumentKey, INTERVAL, toDate, fromDate, token);
+      let raw: unknown[][] = [];
+      for (let attempt = 0; attempt < 4; attempt++) {
+        try {
+          raw = await client.fetchHistoricalCandles(instrumentKey, INTERVAL, toDate, fromDate, token);
+          break;
+        } catch (error) {
+          if (attempt === 3) throw error;
+          await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
+        }
+      }
       const rows = mapAdjustedCandles(instrumentKey, raw, adjustments);
       for (let offset = 0; offset < rows.length; offset += 500) {
         const batch = rows.slice(offset, offset + 500);
