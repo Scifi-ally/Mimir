@@ -1,0 +1,51 @@
+{
+  "scenarios": [
+    {
+      "profile": "upstox_delivery",
+      "tariff": {
+        "brokerage_inr_per_order": 20.0,
+        "sell_dp_inr": 20.0,
+        "nse_transaction_rate": 3.07e-05,
+        "source": "https://upstox.com/brokerage-charges/"
+      },
+      "tariff_checked_on": "2026-10-04",
+      "reference_price_inr": 100.0,
+      "quantity": 20,
+      "position_notional_inr": 2000.0,
+      "capital_inr": 10000.0,
+      "risk_budget_inr": 100.0,
+      "slippage_bps_per_leg": 15.0,
+      "flat_price_round_trip_loss_inr": 81.25007871999995,
+      "friction_fraction_of_risk_budget": 0.8125007871999995,
+      "break_even_price_move_pct": 4.072832031461771,
+      "forecast_return_pct": null,
+      "scope": "fee_and_slippage_sensitivity_not_a_strategy_backtest",
+      "broker_changed": false
+    },
+    {
+      "profile": "dhan_delivery",
+      "tariff": {
+        "brokerage_inr_per_order": 0.0,
+        "sell_dp_inr": 12.5,
+        "nse_transaction_rate": 3.0699e-05,
+        "source": "https://dhan.co/pricing/"
+      },
+      "tariff_checked_on": "2026-10-04",
+      "reference_price_inr": 100.0,
+      "quantity": 20,
+      "position_notional_inr": 2000.0,
+      "capital_inr": 10000.0,
+      "risk_budget_inr": 100.0,
+      "slippage_bps_per_leg": 15.0,
+      "flat_price_round_trip_loss_inr": 25.200073999999944,
+      "friction_fraction_of_risk_budget": 0.25200073999999945,
+      "break_even_price_move_pct": 1.2632070033417377,
+      "forecast_return_pct": null,
+      "scope": "fee_and_slippage_sensitivity_not_a_strategy_backtest",
+      "broker_changed": false
+    }
+  ],
+  "data_plan": "retained free NSE EOD archives; no paid broker market-data subscription",
+  "profitability_established": false,
+  "charge_rounding": "unrounded sensitivity estimates; actual contract-note rounding can differ"
+}

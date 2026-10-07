@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "capturedAt": "2026-10-04T16:51:46.460Z",
+  "factors": {
+    "brentCrude": {
+      "value": 102.25,
+      "unit": "USD/barrel",
+      "source": "Yahoo Finance:BZ=F",
+      "observedAt": "2026-10-02T20:59:52.000Z",
+      "availableAt": "2026-10-04T16:51:46.460Z",
+      "maxAgeMs": 345600000,
+      "kind": "measurement",
+      "status": "available"
+    },
+    "diiNetInr": {
+      "value": 10041.84,
+      "unit": "INR_crore",
+      "source": "NSE institutional flows",
+      "observedAt": "2026-09-30T18:30:00.000Z",
+      "availableAt": "2026-10-04T16:51:46.460Z",
+      "maxAgeMs": 345600000,
+      "kind": "measurement",
+      "status": "available"
+    },
+    "dxy": {
+      "value": 101.924,
+      "unit": "index",
+      "source": "Yahoo Finance:DX-Y.NYB",
+      "observedAt": "2026-10-02T20:59:59.000Z",
+      "availableAt": "2026-10-04T16:51:46.460Z",
+      "maxAgeMs": 345600000,
+      "kind": "measurement",
+      "status": "available"
+    },
+    "fiiNetInr": {
+      "value": -9484.22,
+      "unit": "INR_crore",
+      "source": "NSE institutional flows",
+      "observedAt": "2026-09-30T18:30:00.000Z",
+      "availableAt": "2026-10-04T16:51:46.460Z",
+      "maxAgeMs": 345600000,
+      "kind": "measurement",
+      "status": "available"
+    },
+    "india10y": {
+      "value": null,
+      "unit": "percent",
+      "source": "Yahoo Finance:^IN10Y",
+      "observedAt": null,
+      "availableAt": "2026-10-04T16:51:46.460Z",
+      "maxAgeMs": 345600000,
+      "kind": "measurement",
+      "status": "missing",
+      "reason": "Source did not supply this observation"
+    },
+    "indiaVix": {
+      "value": 14.455,
+      "unit": "index",
+      "source": "Yahoo Finance:^INDIAVIX",
+      "observedAt": "2026-10-01T10:13:33.000Z",
+      "availableAt": "2026-10-04T16:51:46.460Z",
+      "maxAgeMs": 345600000,
+      "kind": "measurement",
+      "status": "available"
+    },
+    "us10YearYield": {
+      "value": 5.277,
+      "unit": "percent",
+      "source": "Yahoo Finance:^TNX",
+      "observedAt": "2026-10-02T18:59:55.000Z",
+      "availableAt": "2026-10-04T16:51:46.460Z",
+      "maxAgeMs": 345600000,
+      "kind": "measurement",
+      "status": "available"
+    },
+    "usdInr": {
+      "value": 96.3,
+      "unit": "INR/USD",
+      "source": "Yahoo Finance:INR=X",
+      "observedAt": "2026-10-04T16:11:01.000Z",
+      "availableAt": "2026-10-04T16:51:46.460Z",
+      "maxAgeMs": 345600000,
+      "kind": "measurement",
+      "status": "available"
+    }
+  },
+  "source": "local_free_feed_observations",
+  "historicalBackfill": false,
+  "predictiveValidation": "not_established",
+  "independentSourceVerification": false,
+  "sha256": "72d8e9374e79acd0fcf7b869c09d57018ccac11d1a32e55df9346752835c140d"
+}

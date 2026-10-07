@@ -1,0 +1,796 @@
+{
+  "version": 1,
+  "deployment_passed": false,
+  "promoted_model": null,
+  "research_status": "exploratory_not_live_validated",
+  "provenance": {
+    "source_sha256": "29c71a057b1680f64fdaa5d85a9a9498c70d1fec15814f63d18f6965edb91c43",
+    "source": ".codex-logs\\research-recorded-candles.json",
+    "instruments": 94,
+    "bars": 78649,
+    "duplicate_histories": {
+      "NSE_EQ|INE002A01018": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE003A01024": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE009A01021": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE010V01017": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE012A01025": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE016A01026": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE018A01030": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE019A01038": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE020B01018": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE021A01026": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE028A01039": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE029A01011": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE030A01027": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE038A01020": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE040A01034": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE044A01036": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE047A01021": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE059A01026": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE062A01020": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE066A01021": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE070A01015": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE075A01022": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE079A01024": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE081A01020": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE090A01021": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE092T01019": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE095A01012": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE101A01026": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE102D01028": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE121A01024": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE134E01011": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE154A01025": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE158A01026": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE160A01022": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE171A01029": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE176B01034": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE192A01025": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE192R01011": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE196A01026": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE213A01029": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE216A01030": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE226A01021": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE238A01034": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE245A01021": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE259A01022": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE280A01028": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE318A01026": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE326A01037": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE335Y01020": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE356A01018": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE361B01024": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE376G01013": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE388Y01029": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE397D01024": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE406A01037": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE414G01012": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE423A01024": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE437A01024": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE465A01025": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE467B01029": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE481G01011": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE522D01027": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE522F01014": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE540L01014": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE545U01014": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE585B01010": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE628A01036": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE645S01024": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE669C01036": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE674K01013": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE685A01028": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE726G01019": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE733E01010": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE742F01042": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE752E01010": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE758T01015": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE761H01022": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE775A01035": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE795G01014": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE797F01020": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE860A01027": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE917I01010": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      },
+      "NSE_EQ|INE918I01026": {
+        "sessions": 1,
+        "excluded_from": "2026-09-28"
+      }
+    },
+    "invalid_bars": {
+      "NSE_EQ|INE002A01018": 6,
+      "NSE_EQ|INE003A01024": 5,
+      "NSE_EQ|INE009A01021": 6,
+      "NSE_EQ|INE010V01017": 6,
+      "NSE_EQ|INE012A01025": 6,
+      "NSE_EQ|INE016A01026": 6,
+      "NSE_EQ|INE018A01030": 6,
+      "NSE_EQ|INE019A01038": 9,
+      "NSE_EQ|INE020B01018": 6,
+      "NSE_EQ|INE021A01026": 6,
+      "NSE_EQ|INE028A01039": 6,
+      "NSE_EQ|INE029A01011": 6,
+      "NSE_EQ|INE030A01027": 6,
+      "NSE_EQ|INE038A01020": 6,
+      "NSE_EQ|INE040A01034": 6,
+      "NSE_EQ|INE044A01036": 6,
+      "NSE_EQ|INE047A01021": 6,
+      "NSE_EQ|INE059A01026": 6,
+      "NSE_EQ|INE062A01020": 6,
+      "NSE_EQ|INE066A01021": 6,
+      "NSE_EQ|INE070A01015": 6,
+      "NSE_EQ|INE075A01022": 6,
+      "NSE_EQ|INE079A01024": 6,
+      "NSE_EQ|INE081A01020": 6,
+      "NSE_EQ|INE089A01023": 6,
+      "NSE_EQ|INE090A01021": 6,
+      "NSE_EQ|INE092T01019": 9,
+      "NSE_EQ|INE095A01012": 6,
+      "NSE_EQ|INE101A01026": 7,
+      "NSE_EQ|INE102D01028": 6,
+      "NSE_EQ|INE121A01024": 6,
+      "NSE_EQ|INE134E01011": 6,
+      "NSE_EQ|INE154A01025": 5,
+      "NSE_EQ|INE155A01022": 0,
+      "NSE_EQ|INE158A01026": 6,
+      "NSE_EQ|INE160A01022": 6,
+      "NSE_EQ|INE171A01029": 6,
+      "NSE_EQ|INE176B01034": 6,
+      "NSE_EQ|INE192A01025": 6,
+      "NSE_EQ|INE192R01011": 6,
+      "NSE_EQ|INE196A01026": 6,
+      "NSE_EQ|INE213A01029": 6,
+      "NSE_EQ|INE216A01030": 9,
+      "NSE_EQ|INE226A01021": 6,
+      "NSE_EQ|INE237A01028": 6,
+      "NSE_EQ|INE238A01034": 6,
+      "NSE_EQ|INE239A01016": 6,
+      "NSE_EQ|INE245A01021": 6,
+      "NSE_EQ|INE259A01022": 6,
+      "NSE_EQ|INE262H01013": 6,
+      "NSE_EQ|INE280A01028": 6,
+      "NSE_EQ|INE296A01024": 6,
+      "NSE_EQ|INE318A01026": 6,
+      "NSE_EQ|INE326A01037": 6,
+      "NSE_EQ|INE330C01039": 6,
+      "NSE_EQ|INE335Y01020": 6,
+      "NSE_EQ|INE356A01018": 6,
+      "NSE_EQ|INE361B01024": 5,
+      "NSE_EQ|INE376G01013": 6,
+      "NSE_EQ|INE388Y01029": 7,
+      "NSE_EQ|INE397D01024": 6,
+      "NSE_EQ|INE406A01037": 5,
+      "NSE_EQ|INE414G01012": 6,
+      "NSE_EQ|INE418H01014": 7,
+      "NSE_EQ|INE423A01024": 6,
+      "NSE_EQ|INE437A01024": 6,
+      "NSE_EQ|INE465A01025": 5,
+      "NSE_EQ|INE467B01029": 6,
+      "NSE_EQ|INE476A01014": 6,
+      "NSE_EQ|INE481G01011": 6,
+      "NSE_EQ|INE522D01027": 6,
+      "NSE_EQ|INE522F01014": 6,
+      "NSE_EQ|INE540L01014": 5,
+      "NSE_EQ|INE545U01014": 6,
+      "NSE_EQ|INE585B01010": 6,
+      "NSE_EQ|INE591G01017": 6,
+      "NSE_EQ|INE628A01036": 6,
+      "NSE_EQ|INE629A01013": 6,
+      "NSE_EQ|INE645S01024": 7,
+      "NSE_EQ|INE663F01024": 5,
+      "NSE_EQ|INE669C01036": 6,
+      "NSE_EQ|INE674K01013": 6,
+      "NSE_EQ|INE685A01028": 6,
+      "NSE_EQ|INE726G01019": 6,
+      "NSE_EQ|INE733E01010": 6,
+      "NSE_EQ|INE742F01042": 6,
+      "NSE_EQ|INE752E01010": 6,
+      "NSE_EQ|INE758T01015": 9,
+      "NSE_EQ|INE761H01022": 4,
+      "NSE_EQ|INE775A01035": 7,
+      "NSE_EQ|INE795G01014": 6,
+      "NSE_EQ|INE797F01020": 6,
+      "NSE_EQ|INE860A01027": 6,
+      "NSE_EQ|INE917I01010": 7,
+      "NSE_EQ|INE918I01026": 6,
+      "NSE_EQ|INE945G01001": 6,
+      "NIFTY": 0
+    },
+    "point_in_time_universe_verified": false,
+    "corporate_action_provenance_verified": false,
+    "warning": "Cached vendor history; present-day universe and adjustments are not independently verified"
+  },
+  "selection": {
+    "fixed_candidates": [
+      "momentum_60d",
+      "trend_pullback",
+      "breakout_20d",
+      "rsi2_reversion"
+    ],
+    "train_start": "2022-07-20",
+    "train_end": "2025-05-28",
+    "embargo_sessions": 20,
+    "test_start": "2025-06-26",
+    "test_end": "2026-09-28",
+    "selected_using_development_only": null,
+    "method": "positive stressed development return, >=30 trades; return/drawdown rank"
+  },
+  "development": [
+    {
+      "strategy": "momentum_60d",
+      "start": "2022-07-20",
+      "end": "2025-05-28",
+      "initial_capital": 500000.0,
+      "slippage_bps_per_leg": 15,
+      "fee_model": "upstox-cash-delivery-2026-10",
+      "risk_per_trade_pct": 0.25,
+      "max_deployed_pct": 80.0,
+      "statistics": {
+        "sessions": 703,
+        "trades": 161,
+        "total_return_pct": -0.04471178626900274,
+        "cagr_pct": -0.016029852794585686,
+        "max_drawdown_pct": -7.0029791262272045,
+        "sharpe_zero_risk_free": 0.00708383512071167,
+        "sortino_zero_risk_free": 0.009541649587416528,
+        "mean_daily_return_95_block_ci_pct": [
+          -0.014055156056238586,
+          0.013961296403584306
+        ],
+        "profit_factor": 0.9972737756834846,
+        "net_win_rate": 0.37888198757763975,
+        "mean_exposure_pct": 14.09884078640615,
+        "fees_inr": 19744.513054898973,
+        "monthly_returns_pct": {
+          "2022-07": -0.017791676544431922,
+          "2022-08": 1.3722082391884438,
+          "2022-09": -0.3977731624774772,
+          "2022-10": -0.43361678809067383,
+          "2022-11": 0.33672284708992084,
+          "2022-12": -0.9390324902665559,
+          "2023-01": -2.041445507174855,
+          "2023-02": -1.0158260380512596,
+          "2023-03": -1.05248410194817,
+          "2023-04": 1.232983942627941,
+          "2023-05": 0.1525519952649157,
+          "2023-06": 0.2900840260199322,
+          "2023-07": 1.3376139496391604,
+          "2023-08": -0.47137719781837895,
+          "2023-09": -0.6546096072228558,
+          "2023-10": -0.995069245438096,
+          "2023-11": 1.3111163438365159,
+          "2023-12": 1.1133809198912825,
+          "2024-01": 1.1479552877910804,
+          "2024-02": -0.10359398738715164,
+          "2024-03": -0.09798389154708209,
+          "2024-04": 0.0,
+          "2024-05": 0.0,
+          "2024-06": 0.0,
+          "2024-07": 0.0,
+          "2024-08": 0.0,
+          "2024-09": 0.0,
+          "2024-10": 0.0,
+          "2024-11": 0.0,
+          "2024-12": 0.0,
+          "2025-01": 0.0,
+          "2025-02": 0.0,
+          "2025-03": 0.0,
+          "2025-04": 0.0,
+          "2025-05": -0.024258289440559633
+        },
+        "positive_month_fraction": 0.2571428571428571
+      },
+      "nifty_price_return_pct": 49.44603600359145,
+      "valuation_status": "invalid_stale_marks",
+      "missing_held_position_sessions": 336,
+      "trade_coverage_status": "recorded_executions",
+      "benchmark_note": "NIFTY price index, no dividends/fees; exposure differs, return difference is not factor alpha",
+      "rejected_entries": {
+        "missing_session": 336,
+        "opening_gap": 6,
+        "capital_or_risk_limit": 0,
+        "correlation_limit": 6653
+      },
+      "limitations": [
+        "Missing held-position sessions use stale marks and require review",
+        "Research-end liquidation assumes executable close; daily bars cannot establish intrabar liquidity",
+        "No verified historical sector memberships; trailing correlation is a proxy"
+      ]
+    },
+    {
+      "strategy": "trend_pullback",
+      "start": "2022-07-20",
+      "end": "2025-05-28",
+      "initial_capital": 500000.0,
+      "slippage_bps_per_leg": 15,
+      "fee_model": "upstox-cash-delivery-2026-10",
+      "risk_per_trade_pct": 0.25,
+      "max_deployed_pct": 80.0,
+      "statistics": {
+        "sessions": 703,
+        "trades": 477,
+        "total_return_pct": -15.770282173193696,
+        "cagr_pct": -5.966623658549497,
+        "max_drawdown_pct": -16.7679354564649,
+        "sharpe_zero_risk_free": -1.8400390110476925,
+        "sortino_zero_risk_free": -2.3049592194084556,
+        "mean_daily_return_95_block_ci_pct": [
+          -0.04233573538384891,
+          -0.004426178347441174
+        ],
+        "profit_factor": 0.610914378020847,
+        "net_win_rate": 0.26834381551362685,
+        "mean_exposure_pct": 15.762252384655485,
+        "fees_inr": 57882.36171693487,
+        "monthly_returns_pct": {
+          "2022-07": -0.005757129604455624,
+          "2022-08": 0.40895722775602383,
+          "2022-09": -1.4424112250027044,
+          "2022-10": -0.14746025586320766,
+          "2022-11": 0.36466470802258844,
+          "2022-12": -3.2648415821048715,
+          "2023-01": -0.7209281110466592,
+          "2023-02": -1.8875951823120962,
+          "2023-03": -0.6249003663667652,
+          "2023-04": -0.544555685112047,
+          "2023-05": 0.8587373920655006,
+          "2023-06": 1.0521203452577232,
+          "2023-07": -0.3884398175397208,
+          "2023-08": -1.4250484586436518,
+          "2023-09": -0.579227151373074,
+          "2023-10": -2.201197268559396,
+          "2023-11": 1.127747680905511,
+          "2023-12": 2.6656483220997673,
+          "2024-01": 1.636695607689087,
+          "2024-02": -0.1302438956660934,
+          "2024-03": -1.2390137940651136,
+          "2024-04": -0.3770087728374949,
+          "2024-05": -1.5094484014258835,
+          "2024-06": -1.3996924520495613,
+          "2024-07": -1.5025012323972353,
+          "2024-08": -0.5394333869528367,
+          "2024-09": 0.10276070360251133,
+          "2024-10": -1.9188272537059126,
+          "2024-11": -1.3075375747932938,
+          "2024-12": -1.4948537273927087,
+          "2025-01": 0.10948433722561823,
+          "2025-02": -0.5634626127355213,
+          "2025-03": 0.0,
+          "2025-04": 0.0,
+          "2025-05": 0.0
+        },
+        "positive_month_fraction": 0.2571428571428571
+      },
+      "nifty_price_return_pct": 49.44603600359145,
+      "valuation_status": "diagnostic_unverified_provenance",
+      "missing_held_position_sessions": 0,
+      "trade_coverage_status": "recorded_executions",
+      "benchmark_note": "NIFTY price index, no dividends/fees; exposure differs, return difference is not factor alpha",
+      "rejected_entries": {
+        "missing_session": 0,
+        "opening_gap": 20,
+        "capital_or_risk_limit": 9,
+        "correlation_limit": 4
+      },
+      "limitations": [
+        "Missing held-position sessions use stale marks and require review",
+        "Research-end liquidation assumes executable close; daily bars cannot establish intrabar liquidity",
+        "No verified historical sector memberships; trailing correlation is a proxy"
+      ]
+    },
+    {
+      "strategy": "breakout_20d",
+      "start": "2022-07-20",
+      "end": "2025-05-28",
+      "initial_capital": 500000.0,
+      "slippage_bps_per_leg": 15,
+      "fee_model": "upstox-cash-delivery-2026-10",
+      "risk_per_trade_pct": 0.25,
+      "max_deployed_pct": 80.0,
+      "statistics": {
+        "sessions": 703,
+        "trades": 172,
+        "total_return_pct": -4.024767418748231,
+        "cagr_pct": -1.4617804859645145,
+        "max_drawdown_pct": -7.315450079107366,
+        "sharpe_zero_risk_free": -0.6127466451013807,
+        "sortino_zero_risk_free": -0.7868994679162388,
+        "mean_daily_return_95_block_ci_pct": [
+          -0.01674266232679333,
+          0.004013714341254054
+        ],
+        "profit_factor": 0.7851732718310014,
+        "net_win_rate": 0.43023255813953487,
+        "mean_exposure_pct": 11.119523589216191,
+        "fees_inr": 21499.93516066803,
+        "monthly_returns_pct": {
+          "2022-07": 0.07730894785749065,
+          "2022-08": -0.011120559779165262,
+          "2022-09": -1.1436322910938879,
+          "2022-10": 0.0399967393677203,
+          "2022-11": -0.9548693534973007,
+          "2022-12": -1.003787542235568,
+          "2023-01": -0.9486123902285093,
+          "2023-02": -1.1437709526097795,
+          "2023-03": -0.7474414140268282,
+          "2023-04": 0.3846393517592084,
+          "2023-05": -0.14015684722996635,
+          "2023-06": 0.07245615648034942,
+          "2023-07": 0.4752966443060114,
+          "2023-08": 0.03795927712682001,
+          "2023-09": -0.8768674618281014,
+          "2023-10": -1.0064097198988708,
+          "2023-11": 1.393640245114347,
+          "2023-12": 1.0667376349476676,
+          "2024-01": 0.23922226710151318,
+          "2024-02": 0.15573120974436971,
+          "2024-03": 0.0,
+          "2024-04": 0.0,
+          "2024-05": 0.0,
+          "2024-06": 0.0,
+          "2024-07": 0.0,
+          "2024-08": 0.0,
+          "2024-09": 0.0,
+          "2024-10": 0.0,
+          "2024-11": 0.0,
+          "2024-12": 0.0,
+          "2025-01": 0.0,
+          "2025-02": 0.0,
+          "2025-03": 0.0,
+          "2025-04": 0.0,
+          "2025-05": -0.01746622179824575
+        },
+        "positive_month_fraction": 0.2857142857142857
+      },
+      "nifty_price_return_pct": 49.44603600359145,
+      "valuation_status": "invalid_stale_marks",
+      "missing_held_position_sessions": 336,
+      "trade_coverage_status": "recorded_executions",
+      "benchmark_note": "NIFTY price index, no dividends/fees; exposure differs, return difference is not factor alpha",
+      "rejected_entries": {
+        "missing_session": 336,
+        "opening_gap": 18,
+        "capital_or_risk_limit": 2,
+        "correlation_limit": 386
+      },
+      "limitations": [
+        "Missing held-position sessions use stale marks and require review",
+        "Research-end liquidation assumes executable close; daily bars cannot establish intrabar liquidity",
+        "No verified historical sector memberships; trailing correlation is a proxy"
+      ]
+    },
+    {
+      "strategy": "rsi2_reversion",
+      "start": "2022-07-20",
+      "end": "2025-05-28",
+      "initial_capital": 500000.0,
+      "slippage_bps_per_leg": 15,
+      "fee_model": "upstox-cash-delivery-2026-10",
+      "risk_per_trade_pct": 0.25,
+      "max_deployed_pct": 80.0,
+      "statistics": {
+        "sessions": 703,
+        "trades": 883,
+        "total_return_pct": -26.999284247970103,
+        "cagr_pct": -10.667861731835727,
+        "max_drawdown_pct": -27.41904194258774,
+        "sharpe_zero_risk_free": -4.859292154525067,
+        "sortino_zero_risk_free": -5.329450894217387,
+        "mean_daily_return_95_block_ci_pct": [
+          -0.05754994421859624,
+          -0.030962231979792365
+        ],
+        "profit_factor": 0.37004079177654275,
+        "net_win_rate": 0.318233295583239,
+        "mean_exposure_pct": 7.867303219283616,
+        "fees_inr": 105077.06674929551,
+        "monthly_returns_pct": {
+          "2022-07": 0.01644730734178257,
+          "2022-08": 0.4706844479926531,
+          "2022-09": -1.629378436324258,
+          "2022-10": -0.6543062497256447,
+          "2022-11": -1.112127685638764,
+          "2022-12": -2.1984132130053458,
+          "2023-01": -2.0267247587324233,
+          "2023-02": -0.9015838559142342,
+          "2023-03": 0.0,
+          "2023-04": -0.4649927786467556,
+          "2023-05": -0.5447610358377042,
+          "2023-06": -1.4197011512617763,
+          "2023-07": -0.4808096283831942,
+          "2023-08": -1.5814383428823242,
+          "2023-09": -1.5972366749791078,
+          "2023-10": -1.3651255615964253,
+          "2023-11": 0.1855039619484522,
+          "2023-12": -0.695204400187921,
+          "2024-01": -1.0142285111161775,
+          "2024-02": -0.6431418084276386,
+          "2024-03": -1.4158692417831409,
+          "2024-04": -0.9072882815955974,
+          "2024-05": -1.9136235473083407,
+          "2024-06": -0.1384575459417059,
+          "2024-07": 0.02638204278317957,
+          "2024-08": -0.6735925971073087,
+          "2024-09": -2.4892738682060545,
+          "2024-10": -2.9735076499507906,
+          "2024-11": -0.5994883713651533,
+          "2024-12": -2.2476109580030545,
+          "2025-01": -0.2107211162822864,
+          "2025-02": 0.0,
+          "2025-03": 0.0,
+          "2025-04": 0.0,
+          "2025-05": 0.0
+        },
+        "positive_month_fraction": 0.11428571428571428
+      },
+      "nifty_price_return_pct": 49.44603600359145,
+      "valuation_status": "diagnostic_unverified_provenance",
+      "missing_held_position_sessions": 0,
+      "trade_coverage_status": "recorded_executions",
+      "benchmark_note": "NIFTY price index, no dividends/fees; exposure differs, return difference is not factor alpha",
+      "rejected_entries": {
+        "missing_session": 0,
+        "opening_gap": 32,
+        "capital_or_risk_limit": 27,
+        "correlation_limit": 13
+      },
+      "limitations": [
+        "Missing held-position sessions use stale marks and require review",
+        "Research-end liquidation assumes executable close; daily bars cannot establish intrabar liquidity",
+        "No verified historical sector memberships; trailing correlation is a proxy"
+      ]
+    }
+  ],
+  "evaluation": [],
+  "admission_failures": [
+    "Point-in-time universe not verified",
+    "Corporate-action provenance not verified",
+    "This historical period has been inspected in prior project research; fresh forward evidence is required",
+    "Production signals/exits and model filters differ; this is a baseline-family experiment, not full-system performance"
+  ]
+}
