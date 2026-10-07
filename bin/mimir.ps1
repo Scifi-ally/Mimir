@@ -55,25 +55,29 @@ function Get-MimirStatus {
     $backend = Test-PortListening 5000
     $ai = Test-PortListening 8001
     $frontend = Test-PortListening 3000
+    $db = Test-PortListening 5433
+    $redis = Test-PortListening 6379
     return @{
         Backend = $backend
         AI = $ai
         Frontend = $frontend
-        Running = ($backend -and $ai)
+        DB = $db
+        Redis = $redis
+        Running = ($backend -and $ai -and $frontend -and $db -and $redis)
     }
 }
 
 function Start-MimirServices {
     $status = Get-MimirStatus
     if ($status.Running) {
-        Write-Host "$C_GREEN  [OK] Trading backend & AI engine are already running.$C_RESET"
+        Write-Host "$C_GREEN  [OK] All Mimir services (DB, Redis, AI, Backend, Frontend) are active.$C_RESET"
         return $true
     }
 
-    Write-Host "$C_CYAN  > Starting Mimir background engines (PostgreSQL, Backend API, AI Service)...$C_RESET"
+    Write-Host "$C_CYAN  > Starting Mimir background engines (PostgreSQL, Redis, AI, Backend, Frontend)...$C_RESET"
     Push-Location $MimirDir
     try {
-        & cmd.exe /c "bot.bat start"
+        & cmd.exe /c "bot.bat start --headless"
     } finally {
         Pop-Location
     }
@@ -95,17 +99,16 @@ function Show-Help {
     Show-Banner
     Write-Host ""
     Write-Host "$C_BOLD$C_WHITE  USAGE:$C_RESET"
-    Write-Host "    $C_CYAN mimir start$C_RESET               Start trading engine and launch desktop app"
+    Write-Host "    $C_CYAN mimir start$C_RESET               Start trading engine and launch native desktop app"
     Write-Host "    $C_CYAN mimir start --web$C_RESET         Start trading engine and open web browser UI"
     Write-Host "    $C_CYAN mimir start --headless$C_RESET    Start trading engine in background only (no UI)"
-    Write-Host "    $C_CYAN mimir start --detach$C_RESET      Launch desktop app in separate detached process"
+    Write-Host "    $C_CYAN mimir desktop$C_RESET             Launch native Tauri desktop app window directly"
+    Write-Host "    $C_CYAN mimir web$C_RESET                 Open web terminal at http://localhost:3000"
     Write-Host ""
     Write-Host "$C_BOLD$C_WHITE  MANAGEMENT:$C_RESET"
     Write-Host "    $C_CYAN mimir stop$C_RESET                Stop all engines, microservices, and processes"
     Write-Host "    $C_CYAN mimir status$C_RESET              Check health of all ports and services"
     Write-Host "    $C_CYAN mimir restart$C_RESET             Restart all services"
-    Write-Host "    $C_CYAN mimir desktop$C_RESET             Launch Tauri desktop app directly"
-    Write-Host "    $C_CYAN mimir web$C_RESET                 Open web terminal at http://localhost:3000"
     Write-Host "    $C_CYAN mimir tunnel$C_RESET              Create Cloudflare/ngrok public tunnel"
     Write-Host "    $C_CYAN mimir tunnel-stop$C_RESET         Kill active public tunnel"
     Write-Host "    $C_CYAN mimir logs$C_RESET                Show recent execution and server logs"
@@ -130,7 +133,7 @@ switch -Regex ($Action) {
         }
 
         if ($isHeadless) {
-            Write-Host "$C_GREEN  [OK] Mimir services active in background (Backend :5000, AI :8001, Frontend :3000).$C_RESET"
+            Write-Host "$C_GREEN  [OK] Mimir services active in background (Backend :5000, AI :8001, Frontend :3000, DB :5433, Redis :6379).$C_RESET"
             Write-Host "$C_DIM$C_GRAY  Use 'mimir desktop' to open UI or 'mimir stop' to shut down.$C_RESET"
             exit 0
         }
@@ -141,17 +144,17 @@ switch -Regex ($Action) {
             exit 0
         }
 
-        # Launch Tauri Desktop App
+        # DEFAULT: Launch Native Tauri Desktop App Window
         Write-Host "$C_CYAN  > Launching Mimir Desktop Application (Tauri v2)...$C_RESET"
-        if ($isDetach) {
-            Push-Location $MimirDir
-            Start-Process -FilePath "cmd.exe" -ArgumentList "/c npm --prefix frontend run tauri:dev" -WorkingDirectory $MimirDir
-            Pop-Location
-            Write-Host "$C_GREEN  [OK] Desktop app launched in separate window.$C_RESET"
+        $tauriExe = Join-Path $MimirDir "frontend\src-tauri\target\debug\mimir.exe"
+        if (Test-Path $tauriExe) {
+            Start-Process -FilePath $tauriExe -WorkingDirectory (Join-Path $MimirDir "frontend\src-tauri")
+            Write-Host "$C_GREEN  [OK] Native Mimir Desktop window launched.$C_RESET"
         } else {
             Push-Location $MimirDir
             try {
-                & cmd.exe /c "npm --prefix frontend run tauri:dev"
+                Start-Process -FilePath "cmd.exe" -ArgumentList "/c npm --prefix frontend run tauri:dev" -WorkingDirectory $MimirDir
+                Write-Host "$C_GREEN  [OK] Native Mimir Desktop window starting via Tauri...$C_RESET"
             } finally {
                 Pop-Location
             }
@@ -162,12 +165,19 @@ switch -Regex ($Action) {
     "^(desktop|app)$" {
         Show-Banner
         Start-MimirServices | Out-Null
-        Write-Host "$C_CYAN  > Launching Mimir Desktop Application...$C_RESET"
-        Push-Location $MimirDir
-        try {
-            & cmd.exe /c "npm --prefix frontend run tauri:dev"
-        } finally {
-            Pop-Location
+        Write-Host "$C_CYAN  > Launching Mimir Desktop Application (Tauri v2)...$C_RESET"
+        $tauriExe = Join-Path $MimirDir "frontend\src-tauri\target\debug\mimir.exe"
+        if (Test-Path $tauriExe) {
+            Start-Process -FilePath $tauriExe -WorkingDirectory (Join-Path $MimirDir "frontend\src-tauri")
+            Write-Host "$C_GREEN  [OK] Native Mimir Desktop window launched.$C_RESET"
+        } else {
+            Push-Location $MimirDir
+            try {
+                Start-Process -FilePath "cmd.exe" -ArgumentList "/c npm --prefix frontend run tauri:dev" -WorkingDirectory $MimirDir
+                Write-Host "$C_GREEN  [OK] Native Mimir Desktop window starting via Tauri...$C_RESET"
+            } finally {
+                Pop-Location
+            }
         }
         break
     }
@@ -195,16 +205,28 @@ switch -Regex ($Action) {
         Show-Banner
         $status = Get-MimirStatus
         Write-Host ""
-        if ($status.Backend) {
-            Write-Host "  $C_GREEN[OK]$C_RESET $C_WHITE Backend API Server:     $C_RESET$C_CYAN http://localhost:5000$C_RESET"
+        if ($status.DB) {
+            Write-Host "  $C_GREEN[OK]$C_RESET $C_WHITE Database (PostgreSQL):  $C_RESET$C_CYAN port 5433$C_RESET"
         } else {
-            Write-Host "  $C_RED[--]$C_RESET $C_GRAY Backend API Server:      offline (:5000)$C_RESET"
+            Write-Host "  $C_RED[--]$C_RESET $C_GRAY Database (PostgreSQL):   offline (:5433)$C_RESET"
+        }
+
+        if ($status.Redis) {
+            Write-Host "  $C_GREEN[OK]$C_RESET $C_WHITE Cache (Redis):          $C_RESET$C_CYAN port 6379$C_RESET"
+        } else {
+            Write-Host "  $C_RED[--]$C_RESET $C_GRAY Cache (Redis):           offline (:6379)$C_RESET"
         }
 
         if ($status.AI) {
             Write-Host "  $C_GREEN[OK]$C_RESET $C_WHITE AI Service (Laya/Jev):  $C_RESET$C_CYAN http://localhost:8001$C_RESET"
         } else {
             Write-Host "  $C_RED[--]$C_RESET $C_GRAY AI Service (Laya/Jev):   offline (:8001)$C_RESET"
+        }
+
+        if ($status.Backend) {
+            Write-Host "  $C_GREEN[OK]$C_RESET $C_WHITE Backend API Server:     $C_RESET$C_CYAN http://localhost:5000$C_RESET"
+        } else {
+            Write-Host "  $C_RED[--]$C_RESET $C_GRAY Backend API Server:      offline (:5000)$C_RESET"
         }
 
         if ($status.Frontend) {

@@ -17,8 +17,8 @@ function killPid(pid, reason) {
 }
 
 try {
-  // 1. First, check all known Mimir ports (5000: Backend, 8001: AI Service, 3000: Frontend, 5433: PostgreSQL)
-  const ports = [5000, 8001, 3000, 5433];
+  // 1. First, check all known Mimir ports (5000: Backend, 8001: AI Service, 3000: Frontend, 5433: PostgreSQL, 6379: Redis)
+  const ports = [5000, 8001, 3000, 5433, 6379];
   for (const port of ports) {
     try {
       const netstatOut = execSync(`netstat -ano | findstr /C:":${port}" | findstr /C:"LISTENING"`, { encoding: "utf8" });

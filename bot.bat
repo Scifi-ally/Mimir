@@ -45,11 +45,14 @@ if /i "%ACTION%"=="start" goto start
 if /i "%ACTION%"=="stop" goto stop
 if /i "%ACTION%"=="status" goto status
 if /i "%ACTION%"=="restart" goto restart
+if /i "%ACTION%"=="web" goto web
+if /i "%ACTION%"=="desktop" goto desktop
+if /i "%ACTION%"=="app" goto desktop
 if /i "%ACTION%"=="tunnel" goto tunnel
 if /i "%ACTION%"=="tunnel-stop" goto tunnel_stop
 if "%ACTION%"=="" goto menu
 
-echo !C_CYAN!Usage: bot [start^|stop^|status^|restart^|tunnel ^<port^>^|tunnel-stop]!C_RESET!
+echo !C_CYAN!Usage: bot [start^|stop^|status^|restart^|desktop^|web^|tunnel ^<port^>^|tunnel-stop]!C_RESET!
 exit /b 1
 
 :print_banner
@@ -64,16 +67,14 @@ if "%RUNNING%"=="1" goto stop
 goto start
 
 :start
-call :isRunning
-if "%RUNNING%"=="1" (
-    echo !C_YELLOW!  [!] Bot is already running! Run 'bot restart' to reboot.!C_RESET!
-    goto :eof
-)
+call :check_all_services
+if "!ALL_RUNNING!"=="1" goto already_running
 call :print_banner
 echo !C_GRAY!  --------------------------------------!C_RESET!
 echo !C_WHITE!  ^> !C_GREEN!Initializing Engine...!C_RESET!
 :: Clean up any leftover zombie processes to prevent file locking issues
 call "!NODE_CMD!" "%SCRIPT_DIR%scripts\kill-zombies.mjs" >nul 2>&1
+if exist "%PROJECT_DIR%\.portable\pgsql\data\postmaster.pid" del /f /q "%PROJECT_DIR%\.portable\pgsql\data\postmaster.pid" >nul 2>&1
 :: Remove stale literal %STATE_FILE% junk file from a previous script version
 if exist "%SCRIPT_DIR%%%STATE_FILE%%" del /f /q "%SCRIPT_DIR%%%STATE_FILE%%" >nul 2>&1
 > "%STATE_FILE%" echo running
@@ -103,11 +104,9 @@ if exist "%PROJECT_DIR%\.portable\pgsql\bin\pg_ctl.exe" (
     :: Override DATABASE_URL so the node processes connect to the portable DB
     set "DATABASE_URL=postgresql://postgres:postgres@localhost:5433/upstox_bot"
     
-    :: Automatically create the database and run migrations/setup
+    :: Automatically create the database
     set "PGPASSWORD=postgres"
     "%PROJECT_DIR%\.portable\pgsql\bin\createdb.exe" -h localhost -p 5433 -U postgres upstox_bot >nul 2>&1
-    echo !C_GRAY!    +-- !C_DIM!Running database migrations...!C_RESET!
-    call !NODE_CMD! "%PROJECT_DIR%\backend\dist\migrate.mjs" >nul 2>&1
 )
 
 :: Start Backend processes (API Server + Trading Engine) in hidden PowerShell windows and capture PIDs
@@ -120,6 +119,12 @@ if !BUILD_ERR! NEQ 0 (
     echo !C_RED!  [X] Backend build failed!!C_RESET!
     goto stop
 )
+
+if exist "%PROJECT_DIR%\.portable\pgsql\bin\pg_ctl.exe" (
+    echo !C_GRAY!    +-- !C_DIM!Running database migrations...!C_RESET!
+    call !NODE_CMD! "%PROJECT_DIR%\backend\dist\migrate.mjs" >nul 2>&1
+)
+
 echo !C_GRAY!    \-- !C_DIM!Starting backend ^& trading engine...!C_RESET!
 powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%scripts\run-detached.ps1" -FilePath "!NODE_CMD!" -ArgumentList "--enable-source-maps ./dist/index.mjs" -WorkingDirectory "%PROJECT_DIR%\backend" -PidFile "!BACKEND_PID_FILE!" -LogOut "!BACKEND_PID_FILE!.out.log" -LogErr "!BACKEND_PID_FILE!.err.log"
 
@@ -136,6 +141,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "$src=(Get-ChildItem '%PR
 if !errorlevel! NEQ 0 (
     echo !C_YELLOW!  [*] Frontend dist is older than src — run a frontend build to pick up latest changes.!C_RESET!
 )
+if not exist "%PROJECT_DIR%\frontend\dist\index.html" (
+    echo !C_GRAY!    +-- !C_DIM!Building frontend...!C_RESET!
+    pushd "%PROJECT_DIR%\frontend"
+    call !NODE_CMD! "%PROJECT_DIR%\node_modules\vite\bin\vite.js" build >nul 2>&1
+    popd
+)
 echo !C_GRAY!    +-- !C_DIM!Starting frontend...!C_RESET!
 powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%scripts\run-detached.ps1" -FilePath "!NODE_CMD!" -ArgumentList "%PROJECT_DIR%\node_modules\vite\bin\vite.js preview" -WorkingDirectory "%PROJECT_DIR%\frontend" -PidFile "!FRONTEND_PID_FILE!" -LogOut "!FRONTEND_PID_FILE!.out.log" -LogErr "!FRONTEND_PID_FILE!.err.log"
 
@@ -143,6 +154,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%scripts\run-det
 :: Wait for ports to become active to verify launch success
 set "BACKEND_OK=0"
 set "AI_OK=0"
+set "FRONTEND_OK=0"
+set "DB_OK=0"
+set "REDIS_OK=0"
 for /l %%i in (1,1,60) do (
     for /f "tokens=5" %%p in ('netstat -ano ^| findstr /C:":5000" ^| findstr /C:"LISTENING" 2^>nul') do (
         if not "%%p"=="" if %%p neq 0 set "BACKEND_OK=1"
@@ -150,7 +164,16 @@ for /l %%i in (1,1,60) do (
     for /f "tokens=5" %%p in ('netstat -ano ^| findstr /C:":8001" ^| findstr /C:"LISTENING" 2^>nul') do (
         if not "%%p"=="" if %%p neq 0 set "AI_OK=1"
     )
-    if "!BACKEND_OK!"=="1" if "!AI_OK!"=="1" goto startup_check_done
+    for /f "tokens=5" %%p in ('netstat -ano ^| findstr /C:":3000" ^| findstr /C:"LISTENING" 2^>nul') do (
+        if not "%%p"=="" if %%p neq 0 set "FRONTEND_OK=1"
+    )
+    for /f "tokens=5" %%p in ('netstat -ano ^| findstr /C:":5433" ^| findstr /C:"LISTENING" 2^>nul') do (
+        if not "%%p"=="" if %%p neq 0 set "DB_OK=1"
+    )
+    for /f "tokens=5" %%p in ('netstat -ano ^| findstr /C:":6379" ^| findstr /C:"LISTENING" 2^>nul') do (
+        if not "%%p"=="" if %%p neq 0 set "REDIS_OK=1"
+    )
+    if "!BACKEND_OK!"=="1" if "!AI_OK!"=="1" if "!FRONTEND_OK!"=="1" goto startup_check_done
     ping -n 2 127.0.0.1 >nul
 )
 :startup_check_done
@@ -158,25 +181,93 @@ for /l %%i in (1,1,60) do (
 echo.
 echo !C_GRAY!  --------------------------------------!C_RESET!
 
+if "%DB_OK%"=="0" (
+    echo !C_RED!  [X] Database [Postgres]   failed :5433!C_RESET!
+) else (
+    echo !C_GREEN!  [OK] !C_WHITE!Database [Postgres]!C_RESET!!C_GRAY!    port 5433!C_RESET!
+)
+
+if "%REDIS_OK%"=="0" (
+    echo !C_RED!  [X] Cache [Redis]         failed :6379!C_RESET!
+) else (
+    echo !C_GREEN!  [OK] !C_WHITE!Cache [Redis]!C_RESET!!C_GRAY!         port 6379!C_RESET!
+)
+
 if "%AI_OK%"=="0" (
-    echo !C_RED!  [X] AI Service          failed :8001!C_RESET!
+    echo !C_RED!  [X] AI Service            failed :8001!C_RESET!
     echo !C_DIM!!C_GRAY!    Check .codex-logs for details!C_RESET!
 ) else (
-    echo !C_GREEN!  [OK] !C_WHITE!AI Service!C_RESET!!C_GRAY!          http://localhost:8001!C_RESET!
+    echo !C_GREEN!  [OK] !C_WHITE!AI Service!C_RESET!!C_GRAY!            http://localhost:8001!C_RESET!
 )
 
 if "%BACKEND_OK%"=="0" (
-    echo !C_RED!  [X] Backend API         failed :5000!C_RESET!
+    echo !C_RED!  [X] Backend API           failed :5000!C_RESET!
     echo !C_DIM!!C_GRAY!    Check .codex-logs for details!C_RESET!
 ) else (
-    echo !C_GREEN!  [OK] !C_WHITE!Backend API!C_RESET!!C_GRAY!         http://localhost:5000!C_RESET!
-    echo !C_GREEN!  [OK] !C_WHITE!Frontend!C_RESET!!C_GRAY!            http://localhost:3000!C_RESET!
+    echo !C_GREEN!  [OK] !C_WHITE!Backend API!C_RESET!!C_GRAY!           http://localhost:5000!C_RESET!
 )
 
+if "%FRONTEND_OK%"=="0" (
+    echo !C_RED!  [X] Frontend Web UI       failed :3000!C_RESET!
+    echo !C_DIM!!C_GRAY!    Check .codex-logs for details!C_RESET!
+) else (
+    echo !C_GREEN!  [OK] !C_WHITE!Frontend Web UI!C_RESET!!C_GRAY!      !C_CYAN!http://localhost:3000!C_RESET!
+)
 
 echo.
 echo !C_GRAY!  --------------------------------------!C_RESET!
-echo !C_DIM!!C_GRAY!  !C_WHITE!bot stop!C_GRAY! shut down  !C_WHITE!bot tunnel!C_GRAY! new link  !C_WHITE!bot tunnel-stop!C_GRAY! kill tunnel!C_RESET!
+echo !C_DIM!!C_GRAY!  !C_WHITE!bot stop!C_GRAY! shut down  !C_WHITE!bot restart!C_GRAY! reboot  !C_WHITE!bot tunnel!C_GRAY! public link!C_RESET!
+
+set "LAUNCH_UI=desktop"
+if /i "%~2"=="--headless" set "LAUNCH_UI=none"
+if /i "%~2"=="-b" set "LAUNCH_UI=none"
+if /i "%~2"=="--no-browser" set "LAUNCH_UI=none"
+if /i "%~2"=="--web" set "LAUNCH_UI=web"
+if /i "%~2"=="-w" set "LAUNCH_UI=web"
+if /i "%~2"=="--desktop" set "LAUNCH_UI=desktop"
+
+if "!FRONTEND_OK!"=="1" (
+    if "!LAUNCH_UI!"=="web" start http://localhost:3000
+    if "!LAUNCH_UI!"=="desktop" (
+        set "TAURI_EXE=%PROJECT_DIR%\frontend\src-tauri\target\debug\mimir.exe"
+        if exist "!TAURI_EXE!" (
+            start "" "!TAURI_EXE!"
+        ) else (
+            start http://localhost:3000
+        )
+    )
+)
+goto :eof
+
+:already_running
+call :print_banner
+echo.
+echo !C_GREEN!  [OK] All Mimir services are active and running:!C_RESET!
+echo !C_GRAY!       Database [PostgreSQL]: !C_WHITE!port 5433!C_RESET!
+echo !C_GRAY!       Cache [Redis]:         !C_WHITE!port 6379!C_RESET!
+echo !C_GRAY!       AI Microservice:       !C_WHITE!http://localhost:8001!C_RESET!
+echo !C_GRAY!       Backend API Server:    !C_WHITE!http://localhost:5000!C_RESET!
+echo !C_GREEN!       Frontend Web UI:       !C_CYAN!http://localhost:3000!C_RESET!
+echo.
+echo !C_DIM!!C_GRAY!  (To restart everything cleanly, run: !C_WHITE!bot restart!C_RESET!)
+
+set "LAUNCH_UI=desktop"
+if /i "%~2"=="--headless" set "LAUNCH_UI=none"
+if /i "%~2"=="-b" set "LAUNCH_UI=none"
+if /i "%~2"=="--no-browser" set "LAUNCH_UI=none"
+if /i "%~2"=="--web" set "LAUNCH_UI=web"
+if /i "%~2"=="-w" set "LAUNCH_UI=web"
+if /i "%~2"=="--desktop" set "LAUNCH_UI=desktop"
+
+if "!LAUNCH_UI!"=="web" start http://localhost:3000
+if "!LAUNCH_UI!"=="desktop" (
+    set "TAURI_EXE=%PROJECT_DIR%\frontend\src-tauri\target\debug\mimir.exe"
+    if exist "!TAURI_EXE!" (
+        start "" "!TAURI_EXE!"
+    ) else (
+        start http://localhost:3000
+    )
+)
 goto :eof
 
 :tunnel
@@ -267,6 +358,7 @@ set "STOPPED=0"
 
 :: First pass: Run robust node cleanup script immediately to terminate any running services or ports
 call "!NODE_CMD!" "%SCRIPT_DIR%scripts\kill-zombies.mjs" >nul 2>&1
+if exist "%PROJECT_DIR%\.portable\pgsql\data\postmaster.pid" del /f /q "%PROJECT_DIR%\.portable\pgsql\data\postmaster.pid" >nul 2>&1
 
 call :killPidFromFile "%AI_PID_FILE%" "AI microservice"
 call :killPidFromFile "%BACKEND_PID_FILE%" "backend api server"
@@ -313,6 +405,7 @@ set "_KILLED_PIDS="
 
 :: Final pass: Ensure no remaining zombie node/python processes survived
 call "!NODE_CMD!" "%SCRIPT_DIR%scripts\kill-zombies.mjs" >nul 2>&1
+if exist "%PROJECT_DIR%\.portable\pgsql\data\postmaster.pid" del /f /q "%PROJECT_DIR%\.portable\pgsql\data\postmaster.pid" >nul 2>&1
 
 if "%STOPPED%"=="0" (
   echo !C_GRAY!    No active processes were found.!C_RESET!
@@ -320,42 +413,56 @@ if "%STOPPED%"=="0" (
 echo !C_GREEN!  [OK] Stopped.!C_RESET!
 goto :eof
 
-:isRunning
-set "RUNNING=0"
-set "BACKEND_RUNNING=0"
-set "FRONTEND_RUNNING=0"
-set "AI_RUNNING=0"
-
-if exist "%BACKEND_PID_FILE%" (
-    set /p BPID=<"%BACKEND_PID_FILE%"
-    if not "!BPID!"=="" (
-        tasklist /fi "pid eq !BPID!" 2>nul | findstr "!BPID!" >nul
-        if !errorlevel! EQU 0 set "BACKEND_RUNNING=1"
-    )
+:desktop
+call :check_all_services
+if "!ALL_RUNNING!"=="0" call :start --headless
+set "TAURI_EXE=%PROJECT_DIR%\frontend\src-tauri\target\debug\mimir.exe"
+if exist "!TAURI_EXE!" (
+    start "" "!TAURI_EXE!"
+) else (
+    pushd "%PROJECT_DIR%\frontend"
+    start cmd /c npm run tauri:dev
+    popd
 )
+goto :eof
 
-if exist "%AI_PID_FILE%" (
-    set /p AIPID=<"%AI_PID_FILE%"
-    if not "!AIPID!"=="" (
-        tasklist /fi "pid eq !AIPID!" 2>nul | findstr "!AIPID!" >nul
-        if !errorlevel! EQU 0 set "AI_RUNNING=1"
-    )
+:web
+call :check_all_services
+if "!ALL_RUNNING!"=="0" call :start --web
+start http://localhost:3000
+goto :eof
+
+:check_all_services
+set "ALL_RUNNING=0"
+set "CHK_DB=0"
+set "CHK_REDIS=0"
+set "CHK_BACKEND=0"
+set "CHK_AI=0"
+set "CHK_FRONTEND=0"
+for /f "tokens=5" %%p in ('netstat -ano ^| findstr /C:":5433" ^| findstr /C:"LISTENING" 2^>nul') do (
+    if not "%%p"=="" if %%p neq 0 set "CHK_DB=1"
 )
-
-:: Bot is running if both backend and AI processes are alive
-if "%BACKEND_RUNNING%"=="1" if "%AI_RUNNING%"=="1" (
-    set "RUNNING=1"
+for /f "tokens=5" %%p in ('netstat -ano ^| findstr /C:":6379" ^| findstr /C:"LISTENING" 2^>nul') do (
+    if not "%%p"=="" if %%p neq 0 set "CHK_REDIS=1"
 )
-
-:: Double check netstat as fallback
 for /f "tokens=5" %%p in ('netstat -ano ^| findstr /C:":5000" ^| findstr /C:"LISTENING" 2^>nul') do (
-    if not "%%p"=="" if %%p neq 0 set "RUNNING=1"
+    if not "%%p"=="" if %%p neq 0 set "CHK_BACKEND=1"
 )
 for /f "tokens=5" %%p in ('netstat -ano ^| findstr /C:":8001" ^| findstr /C:"LISTENING" 2^>nul') do (
-    if not "%%p"=="" if %%p neq 0 set "RUNNING=1"
+    if not "%%p"=="" if %%p neq 0 set "CHK_AI=1"
+)
+for /f "tokens=5" %%p in ('netstat -ano ^| findstr /C:":3000" ^| findstr /C:"LISTENING" 2^>nul') do (
+    if not "%%p"=="" if %%p neq 0 set "CHK_FRONTEND=1"
+)
+if "!CHK_DB!"=="1" if "!CHK_REDIS!"=="1" if "!CHK_BACKEND!"=="1" if "!CHK_AI!"=="1" if "!CHK_FRONTEND!"=="1" (
+    set "ALL_RUNNING=1"
 )
 exit /b 0
 
+:isRunning
+call :check_all_services
+set "RUNNING=!ALL_RUNNING!"
+exit /b 0
 :killPidFromFile
 set "PIDFILE=%~1"
 set "LABEL=%~2"
@@ -423,3 +530,4 @@ if "!MENU_OPT!"=="1" (
     goto menu
 )
 goto menu
+
