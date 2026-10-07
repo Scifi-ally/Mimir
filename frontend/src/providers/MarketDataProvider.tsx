@@ -124,9 +124,17 @@ class MarketDataStore {
   // Called when WebSocket tick arrives
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   updateFromTick(symbol: string, tick: any): void {
+    if (typeof symbol !== 'string' || !symbol.trim() || !tick || typeof tick !== 'object') return;
     const k = this.key(symbol);
     const existing = this.data.get(k) ?? this.getDefaultData(k);
-    const newLtp = tick.ltp ?? tick.price ?? existing.ltp;
+    const price = tick.ltp ?? tick.price;
+    const hasPrice = price != null;
+    if (hasPrice && (typeof price !== 'number' || !Number.isFinite(price) || price <= 0)) return;
+    const observedAt = tick.timestamp ?? Date.now();
+    if (typeof observedAt !== 'number' || !Number.isFinite(observedAt) || observedAt <= 0 ||
+        observedAt > Date.now() + 5000 || (existing.timestamp != null && observedAt < existing.timestamp)) return;
+    const newLtp = hasPrice ? price : existing.ltp;
+    if (newLtp == null) return;
     let direction: 'up' | 'down' | 'none' = 'none';
     if (newLtp !== null && existing.ltp !== null) {
       if (newLtp > existing.ltp) direction = 'up';
@@ -135,14 +143,18 @@ class MarketDataStore {
       direction = tick.direction;
     }
 
-    const incomingChangePct = tick.changePct ?? tick.changePct;
-    const prevClose = tick.prevClose ?? tick.prev_close ?? existing.prevClose;
+    const incomingChangePct = typeof tick.changePct === 'number' && Number.isFinite(tick.changePct) ? tick.changePct : null;
+    const reportedClose = tick.prevClose ?? tick.prev_close;
+    const prevClose = typeof reportedClose === 'number' && Number.isFinite(reportedClose) && reportedClose > 0
+      ? reportedClose : existing.prevClose;
     const derivedChangePct = (newLtp != null && prevClose != null && prevClose > 0)
       ? ((newLtp - prevClose) / prevClose) * 100
       : null;
     const newChangePct = incomingChangePct != null ? incomingChangePct : (derivedChangePct ?? existing.changePct);
     const incomingVolume = tick.volume;
-    const newVolume = incomingVolume != null ? incomingVolume : existing.volume;
+    const newVolume = typeof incomingVolume === 'number' && Number.isFinite(incomingVolume) && incomingVolume >= 0
+      ? incomingVolume : existing.volume;
+    const timestamp = hasPrice ? observedAt : existing.timestamp;
 
     this.data.set(k, {
       ...existing,
@@ -150,11 +162,11 @@ class MarketDataStore {
       changePct: newChangePct,
       prevClose,
       volume: newVolume,
-      timestamp: tick.timestamp ?? Date.now(),
-      source: 'websocket',
+      timestamp,
+      source: hasPrice ? 'websocket' : existing.source,
       direction,
       is_transitioning: false,
-      is_stale: false,
+      is_stale: timestamp == null || Date.now() - timestamp > MarketDataStore.STALE_TTL_MS,
     });
     this.notify(k);
     this.ticksSinceLastTelemetry++;
@@ -184,19 +196,26 @@ class MarketDataStore {
   // Called when REST query resolves
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   updateFromRest(symbol: string, quote: any): void {
+    if (typeof symbol !== 'string' || !symbol.trim() || !quote || typeof quote !== 'object' ||
+        typeof quote.ltp !== 'number' || !Number.isFinite(quote.ltp) || quote.ltp <= 0) return;
     const k = this.key(symbol);
     const existing = this.data.get(k) ?? this.getDefaultData(k);
     // Only update price if no WebSocket data (REST is lower priority)
-    const shouldUpdatePrice = existing.source !== 'websocket';
+    const observedAt = quote.timestamp ?? Date.now();
+    if (typeof observedAt !== 'number' || !Number.isFinite(observedAt) || observedAt <= 0 || observedAt > Date.now() + 5000) return;
+    const freshWebsocket = existing.source === 'websocket' && existing.timestamp != null &&
+      Date.now() - existing.timestamp <= MarketDataStore.STALE_TTL_MS;
+    const shouldUpdatePrice = !freshWebsocket && (existing.timestamp == null || observedAt >= existing.timestamp);
+    if (!shouldUpdatePrice) return;
 
     this.data.set(k, {
       ...existing,
       ltp: shouldUpdatePrice ? (quote.ltp ?? existing.ltp) : existing.ltp,
-      changePct: shouldUpdatePrice ? (quote.changePct ?? existing.changePct) : existing.changePct,
+      changePct: typeof quote.changePct === 'number' && Number.isFinite(quote.changePct) ? quote.changePct : existing.changePct,
       source: shouldUpdatePrice ? 'rest' : existing.source,
       is_transitioning: shouldUpdatePrice ? false : existing.is_transitioning,
-      timestamp: shouldUpdatePrice ? Date.now() : existing.timestamp,
-      is_stale: shouldUpdatePrice ? false : existing.is_stale,
+      timestamp: observedAt,
+      is_stale: Date.now() - observedAt > MarketDataStore.STALE_TTL_MS,
     });
     this.notify(k);
   }

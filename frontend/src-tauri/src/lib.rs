@@ -46,6 +46,21 @@ impl ManagedServices {
         if let Ok(mut v) = self.children.lock() {
             for child in v.iter_mut() {
                 // Best effort: a service that already exited needs no action.
+                #[cfg(windows)]
+                if matches!(child.try_wait(), Ok(None)) {
+                    use std::os::windows::process::CommandExt;
+                    // npm/cmd launch descendants. Killing only the wrapper
+                    // leaves Node alive and prevents the next app launch from
+                    // owning/shutting down its API. Limit termination to the
+                    // still-running child tree this shell actually spawned.
+                    let _ = Command::new("taskkill.exe")
+                        .args(["/PID", &child.id().to_string(), "/T", "/F"])
+                        .creation_flags(0x0800_0000)
+                        .stdin(Stdio::null())
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .status();
+                }
                 let _ = child.kill();
                 let _ = child.wait();
             }

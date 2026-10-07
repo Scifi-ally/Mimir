@@ -77,6 +77,7 @@ interface AppStore {
   setEventFeedOpen: (open: boolean) => void;
   events: AppEvent[];
   addEvent: (event: Omit<AppEvent, "id" | "timestamp">) => void;
+  removeEvent: (id: string) => void;
   clearEvents: () => void;
   layoutMode: "comfortable" | "compact";
   setLayoutMode: (mode: "comfortable" | "compact") => void;
@@ -235,6 +236,7 @@ saveMobileNumber: false,
       ...state.events,
     ].slice(0, 100), // Keep last 100 events
   })),
+  removeEvent: (id) => set((state) => ({ events: state.events.filter((e) => e.id !== id) })),
   clearEvents: () => set({ events: [] }),
     }),
     {

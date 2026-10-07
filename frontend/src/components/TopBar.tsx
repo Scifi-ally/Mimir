@@ -31,7 +31,7 @@ import { WindowControls } from "@/components/WindowControls";
 import { SPRING_SNAPPY } from "@/lib/motion";
 
 /** Header height plus any safe-area inset, used for the spacer and the bar itself. */
-const TOPBAR_H = "h-[calc(48px+env(safe-area-inset-top))]";
+const TOPBAR_H = "h-[calc(54px+env(safe-area-inset-top))]";
 
 /**
  * Extra clear space between the title bar and the content below it.
@@ -77,6 +77,8 @@ export const TopBar = memo(function TopBar({
   const showIsland = useStore((s) => s.showIsland);
   const hideIsland = useStore((s) => s.hideIsland);
   const unreadCount = useStore(s => s.events.length);
+
+
 
 
 
@@ -208,11 +210,11 @@ export const TopBar = memo(function TopBar({
         data-tauri-drag-region
         className={cn(
           "fixed top-0 left-0 right-0 z-50 w-full shrink-0",
-          "bg-background backdrop-blur-xl backdrop-saturate-150",
-          "h-[calc(48px+env(safe-area-inset-top))] pt-[env(safe-area-inset-top)]",
+          "bg-background backdrop-blur-xl backdrop-saturate-150 border-b border-border/20",
+          "h-[calc(54px+env(safe-area-inset-top))] pt-[calc(7px+env(safe-area-inset-top))] pb-1 px-3 sm:px-4",
         )}
       >
-        <div className="flex flex-col w-full">
+        <div className="flex flex-col w-full h-full justify-center">
           <div className="flex w-full min-w-0 items-center justify-between gap-3 sm:gap-4 whitespace-nowrap">
             <div className="hidden sm:flex min-w-0 flex-1 items-center gap-x-3 pr-2 relative">
 
@@ -228,6 +230,7 @@ export const TopBar = memo(function TopBar({
               <IndexMetric label="FIN NIFTY" ltp={indices?.finnifty?.ltp} changePct={indices?.finnifty?.changePct} storeKey="finnifty" onSelect={() => onSelectSymbol?.("FINNIFTY")} />
               <IndexMetric label="INDIA VIX" ltp={indices?.indiaVix?.ltp} isVix storeKey="vix" onSelect={() => onSelectSymbol?.("INDIA VIX")} />
             </div>
+
           </div>
         </div>
 
@@ -605,4 +608,7 @@ function TokenExpiryDisplay({ expiry }: { expiry: number }) {
   if (!timeLeft) return null;
   return <span className="opacity-80 tabular-nums">{timeLeft}</span>;
 }
+
+
+
 

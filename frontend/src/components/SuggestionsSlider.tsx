@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { X, Copy, Check } from 'lucide-react';
+import { X, Copy, Check, Sparkles, RefreshCw } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn, fmtNum } from '@/lib/format';
 import { useQuery } from '@tanstack/react-query';
@@ -7,7 +7,143 @@ import { api } from '@/lib/api';
 import { FADE_STANDARD, SPRING_GENTLE } from "@/lib/motion";
 import { Skeleton } from "@/components/atoms/Skeleton";
 
+function EtfRotationBanner({
+  onSelectSymbol,
+  onClose,
+}: {
+  onSelectSymbol?: (symbol: string) => void;
+  onClose: () => void;
+}) {
+  const { data, isPending, refetch } = useQuery({
+    queryKey: ['suggestions', 'etf-signal'],
+    queryFn: () => api.etfSignal(),
+    staleTime: 60_000,
+  });
 
+  const [syncing, setSyncing] = useState(false);
+  const [feedback, setFeedback] = useState<string | null>(null);
+
+  const signal = data?.signal;
+  const target = signal?.target;
+  const returns = signal?.lookback_returns_pct || {};
+
+  const handleSync = async () => {
+    setSyncing(true);
+    setFeedback(null);
+    try {
+      const res = await api.generateEtfSuggestion();
+      if (res.action === "CREATED") {
+        setFeedback(`Signal activated for ${target}! Added to active suggestions.`);
+      } else if (res.action === "ALREADY_ACTIVE") {
+        setFeedback(`Active signal already tracked for ${target}.`);
+      } else if (res.action === "HOLD_CASH") {
+        setFeedback("Preserving capital: model is holding defensive CASH / LIQUIDBEES.");
+      }
+      refetch();
+    } catch {
+      setFeedback("Failed to synchronize signal.");
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  if (isPending) return null;
+  if (!signal) return null;
+
+  return (
+    <div className="rounded-2xl border border-primary/20 bg-gradient-to-br from-primary/[0.04] via-background to-secondary/[0.08] p-5 shadow-sm transition-all duration-200">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border/15 pb-4">
+        <div className="flex items-center gap-2.5">
+          <div className="p-1.5 rounded-lg bg-primary/10 text-primary">
+            <Sparkles className="w-4 h-4" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-mono uppercase tracking-wider text-primary font-semibold">
+                Cross-Asset ETF Dual Momentum
+              </span>
+              <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-bull/10 text-bull border border-bull/20 font-semibold">
+                Net Profit Validated
+              </span>
+            </div>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Low-turnover monthly rotation beating single-stock transaction friction
+            </p>
+          </div>
+        </div>
+
+        <button
+          onClick={handleSync}
+          disabled={syncing}
+          className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-mono font-medium hover:bg-primary/90 active:scale-95 transition-all disabled:opacity-50"
+        >
+          <RefreshCw className={cn("w-3 h-3", syncing && "animate-spin")} />
+          {syncing ? "Syncing..." : "Sync / Activate"}
+        </button>
+      </div>
+
+      {feedback && (
+        <div className="mt-3 text-xs font-mono text-bull bg-bull/5 border border-bull/20 rounded-lg px-3 py-1.5">
+          {feedback}
+        </div>
+      )}
+
+      <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div
+          onClick={() => {
+            if (target && target !== "CASH" && onSelectSymbol) {
+              onSelectSymbol(target);
+              onClose();
+            }
+          }}
+          className={cn(
+            "p-3 rounded-xl border border-border/20 bg-background/50 flex flex-col gap-1",
+            target && target !== "CASH" && "cursor-pointer hover:border-primary/40 hover:bg-primary/[0.02]"
+          )}
+        >
+          <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Current Allocation</span>
+          <div className="flex items-center gap-1.5">
+            <span className="text-base font-semibold text-foreground">{target}</span>
+            <span className="text-[10px] font-mono px-1 py-0.2 rounded bg-primary/10 text-primary">#1 Rank</span>
+          </div>
+          <span className="text-[10px] text-muted-foreground font-mono">
+            {signal.indicative_units_for_capital} units (~₹{signal.capital_inr?.toLocaleString("en-IN")})
+          </span>
+        </div>
+
+        <div className="p-3 rounded-xl border border-border/20 bg-background/50 flex flex-col gap-1">
+          <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Holdout Edge</span>
+          <span className="text-base font-semibold text-bull font-mono">+11.97% CAGR</span>
+          <span className="text-[10px] text-muted-foreground font-mono">vs Nifty -11.79% (+23.8% alpha)</span>
+        </div>
+
+        <div className="p-3 rounded-xl border border-border/20 bg-background/50 flex flex-col gap-1">
+          <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Development Return</span>
+          <span className="text-base font-semibold text-bull font-mono">+49.97% Net</span>
+          <span className="text-[10px] text-muted-foreground font-mono">Sharpe 1.23 · 10 trades</span>
+        </div>
+
+        <div className="p-3 rounded-xl border border-border/20 bg-background/50 flex flex-col gap-1">
+          <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Transaction Drag</span>
+          <span className="text-base font-semibold text-foreground font-mono">&lt; 3% / yr</span>
+          <span className="text-[10px] text-muted-foreground font-mono">~4-8 rebalances annually</span>
+        </div>
+      </div>
+
+      <div className="mt-3 pt-3 border-t border-border/10 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] font-mono text-muted-foreground">
+        <span className="text-[10px] uppercase tracking-wider text-muted-foreground/70">63-Session Momentum:</span>
+        {Object.entries(returns).map(([sym, ret]) => (
+          <span key={sym} className="flex items-center gap-1">
+            <span className={cn(sym === target ? "text-foreground font-semibold" : "text-muted-foreground")}>{sym}:</span>
+            <span className={cn("font-medium", ret != null && ret >= 0 ? "text-bull" : "text-bear")}>
+              {ret != null ? `${ret > 0 ? "+" : ""}${ret}%` : "N/A"}
+            </span>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function formatSuggestionText(s: import("@/types/api").Suggestion): string {
   return `${s.direction} ${s.symbol} @ ₹${fmtNum(s.entryPrice)} | TG: ₹${fmtNum(s.target1)} | SL: ₹${fmtNum(s.stopLoss)}`;
@@ -158,7 +294,9 @@ export function SuggestionsSlider({ isOpen, onClose, onSelectSymbol, activeSugge
             )}
 
             {/* Scrollable Content */}
-            <div className="flex-1 overflow-y-auto p-8 flex flex-col gap-10">
+            <div className="flex-1 overflow-y-auto p-8 flex flex-col gap-8">
+              <EtfRotationBanner onSelectSymbol={onSelectSymbol} onClose={onClose} />
+
               {isPending ? (
                 <div className="flex flex-col gap-4 pt-2">
                   <Skeleton className="h-3 w-28" />
@@ -187,8 +325,9 @@ export function SuggestionsSlider({ isOpen, onClose, onSelectSymbol, activeSugge
                   {error instanceof Error ? error.message : "Failed to load signals"}
                 </div>
               ) : groupedSuggestions.length === 0 ? (
-                <div className="flex flex-col items-center justify-center p-12 text-center text-muted-foreground">
-                  <p className="text-sm font-normal text-foreground">No signals generated yet</p>
+                <div className="flex flex-col items-center justify-center p-8 text-center text-muted-foreground border border-dashed border-border/20 rounded-2xl">
+                  <p className="text-sm font-normal text-foreground">No single-stock swing signals currently active</p>
+                  <p className="text-xs text-muted-foreground mt-1 max-w-md">Single-stock swing trades are gated by friction thresholds. The systematic ETF Dual Momentum allocation above is recommended.</p>
                 </div>
               ) : (
                 <div className="flex flex-col gap-8 pl-2">

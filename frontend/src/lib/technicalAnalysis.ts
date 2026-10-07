@@ -14,14 +14,18 @@ export function calculateSRLevels(
 ): SRLevel[] {
   const candidateLevels: SRLevel[] = [];
   if (!dailyCandles || dailyCandles.length < 2) return candidateLevels;
+  if (!Number.isFinite(currentPrice) || currentPrice <= 0 || dailyCandles.some(c =>
+    ![c.open, c.high, c.low, c.close].every(Number.isFinite) || c.low <= 0 ||
+    c.high < Math.max(c.open, c.close, c.low) || c.low > Math.min(c.open, c.close) ||
+    !Number.isFinite(Date.parse(c.ts)))) return candidateLevels;
 
   // Classic pivots use the PREVIOUS completed session's H/L/C. The last element
   // is today's live (incomplete) bar only during market hours; after close (or in
   // any caller that passes only completed candles) the last element is already a
   // finished session. Blindly taking length-2 shifted every pivot/PDH/PDL by one
   // session in that case. Decide by comparing the last candle's IST date to today:
-  // if it IS today, it's the live bar → use length-2; otherwise it's the last
-  // completed session → use length-1.
+  // A same-day bar is incomplete only before the cash-market close. After
+  // 15:30 IST, today's completed bar is available for the next session's levels.
   const istDate = (ts: string): string =>
     new Intl.DateTimeFormat("en-CA", {
       timeZone: "Asia/Kolkata",
@@ -29,10 +33,12 @@ export function calculateSRLevels(
       month: "2-digit",
       day: "2-digit",
     }).format(new Date(ts));
-  const todayIST = istDate(new Date().toISOString());
+  const now = new Date();
+  const todayIST = istDate(now.toISOString());
+  const sessionClose = Date.parse(`${todayIST}T10:00:00Z`);
   const last = dailyCandles[dailyCandles.length - 1];
   const lastIsToday = last?.ts ? istDate(last.ts) === todayIST : true;
-  const prevDay = lastIsToday
+  const prevDay = lastIsToday && now.getTime() < sessionClose
     ? dailyCandles[dailyCandles.length - 2]
     : dailyCandles[dailyCandles.length - 1];
   const H = prevDay.high;

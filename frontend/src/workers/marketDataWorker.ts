@@ -96,7 +96,7 @@ self.onmessage = (event: MessageEvent) => {
     if (msg.event === "tick_update" && Array.isArray(msg.data)) {
       msg.data.forEach((tick: Tick) => processTick(tick));
     } else if (msg.channel === "market:tick") {
-      processTick(msg);
+      processTick(msg.data || msg);
     } else {
       self.postMessage({ ok: true, msg });
     }
@@ -123,7 +123,7 @@ function processTick(inputTick: unknown): void {
     tick = inputTick as Tick;
   }
 
-  if (!tick || !tick.symbol) return;
+  if (!tick || typeof tick.symbol !== "string" || !tick.symbol.trim()) return;
   
   totalTicksReceived++;
   ticksThisSecond++;
@@ -131,7 +131,7 @@ function processTick(inputTick: unknown): void {
   let rawSym = tick.symbol.trim();
   if (rawSym.includes("|")) rawSym = rawSym.split("|").pop() || rawSym;
   if (rawSym.includes(":")) rawSym = rawSym.split(":").pop() || rawSym;
-  const cleanSymbol = rawSym.replace(/-EQ$/, "").toUpperCase();
+  const cleanSymbol = rawSym.replace(/-EQ$/i, "").replace(/\.(NS|BO)$/i, "").toUpperCase();
   const existing = tickBatch.get(cleanSymbol);
 
   // A tick may arrive carrying only a volume/bid/ask/change update and no price.
@@ -141,14 +141,18 @@ function processTick(inputTick: unknown): void {
   // as if the stock had crashed. Carry the last known price instead; if we have
   // never seen a price for this symbol, drop the tick rather than publish a fake 0.
   const incomingPrice = tick.ltp ?? tick.price;
+  if (incomingPrice != null && (typeof incomingPrice !== "number" || !Number.isFinite(incomingPrice) || incomingPrice <= 0)) return;
   const rawPrice = incomingPrice ?? existing?.ltp;
   if (rawPrice == null) return; // no price now and none previously — nothing to emit
   const ltp = Math.round(rawPrice * 100) / 100;
+  const observedAt = tick.timestamp ?? Date.now();
+  if (typeof observedAt !== "number" || !Number.isFinite(observedAt) || observedAt <= 0 ||
+      observedAt > Date.now() + 5000 || (existing?.timestamp != null && observedAt < existing.timestamp)) return;
 
   const prevLtp = existing?.ltp ?? ltp;
   const direction = ltp > prevLtp ? "up" : ltp < prevLtp ? "down" : existing?.direction ?? "none";
 
-  const incomingChangePct = tick.changePct ?? tick.changePct;
+  const incomingChangePct = typeof tick.changePct === "number" && Number.isFinite(tick.changePct) ? tick.changePct : null;
   const changePct = incomingChangePct != null ? incomingChangePct : (existing?.changePct ?? null);
 
   const merged: Tick = {
@@ -159,7 +163,7 @@ function processTick(inputTick: unknown): void {
     price: ltp,
     changePct,
     direction,
-    timestamp: tick.timestamp ?? Date.now(),
+    timestamp: incomingPrice == null ? existing!.timestamp : observedAt,
   };
 
   tickBatch.set(cleanSymbol, merged);

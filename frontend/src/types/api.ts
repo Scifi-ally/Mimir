@@ -70,6 +70,24 @@ export interface DivergenceResult {
   penaltyOrBoost: number;
 }
 
+export interface CvdDivergenceResult {
+  symbol: string;
+  divergenceType: "BULLISH_ABSORPTION" | "BEARISH_EXHAUSTION" | "HIDDEN_BULLISH" | "HIDDEN_BEARISH" | "NEUTRAL";
+  signal: "BULLISH" | "BEARISH" | "NEUTRAL";
+  isDiverging: boolean;
+  confidence: number;
+  penaltyOrBoost: number;
+  currentCvd: number;
+  priorCvd: number;
+  cvdSlope: "RISING" | "FALLING" | "FLAT";
+  priceSlope: "RISING" | "FALLING" | "FLAT";
+  priceReturnPct: number;
+  barsEvaluated: number;
+  timeframe: string;
+  description: string;
+  available: boolean;
+}
+
 export interface DashboardIndices {
   nifty50: IndexQuote;
   sensex: IndexQuote;
@@ -77,6 +95,7 @@ export interface DashboardIndices {
   finnifty: IndexQuote;
   indiaVix: IndexQuote;
   fiiDiiDivergence?: DivergenceResult | null;
+  cvdDivergence?: CvdDivergenceResult | null;
   fetchedAt: string;
 }
 
@@ -160,7 +179,7 @@ export interface SymbolForecast {
   available: boolean;
   source?: string;
   trend?: string;
-  forecastReturnPct?: number;
+  forecastReturnPct?: number | null;
   medianForecast?: number[];
   quantileForecasts?: {
     q25?: number[];
@@ -205,17 +224,49 @@ export interface SymbolInsights {
   } | null;
   monitoring: MonitoredStock | null;
   ai: {
-    compositeScore: number;
+    compositeScore: number | null;
     components?: Record<string, number>;
     trend: string;
-    forecastReturnPct: number;
+    forecastReturnPct: number | null;
     technicalPatterns: string[];
     isFallback?: boolean;
     source: string;
     techEdge?: number | null;
     regimeAlign?: number | null;
   } | null;
+  stockChampion?: StockChampionData | null;
   fetchedAt: string;
+}
+
+export interface StockChampionData {
+  symbol: string;
+  totalStrategiesEvaluated?: number;
+  totalTradesRecorded?: number;
+  championStrategy: {
+    strategyId: string;
+    strategyName: string;
+    family: string;
+    direction?: "BUY" | "SELL";
+    trades: number;
+    winRatePct: number;
+    profitFactor: number;
+    netPnLInr: number;
+    expectancyPct: number;
+    maxDrawdownPct?: number;
+  };
+  runnerUpStrategies?: Array<{
+    strategyId: string;
+    strategyName: string;
+    family: string;
+    profitFactor: number;
+    winRatePct: number;
+  }>;
+  familyAffinity?: Record<string, number>;
+  preferredIndicators: string[];
+  affinityWeight: number;
+  weightMultiplier?: number;
+  lastComputedAt?: string;
+  empiricalEdgeSummary?: string;
 }
 
 export interface SymbolSearchResult {

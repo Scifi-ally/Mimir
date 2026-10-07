@@ -34,8 +34,6 @@ interface DetailPanelProps {
 
 export const DetailPanel = React.memo(function DetailPanel({ suggestions, selectedSymbol, session, isScanActive }: DetailPanelProps) {
   const hasLtp = useSymbolDataSelector(selectedSymbol, (d) => d.ltp != null);
-  const tech_edge = useSymbolDataSelector(selectedSymbol, (d) => d.tech_edge);
-  const regime_align = useSymbolDataSelector(selectedSymbol, (d) => d.regime_align);
   const mtf_score = useSymbolDataSelector(selectedSymbol, (d) => d.mtf_score);
   const mtf_total = useSymbolDataSelector(selectedSymbol, (d) => d.mtf_total);
   const [selectedMetric, setSelectedMetric] = useState<string | null>(null);
@@ -75,8 +73,10 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
   const forecast = insights?.ai;
   const monitoring = insights?.monitoring;
 
-  const techEdgeVal = forecast?.techEdge ?? tech_edge ?? selectedSignal?.signalFactors?.techEdge ?? selectedSignal?.signalFactors?.technical?.score;
-  const regimeAlignVal = forecast?.regimeAlign ?? regime_align ?? selectedSignal?.signalFactors?.regime?.align;
+  // A technical score is not an observed outcome rate. Do not resurrect legacy
+  // 50% baselines from signal/socket caches when current evidence is unavailable.
+  const techEdgeVal = forecast?.techEdge ?? null;
+  const regimeAlignVal = forecast?.regimeAlign ?? null;
 
   const scoreHistoryQuery = useQuery({
     queryKey: ["score-history", selectedSymbol],
@@ -87,6 +87,15 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
     placeholderData: (prev) => prev,
   });
   const scoreHistory = scoreHistoryQuery.data?.history ?? [];
+
+  const cvdQuery = useQuery({
+    queryKey: ["cvd-divergence", selectedSymbol],
+    queryFn: () => api.cvdDivergence(selectedSymbol, "15m"),
+    enabled: Boolean(selectedSymbol && typeof selectedSymbol === "string" && selectedSymbol.trim()),
+    staleTime: 60000,
+    refetchInterval: stopPollingWhenBroken(30000),
+  });
+  const cvd = cvdQuery.data;
 
   // Unified trend read: forecast > indicators > signal direction
   const trend = useMemo(() => {
@@ -391,6 +400,7 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
                 forecast={forecast}
                 selectedSignal={selectedSignal}
                 scan={scan}
+                cvd={cvd}
               />
             </motion.div>
           ) : (
@@ -409,6 +419,42 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
                     />
                     <VwapRow symbol={selectedSymbol} monitoring={monitoring} indicators={indicators} forecast={forecast} onClick={() => setSelectedMetric("vwapSupport")} />
                     <MtfRow scan={scan} selectedSignal={selectedSignal} mtf_score={mtf_score} mtf_total={mtf_total} onClick={() => setSelectedMetric("mtfConfluence")} />
+                    <MatrixRow
+                      onClick={() => setSelectedMetric("cvdFlow")}
+                      label="CVD Flow"
+                      value={
+                        cvd?.available
+                          ? cvd.isDiverging
+                            ? cvd.signal === "BULLISH"
+                              ? "BULL DIV"
+                              : "BEAR DIV"
+                            : cvd.cvdSlope === "RISING"
+                            ? "+INFLOW"
+                            : cvd.cvdSlope === "FALLING"
+                            ? "-OUTFLOW"
+                            : "NEUTRAL"
+                          : "—"
+                      }
+                      color={
+                        cvd?.available
+                          ? cvd.signal === "BULLISH"
+                            ? "text-bull font-medium"
+                            : cvd.signal === "BEARISH"
+                            ? "text-red-400 font-medium"
+                            : "text-foreground/75"
+                          : "text-neutral-500"
+                      }
+                    />
+                    <MatrixRow
+                      onClick={() => setSelectedMetric("stockChampion")}
+                      label="Strat Fit"
+                      value={
+                        insights?.stockChampion
+                          ? `${insights.stockChampion.championStrategy.family.toUpperCase()} ${(insights.stockChampion.affinityWeight ?? insights.stockChampion.weightMultiplier ?? 1).toFixed(2)}x`
+                          : "—"
+                      }
+                      color={insights?.stockChampion ? "text-foreground/90" : "text-neutral-500"}
+                    />
                   </ul>
                   {/* AI column */}
                   <ul className="flex flex-col min-w-0">
@@ -428,10 +474,20 @@ export const DetailPanel = React.memo(function DetailPanel({ suggestions, select
                     <MatrixRow
                       onClick={() => setSelectedMetric("aiForecast")}
                       label="Forecast"
-                      value={forecast?.forecastReturnPct ? fmtPct(forecast.forecastReturnPct) : "—"}
+                      value={forecast?.forecastReturnPct != null ? fmtPct(forecast.forecastReturnPct) : "—"}
                       color={forecast?.forecastReturnPct && forecast.forecastReturnPct > 0 ? "text-bull" : forecast?.forecastReturnPct && forecast.forecastReturnPct < 0 ? "text-bear" : "text-neutral-500"}
                     />
                     <PatternRow forecast={forecast} selectedSignal={selectedSignal} scan={scan} onClick={() => setSelectedMetric("pricePattern")} />
+                    <MatrixRow
+                      onClick={() => setSelectedMetric("stockChampion")}
+                      label="Best Edge"
+                      value={
+                        insights?.stockChampion
+                          ? `${insights.stockChampion.championStrategy.profitFactor.toFixed(1)} PF`
+                          : "—"
+                      }
+                      color={insights?.stockChampion ? "text-bull" : "text-neutral-500"}
+                    />
                   </ul>
                 </div>
               </Card>
@@ -748,11 +804,118 @@ function InlineGauge({ pct, color }: { pct: number; color: string }) {
 /* ── Drill-down detail views (unchanged content, tighter chrome) ───────────── */
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function MetricDetailView({ metricId, onBack, insights, forecast, selectedSignal, scan }: any) {
+function MetricDetailView({ metricId, onBack, insights, forecast, selectedSignal, scan, cvd }: any) {
   let title = "";
   let content = null;
 
   switch (metricId) {
+    case "cvdFlow":
+      title = "Cumulative Volume Delta (CVD)";
+      content = (
+        <div className="flex flex-col gap-3 text-xs text-foreground/90">
+          <p className="leading-relaxed text-muted-foreground text-[11px]">
+            Cumulative Volume Delta (CVD) tracks net institutional market orders (aggressive buy volume minus aggressive sell volume).
+            Divergences between price and CVD identify when aggressive sellers are getting absorbed at support (Bullish Absorption) or when buyers are exhausting at resistance (Bearish Exhaustion).
+          </p>
+          <div className="flex flex-col">
+            <div className="flex justify-between items-center border-b border-border/10 py-1.5">
+              <span className="text-muted-foreground">Order Flow State</span>
+              <span className={cn(
+                "font-normal uppercase",
+                cvd?.signal === "BULLISH" ? "text-bull" : cvd?.signal === "BEARISH" ? "text-red-400" : "text-foreground"
+              )}>
+                {cvd?.divergenceType?.replace(/_/g, " ") || "NEUTRAL"}
+              </span>
+            </div>
+            <div className="flex justify-between items-center border-b border-border/10 py-1.5">
+              <span className="text-muted-foreground">CVD Slope</span>
+              <span className="font-normal tabular-nums">{cvd?.cvdSlope || "—"}</span>
+            </div>
+            <div className="flex justify-between items-center border-b border-border/10 py-1.5">
+              <span className="text-muted-foreground">Price Slope</span>
+              <span className="font-normal tabular-nums">{cvd?.priceSlope || "—"}</span>
+            </div>
+            <div className="flex justify-between items-center border-b border-border/10 py-1.5">
+              <span className="text-muted-foreground">Signal Bias</span>
+              <span className={cn(
+                "font-normal tabular-nums",
+                (cvd?.penaltyOrBoost ?? 0) > 0 ? "text-bull" : (cvd?.penaltyOrBoost ?? 0) < 0 ? "text-red-400" : "text-foreground"
+              )}>
+                {(cvd?.penaltyOrBoost ?? 0) > 0 ? `+${cvd?.penaltyOrBoost}` : cvd?.penaltyOrBoost ?? 0}
+              </span>
+            </div>
+          </div>
+          {cvd?.description && (
+            <p className="text-[10px] text-muted-foreground leading-relaxed italic">{cvd.description}</p>
+          )}
+        </div>
+      );
+      break;
+    case "stockChampion":
+      title = "Stock Strategy Champion";
+      content = (
+        <div className="flex flex-col gap-3 text-xs text-foreground/90">
+          <p className="leading-relaxed text-muted-foreground text-[11px]">
+            Systematic strategy backtesting matrix across historical NSE data. Evaluates which algorithmic setup architecture produces the highest mathematical edge and profit factor specifically for this ticker, dynamically weighting signals.
+          </p>
+          {insights?.stockChampion ? (
+            <div className="flex flex-col">
+              <div className="flex justify-between items-center border-b border-border/10 py-1.5">
+                <span className="text-muted-foreground">Champion Strategy</span>
+                <span className="font-normal text-bull">
+                  {insights.stockChampion.championStrategy.strategyName.replace(/_/g, " ")}
+                </span>
+              </div>
+              <div className="flex justify-between items-center border-b border-border/10 py-1.5">
+                <span className="text-muted-foreground">Setup Family</span>
+                <span className="font-normal uppercase">
+                  {insights.stockChampion.championStrategy.family}
+                </span>
+              </div>
+              <div className="flex justify-between items-center border-b border-border/10 py-1.5">
+                <span className="text-muted-foreground">Profit Factor</span>
+                <span className="font-normal tabular-nums text-bull">
+                  {fmtNum(insights.stockChampion.championStrategy.profitFactor, 2)}x
+                </span>
+              </div>
+              <div className="flex justify-between items-center border-b border-border/10 py-1.5">
+                <span className="text-muted-foreground">Win Rate</span>
+                <span className="font-normal tabular-nums">
+                  {fmtNum(insights.stockChampion.championStrategy.winRatePct, 1)}% ({insights.stockChampion.championStrategy.trades} trades)
+                </span>
+              </div>
+              <div className="flex justify-between items-center border-b border-border/10 py-1.5">
+                <span className="text-muted-foreground">Empirical Weight Boost</span>
+                <span className="font-normal tabular-nums text-bull">
+                  +{fmtNum(insights.stockChampion.affinityWeight ?? insights.stockChampion.weightMultiplier ?? 1, 2)}x (+{Math.round(((insights.stockChampion.affinityWeight ?? insights.stockChampion.weightMultiplier ?? 1) - 1) * 100)}%)
+                </span>
+              </div>
+              {insights.stockChampion.preferredIndicators && insights.stockChampion.preferredIndicators.length > 0 && (
+                <div className="flex justify-between items-center border-b border-border/10 py-1.5">
+                  <span className="text-muted-foreground">Confluence Indicators</span>
+                  <div className="flex gap-1 flex-wrap justify-end">
+                    {insights.stockChampion.preferredIndicators.map((ind: string) => (
+                      <span key={ind} className="px-1 py-0.5 rounded bg-muted text-[10px] text-muted-foreground font-mono">
+                        {ind}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {insights.stockChampion.empiricalEdgeSummary && (
+                <p className="text-[10px] text-muted-foreground leading-relaxed italic mt-1.5">
+                  {insights.stockChampion.empiricalEdgeSummary}
+                </p>
+              )}
+            </div>
+          ) : (
+            <div className="text-muted-foreground py-2 italic border-b border-border/10 text-xs">
+              Backtesting calibration running or baseline equal-weight applied.
+            </div>
+          )}
+        </div>
+      );
+      break;
     case "primaryTrend":
       title = "Primary Trend";
       content = (
@@ -917,7 +1080,7 @@ function MetricDetailView({ metricId, onBack, insights, forecast, selectedSignal
           <div className="flex flex-col">
             <div className="flex justify-between items-center border-b border-border/10 py-1.5">
               <span className="text-muted-foreground">Projected Move</span>
-              <span className="font-normal tabular-nums">{forecast?.medianForecast ? fmtPct(forecast.medianForecast[forecast.medianForecast.length - 1] * 100) : "—"}</span>
+              <span className="font-normal tabular-nums">{forecast?.forecastReturnPct != null ? fmtPct(forecast.forecastReturnPct) : "—"}</span>
             </div>
           </div>
         </div>

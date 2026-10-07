@@ -197,6 +197,33 @@ export const api = {
       lookbackDays: number;
       setups: Array<{ setupType: string; tradeType: string; samples: number; winRate: number; avgPnlInr: number; medianTimeToTargetMin: number | null }>;
     }>("/api/suggestions/accuracy"),
+  etfSignal: () =>
+    apiFetch<{
+      signal: {
+        strategy: string;
+        target: string;
+        as_of_session: string;
+        decision_month_end: string;
+        lookback_returns_pct: Record<string, number | null>;
+        indicative_units_for_capital: number;
+        capital_inr: number;
+        mode: string;
+        live_admitted: boolean;
+        evidence?: string;
+      } | null;
+    }>("/api/suggestions/etf-signal"),
+  generateEtfSuggestion: (capital?: number) =>
+    apiFetch<{
+      action: "CREATED" | "ALREADY_ACTIVE" | "HOLD_CASH" | "ERROR";
+      suggestion?: import("@/types/api").Suggestion;
+      signal?: Record<string, unknown>;
+      message?: string;
+    }>("/api/suggestions/generate-etf", {
+      method: "POST",
+      body: JSON.stringify(capital ? { capital } : {}),
+    }),
+  etfRotationStudy: () =>
+    apiFetch<{ report: Record<string, unknown> | null; mode: string; liveAdmitted: boolean }>("/api/research/etf-rotation"),
   dashboardIndices: () =>
     apiFetch<import("@/types/api").DashboardIndices & { degraded?: boolean; reason?: string }>(
       "/api/market/dashboard-indices",
@@ -329,6 +356,10 @@ export const api = {
       `/api/trading/live/orders?limit=${limit}`,
     ),
   alertsHistory: () => apiFetch<import("@/types/api").AlertRecord[]>("/api/alerts/history"),
+  cvdDivergence: (symbol = "NIFTY 50", timeframe = "15m") =>
+    apiFetch<import("@/types/api").CvdDivergenceResult>(
+      `/api/market/cvd-divergence?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}`
+    ),
   reports: () => apiFetch<Array<{ id: string; date: string; summary: string; content: string; createdAt: string }>>("/api/reports"),
   reportByDate: (date: string) => apiFetch<{ id: string; date: string; summary: string; content: string; createdAt: string }>(`/api/reports/by-date/${encodeURIComponent(date)}`),
   generateReport: (date?: string) => apiFetch<{ success: boolean; message: string }>("/api/reports/generate", { method: "POST", body: JSON.stringify({ date }) }),

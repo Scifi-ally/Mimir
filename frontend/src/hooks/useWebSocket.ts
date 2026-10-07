@@ -421,7 +421,7 @@ export function useWebSocket() {
                   // refresh the live panel + mode badge immediately.
                   useStore.getState().showIsland({
                     title: isModeChange
-                      ? (lower.includes("armed") ? "Live Trading Armed" : "Live Trading Disarmed")
+                      ? (lower.includes("disarmed") ? "Live Trading Disarmed" : "Live Trading Armed")
                       : lower.includes("failed") ? "Live Order Failed" : "Live Order Placed",
                     subtitle: msgText,
                     isNotification: true,
@@ -458,6 +458,7 @@ export function useWebSocket() {
                 });
                 // Safety net: if the alert is about a scan failure, force-reset scan state
                 if (lower.includes("scanner failed") || lower.includes("scan failed")) {
+                  cancelScanFlush();
                   setScanState({ scanning: false, phase: "failed", current: 0, total: 0, message: msgText, updatedAt: Date.now() });
                   queryClient.setQueryData(["session"], (old: Record<string, unknown> | undefined) => old ? { ...old, scanRunning: false } : old);
                 }
