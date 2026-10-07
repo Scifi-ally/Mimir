@@ -90,3 +90,7 @@ backend/data/ticks/
 # Derived export used by scripts/sweep_geometry.ts - regenerated from the
 # candles table, not source. 8 MB of JSON does not belong in history.
 backend/data/candles_cache.json
+backend/data/strategy_lab/
+backend/data/exchange_archive/
+backend/data/factor_archive/
+
