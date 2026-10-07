@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 import pytest
 from sentiment import analyze_sentiment
 from models import technical_pattern_engine
@@ -49,35 +52,38 @@ def test_chronos_engine_status():
     assert "healthy" in status
 
 
-def test_chronos_infer_batch_shape_and_alignment():
-    # With no HF weights loaded this exercises the fallback path, but the batch
-    # API contract (one result per input series, order preserved) must hold
-    # regardless of whether the model or the fallback produced each forecast.
-    series = [
-        [100.0, 100.5, 101.0, 101.4, 101.9, 102.3],
-        [50.0, 49.5, 49.0, 48.7, 48.2, 47.6],
-        [200.0] * 6,
-    ]
+def test_chronos_infer_batch_abstains_without_model(monkeypatch):
+    # Use recorded NSE OHLCV. Missing Chronos weights must produce an explicit
+    # unavailable result, never synthetic quantiles derived from price movement.
+    recorded = json.loads((Path(__file__).parents[1] / "tests" / "fixtures" / "recorded_nse_daily.json").read_text())
+    series = [[bar[4] for bar in recorded["bars"]["RELIANCE"]]]
+    monkeypatch.setattr(chronos_service, "_model_loaded", False)
     results = chronos_service.infer_batch(series, steps=5)
 
     assert len(results) == len(series)
     for res in results:
-        assert len(res.median_forecast) == 5
-        assert res.trend in ("bullish", "bearish", "neutral")
-        assert "q50" in res.quantile_forecasts
+        assert res.median_forecast == []
+        assert res.quantile_forecasts == {}
+        assert res.trend == "neutral"
+        assert res.forecast_return_pct is None
+        assert res.source == "unavailable"
 
-    # Uptrend should not forecast lower than a downtrend series (directional sanity).
-    assert results[0].forecast_return_pct >= results[1].forecast_return_pct
 
-
-def test_chronos_infer_batch_handles_invalid_series():
-    # A too-short series must not crash the batch; it yields a neutral forecast
-    # while valid neighbours still produce real forecasts.
-    results = chronos_service.infer_batch([[100.0], [10.0, 11.0, 12.0, 13.0, 14.0]], steps=3)
+def test_chronos_infer_batch_handles_invalid_series(monkeypatch):
+    # Invalid input remains distinguishable from a valid series for which the
+    # forecasting model is unavailable.
+    recorded = json.loads((Path(__file__).parents[1] / "tests" / "fixtures" / "recorded_nse_daily.json").read_text())
+    closes = [bar[4] for bar in recorded["bars"]["RELIANCE"]]
+    monkeypatch.setattr(chronos_service, "_model_loaded", False)
+    results = chronos_service.infer_batch([[100.0], closes], steps=3)
     assert len(results) == 2
     assert results[0].source == "error"
     assert results[0].median_forecast == []
-    assert len(results[1].median_forecast) == 3
+    assert results[0].forecast_return_pct is None
+    assert results[1].source == "unavailable"
+    assert results[1].median_forecast == []
+    assert results[1].quantile_forecasts == {}
+    assert results[1].forecast_return_pct is None
 
 
 def test_ranker_graceful_degradation(monkeypatch):

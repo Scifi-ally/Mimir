@@ -51,6 +51,7 @@ from models.rl_agent import rl_agent_service
 from rl_lifecycle import rl_lifecycle_manager
 from ranker_lifecycle import ranker_lifecycle_manager
 from sentiment import analyze_sentiment
+from historical_sentiment import recorded_sentiment
 import sentiment as sentiment_module
 
 # ---------------------------------------------------------------------------
@@ -541,7 +542,7 @@ class ChronosResponse(BaseModel):
     median_forecast: List[float]
     quantile_forecasts: Dict[str, List[float]]
     trend: str
-    forecast_return_pct: float
+    forecast_return_pct: Optional[float] = None
     source: str
 
 
@@ -549,8 +550,9 @@ class CandidateScore(BaseModel):
     symbol: str
     kronos: TechnicalRankingResponse
     chronos: ChronosResponse
-    sentiment_score: float = Field(default=0.0, description="News sentiment score -1.0 to 1.0")
-    world_sentiment_score: float = Field(default=0.0, description="World politics sentiment score -1.0 to 1.0")
+    sentiment_score: Optional[float] = Field(default=None, description="Observed news classifier score -1..1; unknown without eligible headlines and classifier")
+    world_sentiment_score: Optional[float] = None
+    sentiment_evidence: Dict[str, Any] = Field(default_factory=dict)
     composite_score: float = Field(description="Blended AI score 0-100")
     components: Dict[str, float] = Field(default_factory=dict, description="Score breakdown by sub-components")
     win_probability: Optional[float] = Field(
@@ -619,9 +621,11 @@ class System1Response(BaseModel):
     opportunity_score: float
     gate_reasons: List[str]
     regime_alignment: float
-    p_execution_success: float
-    p_stop_hunt_risk: float
-    p_adverse_regime_shift: float
+    p_execution_success: Optional[float] = None
+    p_stop_hunt_risk: Optional[float] = None
+    p_adverse_regime_shift: Optional[float] = None
+    probability_validation: str = "not_established"
+    confidence_kind: str = "decision_score_not_win_probability"
     provider: str
     model_id: str
     source: str
@@ -780,9 +784,16 @@ def _compute_composite_score(kr: technical_pattern_engine.TechnicalPatternResult
     # Scale forecast before sigmoid: realistic short-horizon forecasts are
     # ±0.3-1%, which unscaled maps to 0.43-0.57 — the component barely
     # discriminates. x3 spreads ±1% to 0.05-0.95.
-    forecast_pct = sanitize_float(cr.forecast_return_pct, default=0.0, low=-20.0, high=20.0)
-    chronos_raw = 1 / (1 + math.exp(-forecast_pct * 3.0))  # 0..1
-    chronos_component = chronos_raw * 30
+    forecast_pct = cr.forecast_return_pct
+    has_model_forecast = (
+        cr.source == "model"
+        and isinstance(forecast_pct, (int, float))
+        and math.isfinite(forecast_pct)
+    )
+    if has_model_forecast:
+        forecast_pct = sanitize_float(forecast_pct, default=0.0, low=-20.0, high=20.0)
+        chronos_raw = 1 / (1 + math.exp(-forecast_pct * 3.0))  # 0..1
+        chronos_component = chronos_raw * 30
 
     confidence_component = sanitize_float(kr.confidence, default=0.0) * 15
 
@@ -791,10 +802,11 @@ def _compute_composite_score(kr: technical_pattern_engine.TechnicalPatternResult
 
     components = {
         "trend_alignment": round(technical_component, 2),
-        "forecast_momentum": round(chronos_component, 2),
         "confidence": round(confidence_component, 2),
         "sentiment": round(sentiment_component, 2)
     }
+    if has_model_forecast:
+        components["forecast_momentum"] = round(chronos_component, 2)
 
     score = sum(components.values())
 
@@ -883,11 +895,11 @@ async def infer_batch(req: BatchRequest):
                 median_forecast=[],
                 quantile_forecasts={},
                 trend="neutral",
-                forecast_return_pct=0.0,
+                forecast_return_pct=None,
                 source="error",
             ),
-            sentiment_score=0.0,
-            world_sentiment_score=0.0,
+            sentiment_score=None,
+            world_sentiment_score=None,
             composite_score=50.0,
             components={},
             win_probability=None,
@@ -915,22 +927,7 @@ async def infer_batch(req: BatchRequest):
                     import psycopg2
                     from contextlib import closing
                     with closing(psycopg2.connect(db_url)) as conn:
-                        with conn.cursor() as cur:
-                            cur.execute("""
-                                SELECT value FROM fundamental_snapshots
-                                WHERE symbol = %s AND field_name = 'sentiment_composite' AND filed_date <= %s
-                                ORDER BY filed_date DESC LIMIT 1
-                            """, (cand.symbol, cand.as_of_date))
-                            row = cur.fetchone()
-                            composite_val = float(row[0]) if row else 0.0
-                            cur.execute("""
-                                SELECT value FROM fundamental_snapshots
-                                WHERE field_name = 'sentiment_world' AND filed_date <= %s
-                                ORDER BY filed_date DESC LIMIT 1
-                            """, (cand.as_of_date,))
-                            wrow = cur.fetchone()
-                            world_val = float(wrow[0]) if wrow else 0.0
-                            return composite_val, world_val
+                        return recorded_sentiment(conn, cand.symbol, cand.as_of_date)
                 except Exception as e:
                     logger.error(f"Failed to fetch historical sentiment: {e}")
                     return 0.0, 0.0
@@ -1061,8 +1058,9 @@ async def infer_batch(req: BatchRequest):
                 forecast_return_pct=cr.forecast_return_pct,
                 source=cr.source,
             ),
-            sentiment_score=sentiment_dict.get("symbol_specific_score", 0.0),
-            world_sentiment_score=sentiment_dict.get("world_score", 0.0),
+            sentiment_score=sentiment_dict.get("symbol_specific_score") if sentiment_dict.get("evidence", {}).get("symbol", {}).get("available") else None,
+            world_sentiment_score=sentiment_dict.get("world_score") if sentiment_dict.get("evidence", {}).get("world", {}).get("available") else None,
+            sentiment_evidence=sentiment_dict.get("evidence", {}),
             composite_score=prep["composite"],
             components=prep["components"],
             win_probability=win_prob_by_id.get(id(cand)),

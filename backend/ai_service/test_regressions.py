@@ -83,7 +83,7 @@ def test_composite_score_nan_input_is_not_maximum_conviction():
         bullish_probability=nan, confidence=nan, detected_patterns=[], source="test"
     )
     cr = type("CR", (), {
-        "forecast_return_pct": nan, "trend": "neutral",
+        "forecast_return_pct": None, "trend": "neutral", "source": "unavailable",
         "median_forecast": [], "quantile_forecasts": {},
     })()
     score, components = main._compute_composite_score(
@@ -93,6 +93,7 @@ def test_composite_score_nan_input_is_not_maximum_conviction():
     assert math.isfinite(score)
     assert 0.0 <= score <= 100.0
     assert all(math.isfinite(v) for v in components.values())
+    assert "forecast_momentum" not in components, "Unavailable Chronos output contributed to composite score"
 
 
 def test_composite_score_normal_input_is_unchanged():
@@ -104,7 +105,7 @@ def test_composite_score_normal_input_is_unchanged():
         bullish_probability=0.8, confidence=0.7, detected_patterns=[], source="test"
     )
     cr = type("CR", (), {
-        "forecast_return_pct": 2.0, "trend": "bullish",
+        "forecast_return_pct": 2.0, "trend": "bullish", "source": "model",
         "median_forecast": [], "quantile_forecasts": {},
     })()
     score, _ = main._compute_composite_score(

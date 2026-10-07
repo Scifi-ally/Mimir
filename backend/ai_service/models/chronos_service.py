@@ -2,14 +2,13 @@
 Chronos-Bolt wrapper — probabilistic time-series forecasting on close prices.
 
 Loads amazon/chronos-bolt-small from HuggingFace at startup.
-If the model is unavailable, a momentum + mean-reversion fallback generates
-5-step probabilistic forecasts with synthetic quantiles.
+If the model is unavailable, inference abstains and reports an unavailable
+source. It never fabricates quantiles or a directional forecast.
 """
 
 from __future__ import annotations
 
 import logging
-import math
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -65,7 +64,7 @@ def load_model() -> None:
         _load_error = str(exc)
         _healthy = False
         logger.warning(
-            "Chronos model unavailable – using momentum fallback.  Error: %s",
+            "Chronos model unavailable; forecast inference will abstain. Error: %s",
             _load_error,
         )
 
@@ -79,7 +78,8 @@ def get_status() -> Dict[str, Any]:
         "model": "amazon/chronos-bolt-small",
         "loaded": _model_loaded,
         "healthy": _healthy,
-        "fallback_active": not _model_loaded,
+        "fallback_active": False,
+        "forecast_available": _model_loaded,
         "error": _load_error,
         "load_time_ms": _model_load_time_ms,
         "last_inference_latency_ms": _last_inference_latency_ms,
@@ -96,7 +96,7 @@ class ChronosResult:
     median_forecast: List[float]
     quantile_forecasts: Dict[str, List[float]]  # "q10", "q25", …
     trend: str  # "bullish" | "bearish" | "neutral"
-    forecast_return_pct: float  # median return % over the forecast horizon
+    forecast_return_pct: Optional[float]  # null when no model forecast is available
     source: str = "model"
 
 
@@ -207,77 +207,18 @@ def _infer_with_model_batch(closes_batch: List[np.ndarray], steps: int) -> List[
 
 
 # ---------------------------------------------------------------------------
-# Momentum + mean-reversion fallback
+# Unavailable-model abstention
 # ---------------------------------------------------------------------------
 def _infer_fallback(closes: np.ndarray, steps: int) -> ChronosResult:
-    """Generate a plausible forecast using momentum, mean-reversion, and
-    expanding uncertainty bands."""
-
-    n = len(closes)
-    last = float(closes[-1])
-
-    # Short-term momentum (last 5 candles)
-    short_window = min(5, n)
-    short_returns = np.diff(closes[-short_window:]) / (closes[-short_window:-1] + 1e-9)
-    momentum = float(np.mean(short_returns)) if len(short_returns) > 0 else 0.0
-
-    # Longer-term mean for mean-reversion pull
-    long_window = min(20, n)
-    long_mean = float(np.mean(closes[-long_window:]))
-    reversion_pull = (long_mean - last) / (last + 1e-9) * 0.05  # gentle pull
-
-    # Recent volatility (std of returns)
-    if n >= 5:
-        all_rets = np.diff(closes[-20:]) / (closes[-20:-1] + 1e-9)
-        vol = float(np.std(all_rets)) if len(all_rets) > 1 else 0.005
-    else:
-        vol = 0.005
-
-    vol = max(vol, 0.001)  # floor
-
-    median: list[float] = []
-    quantiles: Dict[str, list[float]] = {f"q{int(q * 100)}": [] for q in QUANTILE_LEVELS}
-
-    price = last
-    for step in range(1, steps + 1):
-        # Blend momentum (decaying) with mean-reversion
-        decay = 0.7 ** step
-        step_return = momentum * decay + reversion_pull
-        price = price * (1 + step_return)
-        median.append(round(price, 4))
-
-        # Fan-out uncertainty
-        spread = vol * math.sqrt(step)
-        for q in QUANTILE_LEVELS:
-            z = _norm_ppf(q)
-            q_price = price * (1 + z * spread)
-            quantiles[f"q{int(q * 100)}"].append(round(q_price, 4))
-
-    ret_pct = ((median[-1] - last) / last) * 100 if last else 0.0
-    trend = "bullish" if ret_pct > 0.3 else ("bearish" if ret_pct < -0.3 else "neutral")
-
+    """Return an explicit abstention when the forecasting model is unavailable."""
+    del closes, steps
     return ChronosResult(
-        median_forecast=median,
-        quantile_forecasts=quantiles,
-        trend=trend,
-        forecast_return_pct=round(ret_pct, 4),
-        source="fallback",
+        median_forecast=[],
+        quantile_forecasts={},
+        trend="neutral",
+        forecast_return_pct=None,
+        source="unavailable",
     )
-
-
-def _norm_ppf(q: float) -> float:
-    """Approximate inverse-normal (percent-point function) without scipy."""
-    # Rational approximation (Abramowitz & Stegun 26.2.23)
-    if q <= 0 or q >= 1:
-        return 0.0
-    if q == 0.5:
-        return 0.0
-    if q > 0.5:
-        return -_norm_ppf(1 - q)
-    t = math.sqrt(-2 * math.log(q))
-    c0, c1, c2 = 2.515517, 0.802853, 0.010328
-    d1, d2, d3 = 1.432788, 0.189269, 0.001308
-    return -(t - (c0 + c1 * t + c2 * t * t) / (1 + d1 * t + d2 * t * t + d3 * t * t * t))
 
 
 # ---------------------------------------------------------------------------
@@ -349,7 +290,7 @@ def infer(closes_list: List[float], steps: int = FORECAST_STEPS) -> ChronosResul
 
     Returns
     -------
-    ChronosResult with median, quantile forecasts, trend, and return %.
+    ChronosResult with a model forecast or an explicit unavailable abstention.
     """
     steps = max(1, min(steps, 30))  # safety clamp
     closes, actual_last = _preprocess(closes_list)
@@ -359,7 +300,7 @@ def infer(closes_list: List[float], steps: int = FORECAST_STEPS) -> ChronosResul
         try:
             result = _infer_with_model(closes, steps)
         except Exception as exc:
-            logger.error("Chronos model inference failed, falling back: %s", exc)
+            logger.error("Chronos model inference failed; abstaining: %s", exc)
 
     if result is None:
         result = _infer_fallback(closes, steps)
@@ -375,8 +316,8 @@ def infer_batch(closes_batch: List[List[float]], steps: int = FORECAST_STEPS) ->
     (batch, steps, quantiles) tensor from one forward pass — far cheaper than N
     serial calls, and the right way to use the RTX 3050 for this workload.
 
-    Falls back to the per-series momentum model for any series that errors or when
-    the ML model is unavailable. Preserves input order 1:1.
+    Abstains with empty forecasts for unavailable model results. Preserves input
+    order 1:1.
     """
     steps = max(1, min(steps, 30))
     n = len(closes_batch)
@@ -390,7 +331,7 @@ def infer_batch(closes_batch: List[List[float]], steps: int = FORECAST_STEPS) ->
         try:
             closes, actual_last = _preprocess(raw)
             prepped.append((closes, actual_last, None))
-        except Exception as exc:  # invalid series — mark for neutral fallback
+        except Exception as exc:  # invalid series — mark for neutral abstention
             prepped.append((None, None, str(exc)))
 
     results: List[Optional[ChronosResult]] = [None] * n
@@ -406,8 +347,7 @@ def infer_batch(closes_batch: List[List[float]], steps: int = FORECAST_STEPS) ->
             except Exception as exc:
                 logger.error("Chronos batched inference failed, falling back per-series: %s", exc)
 
-    # Fill any gaps (model unavailable, batch failed, or invalid series) with the
-    # deterministic momentum/mean-reversion fallback.
+    # Fill any gaps (model unavailable or batch failed) with an unavailable result.
     for i, (closes, actual_last, err) in enumerate(prepped):
         if results[i] is not None:
             results[i] = _postprocess(results[i], closes, actual_last)  # type: ignore[arg-type]
@@ -416,10 +356,9 @@ def infer_batch(closes_batch: List[List[float]], steps: int = FORECAST_STEPS) ->
             # Invalid input — return a neutral, empty forecast rather than raising.
             results[i] = ChronosResult(
                 median_forecast=[], quantile_forecasts={}, trend="neutral",
-                forecast_return_pct=0.0, source="error",
+                forecast_return_pct=None, source="error",
             )
             continue
-        fb = _infer_fallback(closes, steps)
-        results[i] = _postprocess(fb, closes, actual_last)
+        results[i] = _infer_fallback(closes, steps)
 
     return results  # type: ignore[return-value]

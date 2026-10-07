@@ -17,6 +17,7 @@ Artifacts (in ai_service/, matching rl_agent.py's convention):
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import os
 import threading
@@ -59,6 +60,16 @@ _trained_at: Optional[str] = None
 _recommended_threshold: Optional[float] = None
 _loaded: bool = False
 _load_error: Optional[str] = None
+_REQUIRED_STRATEGY_SCOPE = {
+    "version": "cash-long-5bar-20d-turnover-v1",
+    "horizon_bars": 5,
+    "direction": "BUY",
+    "notional_inr": 100_000,
+    "minimum_average_turnover_20d_inr": 50_000_000,
+    "maximum_notional_to_average_turnover_20d": 0.001,
+    "fee_model": "upstox-cash-delivery-2026-10",
+    "minimum_slippage_bps_per_side": 5,
+}
 
 
 def _load_booster(model_path: str) -> Any:
@@ -107,11 +118,44 @@ def load_model() -> None:
             _load_error = "no trained ranker artifacts on disk"
             return
         try:
-            booster = _load_booster(model_path)
             with open(meta_path, "r", encoding="utf-8") as fh:
                 meta = json.load(fh)
 
+            validation = meta.get("validation") or {}
+            stress = validation.get("cost_stress") or {}
+            ci = stress.get("expectancy_cluster_95_ci")
+            if (validation.get("validation_version") != 2 or validation.get("passed") is not True or
+                    validation.get("replay_verified") is not True or
+                    validation.get("strategy_scope_verified") is not True or
+                    validation.get("strategy_scope") != _REQUIRED_STRATEGY_SCOPE or
+                    validation.get("point_in_time_universe_verified") is not True or
+                    len(validation.get("folds", [])) < 3 or stress.get("trades", 0) < 100 or
+                    not isinstance(ci, list) or len(ci) != 2 or
+                    not all(isinstance(v, (int, float)) and np.isfinite(v) for v in ci) or ci[0] <= 0):
+                raise ValueError("ranker lacks positive, cost-stressed, purged walk-forward evidence with point-in-time universe provenance")
+            expected_digest = meta.get("model_sha256")
+            if not isinstance(expected_digest, str) or len(expected_digest) != 64:
+                raise ValueError("ranker metadata is missing its model integrity digest")
+            digest = hashlib.sha256()
+            with open(model_path, "rb") as model_fh:
+                for chunk in iter(lambda: model_fh.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            if digest.hexdigest() != expected_digest:
+                raise ValueError("ranker model does not match its metadata integrity digest")
+            booster = _load_booster(model_path)
+
             iso = meta.get("isotonic") or {}
+            keys = list(meta.get("feature_keys", []))
+            with open(os.path.join(os.path.dirname(__file__), "..", "..", "config", "ranker_features_manifest.json"), encoding="utf-8") as fh:
+                manifest = json.load(fh)
+            if keys != manifest or booster.num_feature() != len(keys):
+                raise ValueError("ranker feature order/width does not match the serving manifest")
+            xs, ys = iso.get("x", []), iso.get("y", [])
+            if (len(xs) < 2 or len(xs) != len(ys) or
+                    not np.isfinite(xs).all() or not np.isfinite(ys).all() or
+                    np.any(np.diff(xs) <= 0) or np.any(np.diff(ys) < 0) or
+                    min(ys) < 0 or max(ys) > 1):
+                raise ValueError("invalid ranker calibration map")
             # Build the complete snapshot OFF to the side, then publish it as ONE
             # tuple assignment. Assigning the globals one at a time let a
             # concurrent predict_batch observe a MIXED state — most damagingly the
@@ -262,11 +306,24 @@ def predict_batch(feature_rows: List[List[float]]) -> List[Optional[float]]:
     cleanly fall back to the composite score for that candidate.
     """
     n = len(feature_rows)
-    if not _loaded or _booster is None or n == 0:
+    if n == 0:
+        return [None] * n
+
+    # A concurrent reload publishes all globals as one tuple, but prediction
+    # must also read the tuple once: LightGBM releases the GIL in predict(), so
+    # a later calibration lookup of module globals could otherwise come from a
+    # different artifact than the booster that produced these scores.
+    with _lock:
+        loaded = _loaded
+        booster = _booster
+        feature_keys = tuple(_feature_keys)
+        iso_x = _iso_x
+        iso_y = _iso_y
+    if not loaded or booster is None:
         return [None] * n
 
     global _width_warned, _rows_predicted_count, _width_mismatch_count, _rows_without_features
-    expected = len(_feature_keys)
+    expected = len(feature_keys)
     try:
         # A row whose width != expected is train/serve skew (someone changed
         # RANKER_FEATURE_KEYS on one side only) or a candidate that never had its
@@ -282,11 +339,14 @@ def predict_batch(feature_rows: List[List[float]]) -> List[Optional[float]]:
         # upstream feature vector, not train/serve contract drift. Counting it
         # as both would inflate the mismatch count and make gate_coverage
         # meaningless.
-        valid_idx = [i for i, r in enumerate(feature_rows) if len(r) == expected]
+        valid_idx = [i for i, r in enumerate(feature_rows) if len(r) == expected and
+                     all((not isinstance(v, bool) and isinstance(v, (int, float)) and np.isfinite(v)) or
+                         (feature_keys[j] == "fiiDiiNetFlowLag" and v is None)
+                         for j, v in enumerate(r))]
         no_features_idx = [i for i, r in enumerate(feature_rows) if len(r) == 0]
         mismatched_idx = [
             i for i, r in enumerate(feature_rows)
-            if len(r) not in (0, expected)
+            if len(r) != 0 and i not in valid_idx
         ]
 
         # Every row falls into exactly one of these three buckets, so the
@@ -309,20 +369,24 @@ def predict_batch(feature_rows: List[List[float]]) -> List[Optional[float]]:
         if not valid_idx:
             return out
 
-        with _lock:
-            _rows_predicted_count += len(valid_idx)
-
         mat = np.zeros((len(valid_idx), expected), dtype=np.float64)
         for mi, i in enumerate(valid_idx):
             row = feature_rows[i]
 
             for j in range(expected):
                 v = row[j]
-                mat[mi, j] = v if isinstance(v, (int, float)) and np.isfinite(v) else 0.0
+                mat[mi, j] = np.nan if v is None else v
 
-        raw = _booster.predict(mat)
-        cal = _apply_isotonic(np.asarray(raw, dtype=np.float64))
+        raw = booster.predict(mat)
+        raw = np.asarray(raw, dtype=np.float64)
+        cal = (np.interp(raw, iso_x, iso_y)
+               if iso_x is not None and iso_y is not None and len(iso_x) >= 2
+               else raw)
+        if cal.shape != (len(valid_idx),) or not np.isfinite(cal).all():
+            raise ValueError("ranker returned invalid probabilities")
         cal = np.clip(cal, 0.0, 1.0)
+        with _lock:
+            _rows_predicted_count += len(valid_idx)
         for mi, i in enumerate(valid_idx):
             out[i] = float(round(cal[mi], 4))
         return out

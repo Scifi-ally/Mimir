@@ -8,6 +8,7 @@ from typing import List, Dict, Optional, Tuple
 import httpx
 import os
 import datetime
+from news_evidence import eligible_headlines, news_evidence
 
 logger = logging.getLogger("ai_service.sentiment")
 
@@ -32,6 +33,7 @@ _sentiment_cache: Dict[str, Tuple[float, Dict[str, float]]] = {}
 _market_cache: Dict[str, Tuple[float, Tuple[float, float, float]]] = {}
 _MARKET_CACHE_KEY = "market_shared"
 _market_cache_lock: Optional[asyncio.Lock] = None
+_market_evidence: Dict[str, object] = {}
 CACHE_TTL_SEC = 300  # 5 minutes — RSS feeds don't update faster than this
 # Scores computed while FinBERT inference was failing are cached only briefly
 # so healthy results aren't locked out for the full TTL.
@@ -196,8 +198,9 @@ async def _fetch_rss(url: str, limit: int = 10, max_retries: int = 2) -> List[Di
                         items.append({
                             "title": title.text.strip(),
                             "pub_date": pub_date.text.strip() if pub_date is not None and pub_date.text else "",
+                            "source": url,
                         })
-                return items[:limit]
+                return eligible_headlines(items)[:limit]
             except Exception as e:
                 logger.debug(f"Could not fetch RSS from {url} (Attempt {attempt + 1}/{max_retries}): {e}")
                 if attempt < max_retries - 1:
@@ -452,6 +455,8 @@ async def _get_market_wide_scores() -> Tuple[float, float, float]:
         )
 
         scores = (market_wide_score, india_political_score, world_score)
+        _market_evidence.clear()
+        _market_evidence.update(news_evidence(world_headlines, "Yahoo world RSS", get_status()["healthy"]))
         if _finbert_last_failure_ts >= scoring_started:
             # FinBERT failed while scoring this batch — backdate the entry so
             # it expires after FAILURE_CACHE_TTL_SEC instead of poisoning the
@@ -530,6 +535,10 @@ async def analyze_sentiment(symbol: str) -> Dict[str, float]:
         "india_political_score": round(india_political_score, 4),
         "world_score": round(world_score, 4),
         "composite": round(composite, 4),
+        "evidence": {
+            "symbol": news_evidence(symbol_headlines, f"Yahoo RSS:{symbol}.NS", get_status()["healthy"]),
+            "world": dict(_market_evidence),
+        },
     }
 
     # Cache result — briefly if FinBERT inference failed during this run,
@@ -551,7 +560,7 @@ async def analyze_sentiment(symbol: str) -> Dict[str, float]:
             from contextlib import closing
             with closing(psycopg2.connect(db_url)) as conn:
                 with conn.cursor() as cur:
-                    now_dt = datetime.datetime.now()
+                    now_dt = datetime.datetime.now(datetime.timezone.utc)
                     cur.execute("""
                         INSERT INTO fundamental_snapshots (symbol, field_name, value, filed_date, fetched_at)
                         VALUES (%s, %s, %s, %s, %s)
@@ -573,8 +582,11 @@ async def analyze_sentiment(symbol: str) -> Dict[str, float]:
         except Exception as e:
             logger.error(f"Failed to save sentiment snapshot: {e}")
 
-    task = asyncio.create_task(asyncio.to_thread(save_to_db))
-    _bg_tasks.add(task)
-    task.add_done_callback(_bg_tasks.discard)
+    # Legacy snapshots have no per-source missingness schema. Do not persist
+    # invented neutral observations when source/classifier evidence is absent.
+    if result["evidence"]["symbol"]["available"] and result["evidence"]["world"].get("available"):
+        task = asyncio.create_task(asyncio.to_thread(save_to_db))
+        _bg_tasks.add(task)
+        task.add_done_callback(_bg_tasks.discard)
 
     return result

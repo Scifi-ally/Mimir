@@ -24,6 +24,17 @@ try:
 except ImportError:
     shap = None
 
+VALIDATED_STRATEGY_SCOPE = {
+    "version": "cash-long-5bar-20d-turnover-v1",
+    "horizon_bars": 5,
+    "direction": "BUY",
+    "notional_inr": 100_000,
+    "minimum_average_turnover_20d_inr": 50_000_000,
+    "maximum_notional_to_average_turnover_20d": 0.001,
+    "fee_model": "upstox-cash-delivery-2026-10",
+    "minimum_slippage_bps_per_side": 5,
+}
+
 def parse_iso(ts_str: str) -> float:
     if not ts_str:
         return 0.0
@@ -45,11 +56,14 @@ def generate_folds(
     if not rows:
         return []
 
+    from train_ranker import _timestamp_ms
     timestamps = []
     resolution_timestamps = []
     for r in rows:
-        ts = parse_iso(r.get("ts", ""))
-        res_ts = parse_iso(r.get("resolutionTs", r.get("ts", "")))
+        ts = _timestamp_ms(r.get("ts"), "ts") / 1000
+        res_ts = _timestamp_ms(r.get("resolutionTs"), "resolutionTs") / 1000
+        if res_ts <= ts:
+            raise ValueError("Label must resolve strictly after signal availability")
         timestamps.append(ts)
         resolution_timestamps.append(res_ts)
 
@@ -115,200 +129,138 @@ def generate_folds(
     return folds
 
 def run_harness(args) -> Tuple[int, List[str]]:
+    from train_ranker import purged_chronological_split
+    from validation_metrics import trade_metrics, select_threshold, calibration_bins
+    import hashlib
     if lgb is None:
         print("ERROR: lightgbm not installed.")
         return 2, []
-
-    if not os.path.exists(args.data):
-        print(f"ERROR: training data not found at {args.data}")
+    try:
+        rows = load_rows(args.data)
+    except (OSError, ValueError) as exc:
+        print(f"ERROR: {exc}")
         return 2, []
-
-    rows = load_rows(args.data)
-    if len(rows) < 100:
-        print(f"ERROR: only {len(rows)} rows. Need more history.")
+    if len(rows) < 300:
+        print(f"ERROR: only {len(rows)} rows; need at least 300.")
         return 2, []
-
     X, y, ret = to_matrix(rows)
-    n = len(rows)
-    
-    folds = generate_folds(
-        rows,
-        max_label_horizon_days=5,
-        embargo_window_days=1,
-        test_window_days=30,
-        min_train_days=args.min_train_days,
-        rolling_fixed_window=args.rolling,
-    )
-
-    print(f"Loaded {n} rows. Generated {len(folds)} folds.")
-
-    aggregate_preds = []
-    aggregate_labels = []
-    aggregate_rets = []
-    
-    feature_fold_importances = defaultdict(list)
-
+    folds = generate_folds(rows, min_train_days=getattr(args, "min_train_days", 180),
+                           rolling_fixed_window=getattr(args, "rolling", False))
+    print(f"Loaded {len(rows)} rows. Generated {len(folds)} folds.")
+    all_indices, all_preds, selected_indices, selected_preds = [], [], [], []
+    reports = []
     for fold_idx, (tr_idx, te_idx) in enumerate(folds):
-        # We need a calibration slice from the end of the train set.
-        # Let's use the last 20% of the train set (by time, since rows are sorted).
-        num_tr = len(tr_idx)
-        calib_start_idx = int(num_tr * 0.8)
-        
-        tr_sub_idx = tr_idx[:calib_start_idx]
-        ca_sub_idx = tr_idx[calib_start_idx:]
-        
-        X_tr, y_tr = X[tr_sub_idx], y[tr_sub_idx]
-        X_ca, y_ca, ret_ca = X[ca_sub_idx], y[ca_sub_idx], ret[ca_sub_idx]
+        # Reuse the training splitter: preserve simultaneous signal groups and
+        # purge labels at BOTH internal train/calibration and outer test edges.
+        development = [rows[i] for i in tr_idx] + [rows[i] for i in te_idx]
+        total = len(development)
+        train_frac = len(tr_idx) * .8 / total
+        calib_frac = len(tr_idx) * .2 / total
+        train_rows, calib_rows, _, split = purged_chronological_split(
+            development, train_frac, calib_frac, 24)
+        X_tr, y_tr, _ = to_matrix(train_rows)
+        X_ca, y_ca, ret_ca = to_matrix(calib_rows)
         X_te, y_te, ret_te = X[te_idx], y[te_idx], ret[te_idx]
-
-        sample_weights_tr = None
-
-        if len(X_tr) < 10 or len(X_ca) < 10 or len(X_te) < 10:
-            print(f"Fold {fold_idx + 1}: Skipping due to insufficient data (train: {len(X_tr)}, calib: {len(X_ca)}, test: {len(X_te)})")
+        if min(len(X_tr), len(X_ca), len(X_te)) < 30 or len(np.unique(y_tr)) < 2:
+            print(f"Fold {fold_idx+1}: insufficient train/calibration/test observations")
             continue
-
-        pos_rate = max(1e-6, float(y_tr.mean()))
-        scale_pos_weight = (1 - pos_rate) / pos_rate
-
-        train_set = lgb.Dataset(X_tr, label=y_tr, weight=sample_weights_tr, feature_name=FEATURE_KEYS)
-        calib_set = lgb.Dataset(X_ca, label=y_ca, reference=train_set)
-
-        params = {
-            "objective": "binary",
-            "metric": ["auc", "binary_logloss"],
-            "learning_rate": 0.03,
-            "num_leaves": 31,
-            "max_depth": 6,
-            "min_data_in_leaf": max(10, len(X_tr) // 100),
-            "feature_fraction": 0.8,
-            "bagging_fraction": 0.8,
-            "bagging_freq": 5,
-            "lambda_l1": 0.5,
-            "lambda_l2": 1.0,
-            "scale_pos_weight": scale_pos_weight,
-            "verbose": -1,
-            "seed": 42 + fold_idx,
-        }
-
-        booster = lgb.train(
-            params,
-            train_set,
-            num_boost_round=600,
-            valid_sets=[calib_set],
-            valid_names=["calib"],
-            callbacks=[lgb.early_stopping(50, verbose=False)],
-        )
-
-        raw_ca = np.asarray(booster.predict(X_ca, num_iteration=booster.best_iteration))
+        booster = lgb.train({
+            "objective": "binary", "metric": "binary_logloss", "learning_rate": .03,
+            "num_leaves": 15, "max_depth": 4, "min_data_in_leaf": 40,
+            "feature_fraction": .8, "bagging_fraction": .8, "bagging_freq": 5,
+            "lambda_l1": .5, "lambda_l2": 1., "verbose": -1,
+            "seed": 42, "num_threads": 2,
+        }, lgb.Dataset(X_tr, label=y_tr, feature_name=FEATURE_KEYS),
+            num_boost_round=300, valid_sets=[lgb.Dataset(X_ca, label=y_ca)],
+            callbacks=[lgb.early_stopping(30, verbose=False)])
+        raw_ca = np.asarray(booster.predict(X_ca))
         xs, ys = fit_isotonic(raw_ca, y_ca)
-        
-        raw_te = np.asarray(booster.predict(X_te, num_iteration=booster.best_iteration))
-        cal_te = np.clip(apply_isotonic(raw_te, xs, ys), 0.0, 1.0)
-        
-        test_auc = auc(y_te, raw_te)
-        test_brier = brier(y_te, cal_te)
-        
-        best_thr, sel_exp, sel_taken = 0.5, -1e9, 0
-        for thr in np.linspace(0.45, 0.75, 31):
-            exp, taken = expectancy_at_threshold(cal_ca, ret_ca, float(thr))
-            if taken >= max(10, len(X_ca) // 20) and exp > sel_exp:
-                best_thr, sel_exp, sel_taken = float(thr), exp, taken
-
-        take_all_exp = float(ret_te.mean())
-        best_exp, best_taken = expectancy_at_threshold(cal_te, ret_te, best_thr)
-        
-        print(f"\nFold {fold_idx + 1:02d} | Train: {len(X_tr)}, Calib: {len(X_ca)}, Test: {len(X_te)}")
-        print(f"  Hit rate     - Train: {y_tr.mean():.3f}, Calib: {y_ca.mean():.3f}, Test: {y_te.mean():.3f}")
-        print(f"  Metrics      - AUC: {test_auc:.4f}, Brier: {test_brier:.4f}")
-        print(f"  Take-All     - Expectancy: {take_all_exp:+.4f}%, n={len(X_te)}")
-        print(f"  Threshold    - p>={best_thr:.3f} (chosen on CALIB)")
-        print(f"  Strategy     - Expectancy: {best_exp:+.4f}%, n={best_taken}")
-
-        if shap is not None:
-            explainer = shap.TreeExplainer(booster)
-            shap_values = explainer.shap_values(X_te)
-            if isinstance(shap_values, list):
-                shap_values = shap_values[1]
-            mean_abs_shap = np.abs(shap_values).mean(axis=0)
-            for j, feat in enumerate(FEATURE_KEYS):
-                feature_fold_importances[feat].append(float(mean_abs_shap[j]))
-
-        aggregate_preds.extend(cal_te)
-        aggregate_labels.extend(y_te)
-        aggregate_rets.extend(ret_te)
-
-    if not aggregate_preds:
-        print("No valid folds completed.")
-        return 1
-        
-    print("\n" + "="*50)
-    print("Aggregate Out-Of-Fold Summary")
-    print("="*50)
-    
-    agg_labels = np.array(aggregate_labels)
-    agg_preds = np.array(aggregate_preds)
-    agg_rets = np.array(aggregate_rets)
-    
-    agg_auc = auc(agg_labels, agg_preds)
-    agg_brier = brier(agg_labels, agg_preds)
-    agg_take_all_exp = agg_rets.mean()
-    
-    # We can evaluate aggregate greenlight expectancy at various fixed thresholds,
-    # or just show the aggregate of the per-fold threshold selections.
-    # The true "strategy" performance is the aggregate of each fold's choices.
-    
-    print(f"Total out-of-fold trades evaluated: {len(agg_labels)}")
-    print(f"Overall hit rate:                   {agg_labels.mean():.3f}")
-    print(f"Overall OOF AUC:                    {agg_auc:.4f}")
-    print(f"Overall OOF Brier Score:            {agg_brier:.4f}")
-    print(f"Overall Take-All Expectancy:        {agg_take_all_exp:+.4f}%")
-    
-    print("\nCalibration check (Predicted vs Realized):")
-    bins = np.linspace(0, 1, 11)
-    for i in range(len(bins)-1):
-        mask = (agg_preds >= bins[i]) & (agg_preds < bins[i+1])
-        if mask.sum() > 0:
-            pred_mean = agg_preds[mask].mean()
-            real_mean = agg_labels[mask].mean()
-            print(f"  Bin {bins[i]:.1f}-{bins[i+1]:.1f}: Pred={pred_mean:.3f}, Real={real_mean:.3f} (n={mask.sum()})")
-
-    unstable_features = []
-    if shap is not None and feature_fold_importances:
-        print("\n" + "="*50)
-        print("SHAP Stability Report (Across Folds)")
-        print("="*50)
-        
-        cv_report = []
-        for feat in FEATURE_KEYS:
-            vals = feature_fold_importances[feat]
-            if len(vals) == 0:
-                continue
-            mean_imp = np.mean(vals)
-            std_imp = np.std(vals)
-            cv = std_imp / (mean_imp + 1e-9)
-            cv_report.append((cv, mean_imp, feat))
-            
-        cv_report.sort(key=lambda x: x[0])
-        print(f"{'Feature':<20} | {'Mean SHAP':<12} | {'CV':<10}")
-        print("-" * 48)
-        for cv, mean_imp, feat in cv_report:
-            print(f"{feat:<20} | {mean_imp:<12.5f} | {cv:<10.5f}")
-            if hasattr(args, 'drop_unstable') and args.drop_unstable is not None:
-                if cv > args.drop_unstable:
-                    unstable_features.append(feat)
-                    
-        if unstable_features:
-            print(f"\n[WARNING] {len(unstable_features)} features exceeded CV threshold {args.drop_unstable}.")
-            print("Unstable features: " + ", ".join(unstable_features))
-    elif shap is None:
-        print("\nNotice: 'shap' library not installed. SHAP stability report skipped.")
-
-    return 0, unstable_features
+        cal_ca = np.clip(apply_isotonic(raw_ca, xs, ys), 0, 1)
+        raw_te = np.asarray(booster.predict(X_te))
+        cal_te = np.clip(apply_isotonic(raw_te, xs, ys), 0, 1)
+        threshold, _ = select_threshold(cal_ca, ret_ca, max(30, len(X_ca)//20))
+        mask = cal_te >= threshold
+        picked = [i for i, keep in zip(te_idx, mask) if keep]
+        all_indices.extend(te_idx); all_preds.extend(cal_te)
+        selected_indices.extend(picked); selected_preds.extend(cal_te[mask])
+        # Permutation lift uses TEST only as a diagnostic, never to select/drop
+        # features or retrain this fold. Shuffle within entry date to preserve
+        # market regime; this measures conditional cross-sectional contribution.
+        groups = defaultdict(list)
+        for i, row_idx in enumerate(te_idx):
+            groups[rows[row_idx]["ts"][:10]].append(i)
+        base_loss = brier(y_te, cal_te)
+        feature_lift = {}
+        rng = np.random.default_rng(42)
+        for j, feature in enumerate(FEATURE_KEYS):
+            perturbed = X_te.copy()
+            for group in groups.values():
+                perturbed[group, j] = perturbed[rng.permutation(group), j]
+            perm = apply_isotonic(np.asarray(booster.predict(perturbed)), xs, ys)
+            feature_lift[feature] = brier(y_te, perm) - base_loss
+        report = {"fold": fold_idx+1, "train_n": len(X_tr), "calibration_n": len(X_ca),
+                  "test_n": len(X_te), "threshold": threshold, "split": split,
+                  "test_start": rows[te_idx[0]]["ts"], "test_end": rows[te_idx[-1]]["ts"],
+                  "auc": auc(y_te, raw_te) if len(np.unique(y_te)) == 2 else None, "brier": base_loss,
+                  "brier_base_rate": brier(y_te, np.full(len(y_te), float(y_tr.mean()))),
+                  "take_all": trade_metrics([rows[i] for i in te_idx], ret_te),
+                  "selected": trade_metrics([rows[i] for i in picked], ret[picked]),
+                  "permutation_brier_lift": feature_lift}
+        reports.append(report)
+        print(f"Fold {fold_idx+1}: AUC={report['auc']}, all={ret_te.mean():+.4f}%, "
+              f"selected={report['selected']['expectancy_pct']}, n={len(picked)}, threshold={threshold:.4f}")
+    selected_rows = [rows[i] for i in selected_indices]
+    selected_returns = ret[selected_indices]
+    stats = trade_metrics(selected_rows, selected_returns)
+    # Cost stress adds 10 bps to EACH leg beyond the replay's baseline costs.
+    stressed = trade_metrics(selected_rows, selected_returns - .2)
+    ci = stressed["expectancy_cluster_95_ci"]
+    replay_verified = all(r.get("replayVersion") == "limit-gap-v2" and
+                          r.get("feeModel") == VALIDATED_STRATEGY_SCOPE["fee_model"] and
+                          r.get("notionalInr") == VALIDATED_STRATEGY_SCOPE["notional_inr"] and
+                          r.get("direction") == VALIDATED_STRATEGY_SCOPE["direction"] and
+                          r.get("slippageBpsPerSide", 0) >= VALIDATED_STRATEGY_SCOPE["minimum_slippage_bps_per_side"] and
+                          r.get("horizonBars") == VALIDATED_STRATEGY_SCOPE["horizon_bars"] and
+                          r.get("strategyScopeVersion") == VALIDATED_STRATEGY_SCOPE["version"] and
+                          isinstance(r.get("averageTurnover20dInr"), (int, float)) and
+                          math.isfinite(r["averageTurnover20dInr"]) and
+                          r["averageTurnover20dInr"] >= VALIDATED_STRATEGY_SCOPE["minimum_average_turnover_20d_inr"] and
+                          r["notionalInr"] / r["averageTurnover20dInr"] <= VALIDATED_STRATEGY_SCOPE["maximum_notional_to_average_turnover_20d"]
+                          for r in rows)
+    # Current membership is not historical membership. Explicitly prevent
+    # deployment until the source supplies point-in-time universe provenance.
+    universe_verified = all(r.get("pointInTimeUniverse") is True for r in rows)
+    passed = (len(reports) >= 3 and stats["trades"] >= 100 and ci is not None and ci[0] > 0
+              and replay_verified and universe_verified)
+    report = {"validation_version": 2, "passed": bool(passed),
+              "data_sha256": hashlib.sha256(open(args.data, "rb").read()).hexdigest(),
+              "folds": reports, "take_all": trade_metrics([rows[i] for i in all_indices], ret[all_indices]),
+              "selected": stats, "cost_stress": stressed,
+              "calibration": calibration_bins(np.array(all_preds), y[all_indices]),
+              "replay_verified": replay_verified, "point_in_time_universe_verified": universe_verified,
+              "strategy_scope_verified": replay_verified,
+              "strategy_scope": VALIDATED_STRATEGY_SCOPE,
+              "limitations": ["Daily bars cannot resolve intrabar ordering",
+                              "The score estimates target-before-stop probability, not probability of any profit or expected return",
+                              "Live confidence and risk filters add gates not represented by score-only fold selection",
+                              "Legacy institutional-flow history lacks source/publication provenance and is treated as missing",
+                              "No portfolio equity curve; portfolio Sharpe/Sortino/drawdown unavailable",
+                              "Entry-date HAC uncertainty remains approximate with sparse sessions and changing universe",
+                              "Current-universe backfills cannot establish absence of survivorship bias"]}
+    args.validation_report = report
+    report_path = getattr(args, "report", None)
+    if report_path:
+        os.makedirs(os.path.dirname(os.path.abspath(report_path)), exist_ok=True)
+        with open(report_path, "w", encoding="utf-8") as fh:
+            json.dump(report, fh, indent=2, allow_nan=False)
+    print(json.dumps({"selected": stats, "cost_stress": stressed, "passed": bool(passed)}, indent=2))
+    return (0 if passed else 1), []
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default=os.path.join(os.path.dirname(__file__), "..", "data", "ranker_train.jsonl"))
     ap.add_argument("--min-train-days", type=int, default=180)
+    ap.add_argument("--report", default=None)
     ap.add_argument("--rolling", action="store_true", help="Use rolling fixed-window folds instead of expanding window")
     ap.add_argument("--drop-unstable", type=float, default=None, help="Threshold for CV of SHAP values to drop unstable features (e.g. 1.0).")
     args = ap.parse_args()

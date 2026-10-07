@@ -41,7 +41,16 @@ class System1Decision:
     position_size_multiplier: float = 1.0  # Dynamic position sizing scaling (0.5x - 1.25x)
 
     def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
+        result = asdict(self)
+        # Handwritten sigmoid outputs and general-purpose model confidence have
+        # no Indian-market execution calibration. Keep private rule diagnostics
+        # private; publish unknown probabilities rather than invented odds.
+        for key in ("p_execution_success", "p_stop_hunt_risk", "p_adverse_regime_shift"):
+            result[key] = None
+        result["probability_validation"] = "not_established"
+        result["confidence_kind"] = "decision_score_not_win_probability"
+        result["position_size_multiplier"] = min(1.0, max(0.0, self.position_size_multiplier))
+        return result
 
 
 def get_safe_float(state: Dict[str, Any], keys: List[str], default: float) -> float:

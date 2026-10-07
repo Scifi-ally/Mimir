@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import bisect
 import datetime as dt
+import hashlib
 import json
 import math
 import os
@@ -39,10 +40,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
-try:
-    from walk_forward_harness import run_harness
-except ImportError:
-    run_harness = None
 
 # Keep the feature key list in sync with feature_engine.ts RANKER_FEATURE_KEYS.
 MANIFEST_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "config", "ranker_features_manifest.json"))
@@ -75,8 +72,8 @@ def load_rows(path: str) -> List[Dict[str, Any]]:
                 continue
             try:
                 row = json.loads(line)
-            except json.JSONDecodeError:
-                continue
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"Training row {line_no} is malformed JSON") from exc
             features = row.get("features")
             if not isinstance(features, list) or len(features) != len(FEATURE_KEYS):
                 raise ValueError(
@@ -86,9 +83,24 @@ def load_rows(path: str) -> List[Dict[str, Any]]:
                 )
             if not row.get("resolutionTs"):
                 raise ValueError(f"Training row {line_no} is missing resolutionTs")
+            entry_ms = _timestamp_ms(row.get("ts"), "ts")
+            if _timestamp_ms(row["resolutionTs"], "resolutionTs") <= entry_ms:
+                raise ValueError(f"Training row {line_no} resolves before or at its signal time")
+            if any((isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v))
+                   and not (FEATURE_KEYS[j] == "fiiDiiNetFlowLag" and v is None)
+                   for j, v in enumerate(features)):
+                raise ValueError(f"Training row {line_no} contains unmeasured/nonfinite features")
+            if row.get("label") not in (0, 1) or isinstance(row.get("label"), bool):
+                raise ValueError(f"Training row {line_no} has invalid label")
+            ret = row.get("retPct")
+            if isinstance(ret, bool) or not isinstance(ret, (int, float)) or not math.isfinite(ret):
+                raise ValueError(f"Training row {line_no} has invalid return")
             rows.append(row)
     # Chronological order is essential for a walk-forward split.
-    rows.sort(key=lambda r: r.get("ts", ""))
+    rows.sort(key=lambda r: _timestamp_ms(r["ts"], "ts"))
+    keys = [(r["ts"], r.get("symbol"), r.get("setupType"), r.get("direction")) for r in rows]
+    if len(set(keys)) != len(keys):
+        raise ValueError("Duplicate signal rows would inflate validation sample size")
     return rows
 
 
@@ -100,11 +112,22 @@ def to_matrix(rows: List[Dict[str, Any]]) -> Tuple[np.ndarray, np.ndarray, np.nd
     ret = np.zeros(n, dtype=np.float64)
     for i, r in enumerate(rows):
         feats = r.get("features", [])
-        for j in range(min(d, len(feats))):
+        if len(feats) != d:
+            raise ValueError(f"Row {i} has incorrect feature width")
+        for j in range(d):
             v = feats[j]
-            X[i, j] = v if isinstance(v, (int, float)) and math.isfinite(v) else 0.0
-        y[i] = int(r.get("label", 0))
-        ret[i] = float(r.get("retPct", 0.0))
+            if FEATURE_KEYS[j] == "fiiDiiNetFlowLag" and v is None:
+                X[i, j] = np.nan
+                continue
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
+                raise ValueError(f"Row {i} feature {FEATURE_KEYS[j]} is unmeasured/nonfinite")
+            X[i, j] = v
+        if r.get("label") not in (0, 1) or isinstance(r.get("label"), bool):
+            raise ValueError(f"Row {i} has invalid label")
+        if not isinstance(r.get("retPct"), (int, float)) or not math.isfinite(r["retPct"]):
+            raise ValueError(f"Row {i} has invalid return")
+        y[i] = int(r["label"])
+        ret[i] = float(r["retPct"])
     return X, y, ret
 
 
@@ -189,10 +212,7 @@ def purged_chronological_split(
 
 
 def fit_isotonic(scores: np.ndarray, labels: np.ndarray) -> Tuple[List[float], List[float]]:
-    """Fit a monotonic score->probability map. Uses sklearn's IsotonicRegression
-    when available, else a simple binned-monotonic fallback (pool-adjacent-violators
-    is overkill for the fallback; equal-frequency bins + cummax is monotone and
-    good enough to avoid a hard sklearn dependency)."""
+    """Fit weighted isotonic calibration; preserve observed knots and ties."""
     order = np.argsort(scores)
     s = scores[order]
     l = labels[order].astype(np.float64)
@@ -201,26 +221,28 @@ def fit_isotonic(scores: np.ndarray, labels: np.ndarray) -> Tuple[List[float], L
 
         iso = IsotonicRegression(out_of_bounds="clip", y_min=0.0, y_max=1.0)
         iso.fit(s, l)
-        xs = np.linspace(float(s.min()), float(s.max()), num=50)
-        ys = iso.predict(xs)
+        xs = iso.X_thresholds_
+        ys = iso.y_thresholds_
+        if len(xs) == 1:
+            return [float(xs[0])-1e-12, float(xs[0])+1e-12], [float(ys[0])] * 2
         return [float(v) for v in xs], [float(v) for v in ys]
-    except Exception:
-        # Fallback: equal-frequency bins, monotone via cumulative max of bin means.
-        n = len(s)
-        nb = max(4, min(20, n // 50))
-        edges = np.linspace(0, n, nb + 1).astype(int)
-        xs, ys = [], []
-        run_max = 0.0
-        for b in range(nb):
-            lo, hi = edges[b], edges[b + 1]
-            if hi <= lo:
-                continue
-            xs.append(float(s[lo:hi].mean()))
-            run_max = max(run_max, float(l[lo:hi].mean()))
-            ys.append(run_max)
-        if len(xs) < 2:
-            return [0.0, 1.0], [float(l.mean()), float(l.mean())]
-        return xs, ys
+    except ImportError:
+        # Weighted pool-adjacent-violators, including equal-score groups. A
+        # cumulative maximum inflates probabilities whenever a bin was lucky.
+        unique, starts, counts = np.unique(s, return_index=True, return_counts=True)
+        sums = np.add.reduceat(l, starts)
+        blocks = []
+        for i, (total, count) in enumerate(zip(sums, counts)):
+            blocks.append([i, i, float(total), int(count)])
+            while len(blocks) >= 2 and blocks[-2][2] / blocks[-2][3] > blocks[-1][2] / blocks[-1][3]:
+                right = blocks.pop(); left = blocks.pop()
+                blocks.append([left[0], right[1], left[2] + right[2], left[3] + right[3]])
+        fitted = np.zeros(len(unique))
+        for low, high, total, count in blocks:
+            fitted[int(low):int(high)+1] = total / count
+        if len(unique) == 1:
+            return [float(unique[0])-1e-12, float(unique[0])+1e-12], [float(fitted[0])] * 2
+        return unique.tolist(), fitted.tolist()
 
 
 def apply_isotonic(p: np.ndarray, xs: List[float], ys: List[float]) -> np.ndarray:
@@ -272,7 +294,7 @@ def main() -> int:
     ap.add_argument("--embargo-hours", type=float, default=24.0,
                     help="Additional gap after each train/calibration window; overlapping trade outcomes are always purged.")
     ap.add_argument("--threshold", default="auto",
-                    help="'auto' picks the prob threshold maximising CALIB expectancy, or a float")
+                    help="Deployment supports only the shared calibration-only auto threshold")
     ap.add_argument("--min-eval-rows", type=int, default=100,
                     help="Minimum rows required in both calibration and test slices")
     ap.add_argument("--force", action="store_true",
@@ -282,6 +304,10 @@ def main() -> int:
     ap.add_argument("--drop-unstable", type=float, default=None,
                     help="Threshold for CV of SHAP values to drop unstable features (e.g. 1.0). Requires --walk-forward.")
     args = ap.parse_args()
+
+    if args.threshold != "auto":
+        print("ERROR: fixed thresholds are not deployment-validated; use the shared calibration-only auto rule.")
+        return 2
 
     try:
         import lightgbm as lgb
@@ -329,62 +355,42 @@ def main() -> int:
         )
         return 2
 
-    if args.walk_forward and run_harness:
-        print("\n" + "="*50)
-        print("Running Walk-Forward Cross-Validation...")
-        wf_res, unstable = run_harness(args)
-        print("="*50 + "\n")
-        if wf_res != 0:
-            print("Walk-forward evaluation failed or did not meet minimum criteria. Aborting deployment.")
-            return wf_res
-        
-        if unstable:
-            print(f"\n[!!! LOUD WARNING !!!]")
-            print(f"Dropping {len(unstable)} unstable features from training: {unstable}")
-            print("You MUST manually remove these features from RANKER_FEATURE_KEYS in backend/src/analysis/feature_engine.ts!")
-            print("If you do not, the TypeScript serving layer will send mismatched arrays and predictions will fail.")
-            print("[!!! ------------ !!!]\n")
-            
-            global FEATURE_KEYS
-            to_keep = [i for i, f in enumerate(FEATURE_KEYS) if f not in unstable]
-            FEATURE_KEYS[:] = [FEATURE_KEYS[i] for i in to_keep]
-            
-            X_tr = X_tr[:, to_keep]
-            X_ca = X_ca[:, to_keep]
-            X_te = X_te[:, to_keep]
+    # Deployment requires measured walk-forward evidence, even without the
+    # optional historical --walk-forward CLI flag. No circular eager import.
+    from walk_forward_harness import run_harness
+    wf_res, _ = run_harness(args)
+    if wf_res != 0:
+        print("Walk-forward validation failed; artifacts NOT written.")
+        return wf_res
 
-
-    # Class imbalance handling: weight positives by inverse prevalence.
-    pos_rate = max(1e-6, float(y_tr.mean()))
-    scale_pos_weight = (1 - pos_rate) / pos_rate
 
     train_set = lgb.Dataset(X_tr, label=y_tr, feature_name=FEATURE_KEYS)
     calib_set = lgb.Dataset(X_ca, label=y_ca, reference=train_set)
 
     params = {
         "objective": "binary",
-        "metric": ["auc", "binary_logloss"],
+        "metric": "binary_logloss",
         "learning_rate": 0.03,
-        "num_leaves": 31,
-        "max_depth": 6,
+        "num_leaves": 15,
+        "max_depth": 4,
         "min_data_in_leaf": 40,
         "feature_fraction": 0.8,
         "bagging_fraction": 0.8,
         "bagging_freq": 5,
         "lambda_l1": 0.5,
         "lambda_l2": 1.0,
-        "scale_pos_weight": scale_pos_weight,
         "verbose": -1,
         "seed": 42,
+        "num_threads": 2,
     }
 
     booster = lgb.train(
         params,
         train_set,
-        num_boost_round=600,
+        num_boost_round=300,
         valid_sets=[calib_set],
         valid_names=["calib"],
-        callbacks=[lgb.early_stopping(50, verbose=False), lgb.log_evaluation(0)],
+        callbacks=[lgb.early_stopping(30, verbose=False), lgb.log_evaluation(0)],
     )
 
     # Calibrate on the calib slice, evaluate on the untouched test slice.
@@ -404,42 +410,10 @@ def main() -> int:
     # it on TEST and reporting that maximum would be selection bias: the live gate
     # and the shipped threshold would be optimistically overfit to one window.
     # TEST stays a true holdout used only to evaluate the frozen threshold.
-    if args.threshold == "auto":
-        # The candidate grid must follow the score distribution, not a fixed
-        # band. The label is "target1 hit before stop", whose base rate is only
-        # ~7%, so a well-calibrated model concentrates its mass near 0.07 and
-        # the best trades sit far below 0.5. A hardcoded [0.45, 0.75] grid can
-        # therefore never select a single trade, which silently reports
-        # expectancy n=0 and makes a genuinely skilful model look worthless.
-        # Quantile-derived candidates always cover the region where the mass
-        # actually is, at any base rate.
-        base_rate = float(cal_ca.mean()) if cal_ca.size else 0.0
-        grid = sorted({
-            round(float(q), 6)
-            for q in np.quantile(cal_ca, [0.50, 0.70, 0.80, 0.85, 0.90, 0.93,
-                                          0.95, 0.97, 0.98, 0.99])
-        })
-        # Keep a couple of absolute floors so a degenerate (all-equal) score
-        # vector still yields a usable, non-empty candidate set.
-        grid = sorted(set(grid) | {round(base_rate, 6), min(1.0, round(base_rate * 2, 6))})
-        grid = [t for t in grid if 0.0 < t <= 1.0]
-
-        best_thr, sel_exp, sel_taken = grid[0], -1e9, 0
-        for thr in grid:
-            exp, taken = expectancy_at_threshold(cal_ca, ret_ca, float(thr))
-            # Require a minimum sample so we don't pick a threshold that only
-            # greenlights a few lucky trades.
-            if taken >= max(20, len(X_ca) // 20) and exp > sel_exp:
-                best_thr, sel_exp, sel_taken = float(thr), exp, taken
-        if sel_taken == 0:
-            print(
-                "WARNING: no threshold in the auto grid selected a usable sample "
-                f"(calibration base rate {base_rate:.4f}); falling back to the "
-                "median score. The model likely has no usable ranking skill."
-            )
-            best_thr = float(np.quantile(cal_ca, 0.90)) if cal_ca.size else 0.5
-    else:
-        best_thr = float(args.threshold)
+    from validation_metrics import select_threshold
+    best_thr, calibration_mask = select_threshold(cal_ca, ret_ca, max(30, len(X_ca) // 20))
+    sel_taken = int(calibration_mask.sum())
+    sel_exp = float(ret_ca[calibration_mask].mean()) if sel_taken else 0.0
 
     # Evaluate the frozen threshold out-of-sample on TEST — these are the numbers
     # that gate shipping and get reported.
@@ -455,8 +429,7 @@ def main() -> int:
     print("\n--- Out-of-sample (TEST) -----------------------------")
     print(f"AUC:               {test_auc:.4f}   (0.5 = no skill)")
     print(f"Brier:             {test_brier:.4f}  (lower = better calibrated)")
-    print(f"Threshold p>={best_thr:.3f} chosen on CALIB (exp {sel_exp:+.4f}%, n={sel_taken})"
-          if args.threshold == "auto" else f"Threshold p>={best_thr:.3f} (fixed)")
+    print(f"Threshold p>={best_thr:.3f} chosen on CALIB (exp {sel_exp:+.4f}%, n={sel_taken})")
     print(f"Take-ALL expectancy:       {take_all_exp:+.4f}% / trade  (n={len(X_te)})")
     print(f"Greenlight @ p>={best_thr:.3f}:   {best_exp:+.4f}% / trade  (n={best_taken})")
 
@@ -465,7 +438,7 @@ def main() -> int:
     improves = (
         not math.isnan(test_auc)
         and test_auc >= 0.53
-        and best_taken > 0
+        and best_taken >= args.min_eval_rows
         and best_exp > take_all_exp
         and best_exp > 0
     )
@@ -501,6 +474,10 @@ def main() -> int:
             print(f"Champion meta unreadable ({exc}); proceeding as first deploy.")
 
     booster.save_model(MODEL_PATH, num_iteration=booster.best_iteration)
+    model_digest = hashlib.sha256()
+    with open(MODEL_PATH, "rb") as model_fh:
+        for chunk in iter(lambda: model_fh.read(1024 * 1024), b""):
+            model_digest.update(chunk)
     importances = dict(zip(FEATURE_KEYS, [int(v) for v in booster.feature_importance()]))
     meta = {
         "feature_keys": FEATURE_KEYS,
@@ -520,6 +497,8 @@ def main() -> int:
         "feature_importance": importances,
         "split": split_meta,
         "trained_at": _utc_now(),
+        "validation": args.validation_report,
+        "model_sha256": model_digest.hexdigest(),
     }
     with open(META_PATH, "w", encoding="utf-8") as fh:
         json.dump(meta, fh, indent=2)
