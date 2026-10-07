@@ -59,7 +59,21 @@ class UpstoxHeadlessAuth {
     const authState = crypto.randomBytes(24).toString("hex") + "_" + type;
     const url = getAuthorizationUrl(authState, type);
 
-    this.browser = await chromium.launch({ headless: true });
+    try {
+      this.browser = await chromium.launch({ headless: true });
+    } catch (err: any) {
+      const msg = err?.message || "";
+      if (msg.includes("Executable doesn't exist") || msg.includes("playwright install")) {
+        logger.warn("Playwright bundled chromium not found, trying system browser channels");
+        try {
+          this.browser = await chromium.launch({ headless: true, channel: "msedge" });
+        } catch {
+          this.browser = await chromium.launch({ headless: true, channel: "chrome" });
+        }
+      } else {
+        throw err;
+      }
+    }
     this.context = await this.browser.newContext({
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       ...(useSavedSession && fs.existsSync(SESSION_FILE) ? { storageState: SESSION_FILE } : {}),

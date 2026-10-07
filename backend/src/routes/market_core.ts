@@ -76,7 +76,9 @@ router.get("/market/indian-context", async (_req, res) => {
       usdInr: macroData.usdInr,
       india10y: macroData.india10y,
       india10yIsEstimate: macroData.india10yIsEstimate,
-      macroScore: macroData.macroScore,
+      macroScore: Object.values(macroData.observations ?? {}).some(f => f.status === "available") ? macroData.macroScore : null,
+      macroScoreKind: "heuristic_market_stress_proxy",
+      factorObservations: macroData.observations ?? {},
       eventRiskActive: macroData.eventRiskActive ?? false,
       economicEvent: getTodayEconomicEvent(),
       gapRisk: getGapRisk(),
@@ -93,7 +95,11 @@ router.get("/market/indian-context", async (_req, res) => {
 router.get("/market/macro", (req, res) => {
   try {
     const macroState = getGlobalMacroState();
-    res.json(macroState);
+    const available = Object.values(macroState.observations ?? {}).some(f => f.status === "available");
+    res.json({ ...macroState, available, macroScore: available ? macroState.macroScore : null,
+      geopoliticalRisk: available ? macroState.geopoliticalRisk : null,
+      macroScoreKind: "heuristic_market_stress_proxy",
+      geopoliticalRiskKind: "market_stress_proxy_not_measured_geopolitical_risk" });
   } catch (err: unknown) {
     logApiError(req, err);
     res.status(500).json({ error: "Failed to fetch macro state" });

@@ -5,9 +5,9 @@
   *
  * Core Primitives:
  * 1. Choice: Discrete categorical classifications (Verdict, Action).
- * 2. Score: Continuous calibrated metrics in bounded domains (Confidence, Opportunity, Regime Alignment).
- * 3. Noul: Calibrated Bernoulli probabilities (P in [0, 1]) optimized via strictly proper scoring rules.
- * 4. Position Sizing Scaling: Dynamic multiplier in [0.5x, 1.25x] based on calibrated confidence and agreement.
+ * 2. Score: Bounded decision scores; trading probability calibration is not established.
+ * 3. Execution probabilities: unknown until validated on actual labelled executions.
+ * 4. Position sizing: unvalidated conviction may reduce risk, never increase it.
  */
 
 export type System1Verdict = "APPROVE" | "REJECT" | "CAUTION";
@@ -28,18 +28,18 @@ export interface System1Decision {
   verdict: System1Verdict;
   /** Choice Primitive: recommended execution behavior */
   action: System1Action;
-  /** Score Primitive: RLCD-calibrated confidence in [0.0, 1.0] */
+  /** Decision score; calibration as a trading probability is not established. */
   confidence: number;
   /** Score Primitive: aggregate opportunity score in [0.0, 100.0] */
   opportunity_score: number;
   /** Score Primitive: directional regime alignment in [-1.0, 1.0] */
   regime_alignment: number;
-  /** Noul Primitive: calibrated Bernoulli probability of execution success */
-  p_execution_success: number;
-  /** Noul Primitive: calibrated Bernoulli probability of wick stop-hunt */
-  p_stop_hunt_risk: number;
-  /** Noul Primitive: calibrated Bernoulli probability of adverse regime shift */
-  p_adverse_regime_shift: number;
+  /** Unknown until an execution-labelled calibration artifact is validated. */
+  p_execution_success: number | null;
+  p_stop_hunt_risk: number | null;
+  p_adverse_regime_shift: number | null;
+  probability_validation?: "not_established";
+  confidence_kind?: "decision_score_not_win_probability";
   /** Dynamic position sizing multiplier (0.5x - 1.25x for valid trades, 0.0x for rejections) */
   position_size_multiplier?: number;
   /** Explanatory gate reasons / audit trail */

@@ -1,3 +1,5 @@
+import exchangeCalendar from "./nse_calendar.json";
+
 export type MarketRegime =
   | "TRENDING_UP"
   | "TRENDING_DOWN"
@@ -82,24 +84,8 @@ export function updateMarketState(partial: Partial<MarketState>): void {
 
 // ── IST helpers ──────────────────────────────────────────────────────────────
 
-const NSE_HOLIDAYS = new Set([
-  // 2026 NSE Holidays
-  "2026-01-26", // Republic Day
-  "2026-03-03", // Maha Shivaratri
-  "2026-03-24", // Holi
-  "2026-04-02", // Mahavir Jayanti
-  "2026-04-03", // Good Friday
-  "2026-04-14", // Dr. Baba Saheb Ambedkar Jayanti
-  "2026-05-01", // Maharashtra Day
-  "2026-06-26", // Moharram
-  "2026-08-15", // Independence Day
-  "2026-09-07", // Ganesh Chaturthi
-  "2026-10-02", // Mahatma Gandhi Jayanti
-  "2026-10-21", // Dussehra
-  "2026-11-09", // Diwali
-  "2026-11-23", // Gurunanak Jayanti
-  "2026-12-25", // Christmas
-]);
+const NSE_HOLIDAYS = new Set(Object.values(exchangeCalendar.holidays).flat());
+const NSE_WEEKEND_SESSIONS = new Set(exchangeCalendar.normal_weekend_sessions);
 
 /** Returns current time as { day (0=Sun), totalMinutesIST, dateString } */
 function getISTTime(date: Date = new Date()): { day: number; totalMinutes: number; dateString: string } {
@@ -126,6 +112,7 @@ function getISTTime(date: Date = new Date()): { day: number; totalMinutes: numbe
 }
 
 function isTradingDay(day: number, dateString: string): boolean {
+  if (NSE_WEEKEND_SESSIONS.has(dateString)) return true;
   if (day < 1 || day > 5) return false; // Weekend
   if (NSE_HOLIDAYS.has(dateString)) return false;
   return true;

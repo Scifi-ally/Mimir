@@ -59,6 +59,7 @@ vi.mock("drizzle-orm", () => ({
 
 vi.mock("../lib/ist-time", () => ({
   todayStartUTC: () => new Date("2026-01-01T00:00:00.000Z"),
+  getISTDateStr: () => "2026-01-01",
 }));
 
 vi.mock("./stock_scanner", () => ({

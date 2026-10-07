@@ -23,3 +23,4 @@ export * from "./setups/macd_crossover";
 export * from "./setups/bollinger_squeeze_breakout";
 export * from "./setups/liquidity_sweep";
 export * from "./setups/momentum_breakout";
+export * from "./setups/matrix_ensemble";

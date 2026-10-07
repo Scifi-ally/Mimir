@@ -8,7 +8,7 @@
  * HIGH FIX (Issue #9): Added retry logic with exponential backoff and trading
  * calendar awareness to handle transient failures and market holidays properly.
  */
-import yahooFinance from "yahoo-finance2";
+import { yahooFinance } from "../lib/yahoo-client";
 import { updateMarketState } from "./market_state";
 import { recordVixSample } from "../analysis/market_internals";
 import { detectRegime } from "../analysis/regime_detector";
@@ -147,11 +147,21 @@ export async function updateMarketFeed(): Promise<void> {
       if (vixLTP !== null) availableKeys.push(VIX_KEY);
 
       if (niftyLTP === null) {
+        // VIX remains a useful independent market input when the index quote
+        // fails. Publish it instead of discarding a valid half of the response.
+        if (vixLTP !== null) {
+          updateMarketState({ indiaVix: vixLTP });
+          recordVixSample(vixLTP);
+          detectRegime();
+        }
         feedSnapshot = {
           ...feedSnapshot,
           status: "partial",
           authenticated: true,
           fetchedAt: new Date().toISOString(),
+          niftyLtp: null,
+          vixLtp: vixLTP,
+          niftyChangePct: null,
           note: vixLTP !== null ? "Nifty quote failed, VIX succeeded" : "No quote data returned",
         };
         logger.warn(
@@ -235,6 +245,9 @@ export async function updateMarketFeed(): Promise<void> {
     status: "failed",
     authenticated: true,
     fetchedAt: new Date().toISOString(),
+    niftyLtp: null,
+    vixLtp: null,
+    niftyChangePct: null,
     note: `Market feed poll failed after ${MAX_RETRIES} retries`,
   };
 

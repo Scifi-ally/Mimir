@@ -10,6 +10,7 @@ import { suggestionsTable, learningAnalyticsTable, signalOutcomesTable, learning
 import { eq, sql } from "drizzle-orm";
 import { logger } from "../lib/logger";
 import { getLastRegimeOutput } from "./regime_detector";
+import { summarizeOutcomeEvidence, diagnosticPnl } from "./outcome_evidence";
 
 export interface SectorMetric {
   sector: string;
@@ -402,33 +403,22 @@ async function generateGeneralInsights(closed: any[]): Promise<void> {
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function analyzeRiskAutotuning(closed: any[]): Promise<void> {
-  const recent = closed.sort((a, b) => (b.closedAt?.getTime() || 0) - (a.closedAt?.getTime() || 0)).slice(0, 20);
-  if (recent.length < 10) return;
-
-  // Win rate over DECIDED trades only (target/stop). EXPIRED scratches are not
-  // losses — counting them made routine end-of-day expiries look like a
-  // performance collapse and wrongly forced CAPITAL_PRESERVATION (same fix as
-  // confidence_engine's decided-only denominator).
-  const decided = recent.filter(t => t.status.includes("TARGET") || t.status === "STOP_HIT");
-  if (decided.length < 5) return;
-  const wins = decided.filter(t => t.status.includes("TARGET")).length;
-  const winRate = wins / decided.length;
+  const recent = [...closed].sort((a, b) => (b.closedAt?.getTime() || 0) - (a.closedAt?.getTime() || 0)).slice(0, 100);
+  const evidence = summarizeOutcomeEvidence(recent.map(t => diagnosticPnl(t.pnlInr)));
+  const winRate = evidence.winRatePct === null ? null : evidence.winRatePct / 100;
 
   let mode = "DEFAULT";
   let maxRiskPerTradePct = 1.0;
   let minRiskReward = 1.5;
 
-  if (winRate < 0.35) {
+  if (evidence.meanPnl !== null && evidence.meanPnl < 0) {
     mode = "CAPITAL_PRESERVATION";
     maxRiskPerTradePct = 0.5; // Halve risk per trade
     minRiskReward = 2.5;      // Require stricter setups
-  } else if (winRate > 0.65) {
-    mode = "AGGRESSIVE";
-    maxRiskPerTradePct = 1.5; // Slightly increase risk per trade
-    minRiskReward = 1.2;      // Accept lower RR setups
   }
 
-  const payload = { mode, maxRiskPerTradePct, minRiskReward, winRate };
+  const payload = { mode, maxRiskPerTradePct, minRiskReward, winRate, evidence,
+    source: "suggestion_outcomes_not_broker_fills", allowRiskIncrease: false };
 
   await db.delete(learningAnalyticsTable).where(eq(learningAnalyticsTable.tag, "AUTO_TUNE_RISK"));
   await db.insert(learningAnalyticsTable).values({
@@ -473,9 +463,9 @@ export async function getAutoTunedRiskParams(): Promise<AutoTunedRiskParams> {
         Number.isFinite(parsed.minRiskReward)
       ) {
         riskParamsCache = {
-          mode: parsed.mode === "CAPITAL_PRESERVATION" || parsed.mode === "AGGRESSIVE" ? parsed.mode : "DEFAULT",
-          maxRiskPerTradePct: parsed.maxRiskPerTradePct,
-          minRiskReward: parsed.minRiskReward,
+          mode: parsed.mode === "CAPITAL_PRESERVATION" ? parsed.mode : "DEFAULT",
+          maxRiskPerTradePct: Math.max(0, Math.min(defaults.maxRiskPerTradePct, parsed.maxRiskPerTradePct)),
+          minRiskReward: Math.max(defaults.minRiskReward, parsed.minRiskReward),
         };
         lastRiskParamsFetch = Date.now();
         return riskParamsCache;
@@ -516,24 +506,12 @@ async function analyzeSymbolMetrics(closed: any[]): Promise<void> {
       t.reasoning?.includes("technical")
     );
 
-    let techEdge: number | null;
-    if (techSignals.length >= 10) {
-      const profitable = techSignals.filter(t => t.status.includes("TARGET")).length;
-      techEdge = (profitable / techSignals.length) * 100;
-    } else {
-      techEdge = 50.0; // Baseline for learning phase
-    }
+    const techEdge = summarizeOutcomeEvidence(techSignals.map(t => diagnosticPnl(t.pnlInr))).winRatePct;
 
     // Regime Align Calculation
     // "percentage of past trades taken in the current regime that were profitable for this symbol"
-    let regimeAlign: number | null;
     const regimeTrades = trades.filter(t => t.marketRegime === currentRegime);
-    if (regimeTrades.length >= 10) {
-      const profitable = regimeTrades.filter(t => t.status.includes("TARGET")).length;
-      regimeAlign = (profitable / regimeTrades.length) * 100;
-    } else {
-      regimeAlign = 50.0; // Baseline for learning phase
-    }
+    const regimeAlign = summarizeOutcomeEvidence(regimeTrades.map(t => diagnosticPnl(t.pnlInr))).winRatePct;
 
     // Upsert into learning_metrics table
     const id = `${symbol}_${currentRegime}`;

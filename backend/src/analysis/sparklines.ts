@@ -1,4 +1,4 @@
-import yahooFinance from "yahoo-finance2";
+import { yahooFinance } from "../lib/yahoo-client";
 import { logger } from "../lib/logger";
 import { findStockBySymbol } from "./stock_scanner";
 import { createUpstoxClient } from "../lib/upstox-client";

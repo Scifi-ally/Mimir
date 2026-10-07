@@ -1,3 +1,5 @@
+import { isNseNormalSessionDate } from "./exchange-calendar";
+
 const IST_OFFSET_MS = 330 * 60 * 1000;
 
 export function getISTDateStr(date = new Date()): string {
@@ -9,7 +11,7 @@ export function getPreviousTradingDayStr(date = new Date()): string {
   const istMs = date.getTime() + IST_OFFSET_MS;
   const previous = new Date(istMs);
   previous.setUTCDate(previous.getUTCDate() - 1);
-  while (previous.getUTCDay() === 0 || previous.getUTCDay() === 6) {
+  while (!isNseNormalSessionDate(previous.toISOString().split("T")[0]!)) {
     previous.setUTCDate(previous.getUTCDate() - 1);
   }
   return previous.toISOString().split("T")[0]!;
@@ -25,7 +27,7 @@ export function getLastCompletedTradingDayStr(reference = new Date()): string {
   if (isBeforeMarketClose) {
     candidate.setUTCDate(candidate.getUTCDate() - 1);
   }
-  while (candidate.getUTCDay() === 0 || candidate.getUTCDay() === 6) {
+  while (!isNseNormalSessionDate(candidate.toISOString().split("T")[0]!)) {
     candidate.setUTCDate(candidate.getUTCDate() - 1);
   }
   return candidate.toISOString().split("T")[0]!;
@@ -42,7 +44,7 @@ export function getNextTradingDayStr(reference = new Date()): string {
   const istMs = reference.getTime() + IST_OFFSET_MS;
   const next = new Date(istMs);
   next.setUTCDate(next.getUTCDate() + 1);
-  while (next.getUTCDay() === 0 || next.getUTCDay() === 6) {
+  while (!isNseNormalSessionDate(next.toISOString().split("T")[0]!)) {
     next.setUTCDate(next.getUTCDate() + 1);
   }
   return next.toISOString().split("T")[0]!;

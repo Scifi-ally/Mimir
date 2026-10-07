@@ -1,6 +1,8 @@
 import { logger } from "../lib/logger";
 import { fetchFIIDIIData } from "../market_data/fii_dii";
 import { isEconomicEventDay, getTodayEconomicEvent } from "./gap_risk";
+import { observeFactor, refreshFactor, type FactorObservation } from "./factor_observation";
+import { retainFactorReceipt } from "./factor_archive";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let yahooFinance: any = null;
@@ -26,19 +28,13 @@ async function getYahooFinance(): Promise<any> {
   return yahooFinance;
 }
 
-// India 10Y estimate inputs. RBI_REPO_RATE tracks the current policy repo rate;
-// bump it when the MPC changes rates. The term spread is the historical average
-// gap between the repo rate and the 10Y G-sec yield.
-const RBI_REPO_RATE = 6.5;
-const INDIA_10Y_TERM_SPREAD = 0.4;
-
 export interface GlobalMacroState {
   us10YearYield: number | null;
   dxy: number | null;
   brentCrude: number | null;
   usdInr: number | null;       // INR=X
-  india10y: number | null;     // ^IN10Y (estimated when live fetch unavailable)
-  india10yIsEstimate: boolean; // true when india10y is repo-rate-derived, not live
+  india10y: number | null;     // ^IN10Y; unavailable when no valid source quote exists
+  india10yIsEstimate: boolean; // Legacy compatibility field; no synthetic estimate supplied
   indiaVix: number | null;     // ^INDIAVIX
   fiiNetInr: number | null;
   diiNetInr: number | null;
@@ -46,6 +42,7 @@ export interface GlobalMacroState {
   eventRiskActive: boolean;    // High volatility or extreme moves
   geopoliticalRisk: "LOW" | "MODERATE" | "HIGH" | "EXTREME";
   lastUpdated: string | null;
+  observations?: Record<string, FactorObservation>;
 }
 
 const DEFAULT_STATE: GlobalMacroState = {
@@ -66,29 +63,74 @@ const DEFAULT_STATE: GlobalMacroState = {
 
 let _state: GlobalMacroState = { ...DEFAULT_STATE };
 
+const MACRO_QUOTES: Array<[keyof GlobalMacroState, string, string]> = [
+  ["us10YearYield", "^TNX", "percent"], ["dxy", "DX-Y.NYB", "index"],
+  ["brentCrude", "BZ=F", "USD/barrel"], ["usdInr", "INR=X", "INR/USD"],
+  ["india10y", "^IN10Y", "percent"], ["indiaVix", "^INDIAVIX", "index"],
+];
+
+/** Yahoo quote timestamps refer to source observations, not request completion. */
+export function macroQuoteObservation(quote: any, symbol: string, unit: string, now = Date.now()): FactorObservation {
+  const rawTime = quote?.regularMarketTime;
+  const parsed = rawTime instanceof Date ? rawTime.getTime()
+    : typeof rawTime === "number" ? rawTime * 1000
+    : typeof rawTime === "string" ? Date.parse(rawTime) : NaN;
+  const sourceTime = Number.isFinite(parsed) ? new Date(parsed).toISOString() : null;
+  const price = quote?.regularMarketPrice;
+  return observeFactor(typeof price === "number" && price > 0 ? price : null,
+    unit, `Yahoo Finance:${symbol}`, sourceTime, new Date(now).toISOString(), 4 * 86400_000, now);
+}
+
+function freshMacroRisk(state: GlobalMacroState) {
+  let score = 0;
+  let eventRisk = isEconomicEventDay();
+  for (const [value, high, low, penalty, bonus, activates] of [
+    [state.us10YearYield, 4.5, 4, 30, 20, true],
+    [state.dxy, 105, 102, 30, 20, true],
+    [state.brentCrude, 85, 75, 20, 20, false],
+    [state.usdInr, 86, 83, 20, 15, true],
+    [state.india10y, 7.2, 7, 20, 15, true],
+    [state.indiaVix, 22, 15, 20, 15, true],
+  ] as Array<[number | null, number, number, number, number, boolean]>) {
+    if (value == null) continue;
+    if (value > high) { score -= penalty; eventRisk ||= activates; }
+    else if (value < low) score += bonus;
+  }
+  if (state.fiiNetInr != null) {
+    if (state.fiiNetInr < -1500) score -= 15;
+    else if (state.fiiNetInr > 1500) score += 15;
+  }
+  const signals = [state.indiaVix != null && state.indiaVix > 20,
+    state.fiiNetInr != null && state.fiiNetInr < -2000,
+    state.brentCrude != null && state.brentCrude > 90,
+    state.dxy != null && state.dxy > 106, eventRisk].filter(Boolean).length;
+  // This legacy field is a market-stress proxy, not a measured geopolitical probability.
+  const geopoliticalRisk: GlobalMacroState["geopoliticalRisk"] = signals >= 4 ? "EXTREME"
+    : signals >= 3 ? "HIGH" : signals >= 2 ? "MODERATE" : "LOW";
+  return { macroScore: Math.max(-100, Math.min(100, score)), eventRiskActive: eventRisk, geopoliticalRisk };
+}
+
 export function getGlobalMacroState(): GlobalMacroState {
-  return _state;
+  const observations = Object.fromEntries(Object.entries(_state.observations ?? {})
+    .map(([key, value]) => [key, refreshFactor(value)]));
+  const result = { ..._state, observations };
+  for (const [key] of MACRO_QUOTES) {
+    (result as unknown as Record<string, unknown>)[key] = observations[key]?.value ?? null;
+  }
+  result.fiiNetInr = observations.fiiNetInr?.value ?? null;
+  result.diiNetInr = observations.diiNetInr?.value ?? null;
+  return { ...result, ...freshMacroRisk(result) };
 }
 
 export async function fetchGlobalMacroData(): Promise<GlobalMacroState> {
   try {
     const yf = await getYahooFinance();
-    if (!yf) return _state;
+    if (!yf) return getGlobalMacroState();
 
     // ^TNX = US 10-Year T-Note
     // DX-Y.NYB = US Dollar Index
     // BZ=F = Brent Crude Oil
     
-    let us10YearYield = _state.us10YearYield;
-    let dxy = _state.dxy;
-    let brentCrude = _state.brentCrude;
-    let usdInr = _state.usdInr;
-    let india10y = _state.india10y;
-    let india10yIsEstimate = _state.india10yIsEstimate;
-    let indiaVix = _state.indiaVix;
-    let fiiNetInr = _state.fiiNetInr;
-    let diiNetInr = _state.diiNetInr;
-
     const [tnx, dx, bz, inr, in10, vix, fiiDiiData] = await Promise.all([
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       yf.quote("^TNX").catch(() => null) as Promise<any>,
@@ -105,44 +147,26 @@ export async function fetchGlobalMacroData(): Promise<GlobalMacroState> {
       fetchFIIDIIData().catch(() => null),
     ]);
 
-    if (tnx && tnx.regularMarketPrice) {
-      us10YearYield = tnx.regularMarketPrice;
+    const now = Date.now();
+    const observations: Record<string, FactorObservation> = {};
+    const quotes = [tnx, dx, bz, inr, in10, vix];
+    MACRO_QUOTES.forEach(([key, symbol, unit], i) => {
+      observations[key] = macroQuoteObservation(quotes[i], symbol, unit, now);
+    });
+    for (const key of ["fiiNetInr", "diiNetInr"] as const) {
+      const sourceTime = fiiDiiData?.fetchedAt?.toISOString() ?? null;
+      observations[key] = observeFactor(fiiDiiData?.[key], "INR_crore", "NSE institutional flows",
+        sourceTime, new Date(now).toISOString(), 4 * 86400_000, now);
     }
-    if (dx && dx.regularMarketPrice) {
-      dxy = dx.regularMarketPrice;
-    }
-    if (bz && bz.regularMarketPrice) {
-      brentCrude = bz.regularMarketPrice;
-    }
-    // Sanity band only rejects data-corruption values (Yahoo occasionally
-    // returns paise or reciprocal quotes). Band must cover realistic INR
-    // depreciation — the old [70,90] silently froze usdInr past 90.
-    if (inr && typeof inr.regularMarketPrice === 'number' && inr.regularMarketPrice >= 60 && inr.regularMarketPrice <= 120) {
-      usdInr = inr.regularMarketPrice;
-    } else if (inr?.regularMarketPrice != null) {
-      logger.warn({ value: inr.regularMarketPrice }, "USD/INR quote outside sanity band [60,120] — keeping previous value");
-    }
-    if (in10 && in10.regularMarketPrice) {
-      india10y = in10.regularMarketPrice;
-      india10yIsEstimate = false;
-    } else if (india10y === null) {
-      // Yahoo's ^IN10Y is chronically null and no other free source serves the
-      // India 10Y G-sec yield reliably headless (NSE/FBIL/investing.com all
-      // block or omit it). Rather than show N/A forever, derive a realistic
-      // estimate from the RBI repo rate plus the typical 10Y term spread. This
-      // is a slow-moving macro input (bps-level daily moves), so an estimate
-      // within ~15-20bps is fine for regime/risk gating — and it is flagged as
-      // an estimate so the UI can mark it and we never treat it as a live tick.
-      india10y = RBI_REPO_RATE + INDIA_10Y_TERM_SPREAD;
-      india10yIsEstimate = true;
-    }
-    if (vix && vix.regularMarketPrice) {
-      indiaVix = vix.regularMarketPrice;
-    }
-    if (fiiDiiData) {
-      fiiNetInr = fiiDiiData.fiiNetInr;
-      diiNetInr = fiiDiiData.diiNetInr;
-    }
+    const us10YearYield = observations.us10YearYield!.value;
+    const dxy = observations.dxy!.value;
+    const brentCrude = observations.brentCrude!.value;
+    const usdInr = observations.usdInr!.value;
+    const india10y = observations.india10y!.value;
+    const india10yIsEstimate = false;
+    const indiaVix = observations.indiaVix!.value;
+    const fiiNetInr = observations.fiiNetInr!.value;
+    const diiNetInr = observations.diiNetInr!.value;
 
     let macroScore = 0;
     let eventRiskActive = false;
@@ -257,12 +281,15 @@ export async function fetchGlobalMacroData(): Promise<GlobalMacroState> {
       eventRiskActive,
       geopoliticalRisk,
       lastUpdated: new Date().toISOString(),
+      observations,
     };
 
+    try { await retainFactorReceipt(observations, new Date(now).toISOString()); }
+    catch { logger.warn("Macro observation receipt could not be retained"); }
     logger.info({ state: _state }, "Global Macro state updated");
-    return _state;
+    return getGlobalMacroState();
   } catch (error) {
     logger.error({ error }, "Failed to fetch global macro data");
-    return _state;
+    return getGlobalMacroState();
   }
 }

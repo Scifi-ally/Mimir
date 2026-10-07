@@ -64,7 +64,7 @@ describe("LAYA System-1 Native Decision Gatekeeper", () => {
     expect(decision.action).toBe("EXECUTE_IMMEDIATELY");
     expect(decision.confidence).toBeGreaterThanOrEqual(0.65);
     expect(decision.gate_reasons).toContain("STRONG_SYSTEM_ONE_CONVICTION");
-    expect(decision.position_size_multiplier).toBe(1.25);
+    expect(decision.position_size_multiplier).toBe(1.0);
     expect(decision.provider).toBe("laya");
     // This is a hand-written deterministic heuristic, NOT the ConvAI Innovations
     // LAYA model. It must never claim the real model id, or every downstream
@@ -74,9 +74,9 @@ describe("LAYA System-1 Native Decision Gatekeeper", () => {
     expect(decision.model_id).not.toBe("convaiinnovations/laya");
     expect(decision.source).toBe("native_ts_laya");
     // Noul primitives
-    expect(decision.p_execution_success).toBeGreaterThan(0.5);
-    expect(decision.p_stop_hunt_risk).toBeLessThan(0.5);
-    expect(decision.p_adverse_regime_shift).toBeLessThan(0.5);
+    expect(decision.p_execution_success).toBeNull();
+    expect(decision.p_stop_hunt_risk).toBeNull();
+    expect(decision.p_adverse_regime_shift).toBeNull();
   });
 
   it("should safely handle null, undefined, or NaN fields without crashing or NaNs", () => {
@@ -94,9 +94,9 @@ describe("LAYA System-1 Native Decision Gatekeeper", () => {
     expect(["APPROVE", "CAUTION", "REJECT"]).toContain(decision.verdict);
     expect(Number.isFinite(decision.opportunity_score)).toBe(true);
     expect(Number.isFinite(decision.confidence)).toBe(true);
-    expect(Number.isFinite(decision.p_execution_success)).toBe(true);
-    expect(Number.isFinite(decision.p_stop_hunt_risk)).toBe(true);
-    expect(Number.isFinite(decision.p_adverse_regime_shift)).toBe(true);
+    expect(decision.p_execution_success).toBeNull();
+    expect(decision.p_stop_hunt_risk).toBeNull();
+    expect(decision.p_adverse_regime_shift).toBeNull();
   });
 
   it("should REJECT setup when India VIX spikes above 25 with elevated stop hunt risk", () => {
@@ -110,8 +110,8 @@ describe("LAYA System-1 Native Decision Gatekeeper", () => {
     expect(decision.verdict).toBe("REJECT");
     expect(decision.action).toBe("CANCEL");
     expect(decision.gate_reasons).toContain("HIGH_VOLATILITY_VIX_SPIKE");
-    expect(decision.p_stop_hunt_risk).toBeGreaterThanOrEqual(0.75);
-    expect(decision.p_execution_success).toBeLessThanOrEqual(0.20);
+    expect(decision.p_stop_hunt_risk).toBeNull();
+    expect(decision.p_execution_success).toBeNull();
   });
 
   it("should REJECT setup when Risk-Reward ratio is below 1.2", () => {

@@ -16,6 +16,8 @@ import { computeATR, computeMACD, computeBollingerBands } from "./technical";
 import { getMarketState } from "../market_data/market_state";
 import { getLastRegimeOutput } from "./regime_detector";
 import { logger } from "../lib/logger";
+import { buildMeasuredFactors, type MeasuredFactorSnapshot } from "./measured_factors";
+import { getGlobalMacroState } from "./global_macro";
 export { RANKER_FEATURE_KEYS, toRankerFeatureArray, type RankerFeatureKey } from "./ranker_contract";
 
 // ── Feature vector interface ─────────────────────────────────────────────────
@@ -80,8 +82,8 @@ export interface FeatureVector {
   cprWidthPct: number;       // Central Pivot Range width as % of price (narrow → trend day)
 
   // Microstructure & F&O Flow
-  bidAskImbalance: number;   // -1.0 to 1.0 (sellers vs buyers)
-  optionsOiChangeRate: number; // % change in OI
+  bidAskImbalance: number | null;   // Tick-rule flow proxy; null when unmeasured.
+  optionsOiChangeRate: number | null; // % change in OI, null when unmeasured.
   fiiDiiNetFlowLag: number;  // lagged net flow figure
 
   // Set true by builders that cannot populate the full candle-history feature
@@ -91,6 +93,8 @@ export interface FeatureVector {
   // train/serve skew. toRankerFeatureArray throws on it so this can never slip
   // through silently. Absent/false means the vector is ranker-safe.
   rankerIncomplete?: boolean;
+  /** Provenance and missingness diagnostics; excluded from the existing trained feature array. */
+  measuredFactors?: MeasuredFactorSnapshot;
 }
 
 
@@ -307,10 +311,10 @@ export function computeFeatureVector(
   rsVsNifty: number,
   rsVsSector: number,
   riskReward: number,
-  bidAskImbalance: number = 0,
-  optionsOiChangeRate: number = 0,
+  bidAskImbalance: number | null = null,
+  optionsOiChangeRate: number | null = null,
   rankerIncomplete: boolean = false,
-  historicalFiiDiiFlowLag?: number,
+  historicalFiiDiiFlowLag?: number | null,
 ): FeatureVector {
   const closes = candles.map(c => c.close);
   const lastCandle = candles[candles.length - 1]!;
@@ -319,7 +323,10 @@ export function computeFeatureVector(
   const regimeOutput = getLastRegimeOutput();
   const marketState = getMarketState();
 
-  const fiiDiiNetFlowLag = historicalFiiDiiFlowLag ?? ((marketState.fiiNetInr ?? 0) + (marketState.diiNetInr ?? 0));
+  const fiiDiiNetFlowLag = historicalFiiDiiFlowLag === undefined
+    ? (marketState.fiiNetInr != null && marketState.diiNetInr != null
+      ? marketState.fiiNetInr + marketState.diiNetInr : NaN)
+    : historicalFiiDiiFlowLag ?? NaN;
 
   // Sector strength
   const sectorData = marketState.topSectors.find(s => s.name === sector);
@@ -445,7 +452,7 @@ export function computeFeatureVector(
     rankerIncomplete,
   };
 
+  features.measuredFactors = buildMeasuredFactors(symbol, candles, features, getGlobalMacroState().observations ?? {});
   logger.debug({ symbol, momentumScore, trendScore, volatilityScore, riskRewardScore }, "Feature vector computed");
   return features;
 }
-

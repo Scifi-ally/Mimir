@@ -63,7 +63,7 @@ async function startRedisSubscriber() {
           const { event, topic } = JSON.parse(message);
           
           // Intercept state changes to sync decoupled processes
-          if (event && event.type === "marketRegimeChanged") {
+          if (event?.event === "market_regime_changed" && event.data) {
             import("./market_data/market_state").then(({ updateMarketState }) => {
               updateMarketState({ 
                 regime: event.data.regime,

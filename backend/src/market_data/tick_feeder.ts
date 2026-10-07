@@ -1,6 +1,6 @@
 import { logger } from "../lib/logger";
 import { stateStore } from "../lib/redis_state";
-import yahooFinance from "yahoo-finance2";
+import { yahooFinance } from "../lib/yahoo-client";
 import { broadcast } from "../ws/websocket_server";
 import { createServerEvent } from "../ws/events";
 import { intelligenceBus } from "../intelligence/event_bus";
@@ -137,12 +137,9 @@ const subscriptions = new Map<string, StockSubscription>();
 /**
  * optionsOiChangeRate has no producer anywhere in this repository: the only
  * option-chain source is NIFTY-wide and cached, so there is no per-symbol OI
- * series to differentiate. It is written as an explicit 0 with this note
- * rather than being quietly omitted, so the field's absence of signal is
- * visible at the definition site instead of surfacing as a mystery constant
- * in a feature vector.
+ * series to differentiate. Null records that the measurement is unavailable.
  */
-const OPTIONS_OI_CHANGE_RATE_UNAVAILABLE = 0;
+const OPTIONS_OI_CHANGE_RATE_UNAVAILABLE = null;
 
 async function publishRealtimeFeatures(
   symbol: string,
@@ -510,4 +507,3 @@ export function stopTickFeeder(): void {
   subscriptions.clear();
   redisBatchQueue = {};
 }
-

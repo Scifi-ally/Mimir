@@ -21,7 +21,7 @@ export const liveOrdersTable = pgTable(
     brokerOrderId: varchar("broker_order_id", { length: 64 }),
     symbol: varchar("symbol", { length: 32 }).notNull(),
     direction: varchar("direction", { length: 4 }).notNull(), // BUY | SELL
-    orderType: varchar("order_type", { length: 24 }).notNull(), // ENTRY | TARGET_EXIT | STOP_EXIT | MANUAL_EXIT
+    orderType: varchar("order_type", { length: 24 }).notNull(), // ENTRY | TARGET_EXIT | STOP_EXIT | GTT_STOP | MANUAL_EXIT
     quantity: integer("quantity").notNull(),
     price: decimal("price", { precision: 10, scale: 2 }),
     status: varchar("status", { length: 20 }).notNull().default("PENDING"), // PENDING | PLACED | REJECTED | FAILED | CANCELLED

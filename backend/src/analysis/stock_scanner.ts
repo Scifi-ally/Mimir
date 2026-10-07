@@ -1,5 +1,7 @@
 import { logger } from "../lib/logger";
+import { relativeStrength60 } from "./relative_strength";
 import { fetchRecentNews } from "./news_feed";
+import { isSetupDemoted, isSetupDemotedForRegime } from "./calibration_engine";
 
 import { getAccessToken } from "../upstox/auth";
 import { getConfig } from "../config";
@@ -106,7 +108,8 @@ import {
   detectEma9Rejection,
   detectMacdCrossover,
   detectBollingerSqueezeBreakout,
-  detectLiquiditySweep
+  detectLiquiditySweep,
+  detectMatrixEnsembleSetup,
 } from "./technical";
 import { detectMeanReversionLong, detectMeanReversionShort } from "./mean_reversion_scanner";
 import { detectRangeLong, detectRangeShort } from "./range_scanner";
@@ -114,8 +117,8 @@ import { updateMarketState } from "../market_data/market_state";
 import { analyzeMultiTimeframeFromData } from "./multi_timeframe";
 import { createUpstoxClient } from "../lib/upstox-client";
 import { getISTDateStr, getLastCompletedTradingDayStr, shiftISTDateStr } from "../lib/ist-time";
-import { isSetupDemoted, isSetupDemotedForRegime } from "./calibration_engine";
 import { getLastRegimeOutput } from "./regime_detector";
+import { getStockChampion, getStockStrategyAffinity, type StockChampionProfile } from "./stock_strategy_matrix";
 
 export type StockSector =
   | "IT"
@@ -1180,6 +1183,7 @@ export interface ScanResult {
   higherTfReliability?: "full" | "fallback";
   candles?: OHLCV[];
   snapshot?: TechnicalSnapshot;
+  stockChampion?: StockChampionProfile | null;
 }
 
 const NIFTY_KEY = "NSE_INDEX|Nifty 50";
@@ -1386,22 +1390,7 @@ export async function fetchNiftyDailyCandles(
 // Gate: skip BUY if RS < 0.80, skip SELL if RS > 1.20
 
 function computeRS60(stockCandles: OHLCV[], niftyCandles: OHLCV[]): number {
-  const stockLen = stockCandles.length;
-  const niftyLen = niftyCandles.length;
-  if (stockLen < 62 || niftyLen < 62) return 1.0;
-
-  const stockNow = stockCandles[stockLen - 1]!.close;
-  const stock60Ago = stockCandles[stockLen - 61]!.close;
-  const niftyNow = niftyCandles[niftyLen - 1]!.close;
-  const nifty60Ago = niftyCandles[niftyLen - 61]!.close;
-
-  if (stock60Ago === 0 || nifty60Ago === 0) return 1.0;
-
-  const stockRet = stockNow / stock60Ago;
-  const niftyRet = niftyNow / nifty60Ago;
-  if (niftyRet === 0) return 1.0;
-
-  return Math.round((stockRet / niftyRet) * 1000) / 1000;
+  return relativeStrength60(stockCandles, niftyCandles) ?? NaN;
 }
 
 // ── 1-hour trend confirmation ─────────────────────────────────────────────────
@@ -1541,6 +1530,7 @@ function scoreSetupQuality(
     hourlyConfirm: boolean;
     volumeIncrease: boolean;
   },
+  symbol?: string,
 ): { accepted: boolean; adjustment: number; reason?: string } {
   const isIntradayFallback = candidate.setupType.startsWith("INTRADAY_MTF");
 
@@ -1657,6 +1647,19 @@ function scoreSetupQuality(
   // Reward delivery volume conviction (high delivery % = institutional interest)
   if (snap.volumeRatio >= 1.5 && snap.avgDailyVolume > 1_000_000) {
     adjustment += 0.3;
+  }
+
+  // Institutional Multi-Factor Matrix Ensemble priority boost
+  if (candidate.setupType === "MATRIX_ENSEMBLE") {
+    adjustment += 0.5;
+  }
+
+  // Stock-Specific Empirical Strategy Champion weightage
+  if (symbol) {
+    const affinity = getStockStrategyAffinity(symbol, candidate.setupType);
+    if (affinity.qualityScoreAdjustment !== 0) {
+      adjustment += affinity.qualityScoreAdjustment;
+    }
   }
 
   return { accepted: true, adjustment };
@@ -1818,7 +1821,7 @@ export async function scanStock(
       tfWeeklyEffective.length >= 30;
 
     // Compute RS vs Nifty
-    const rs60 = niftyCandles ? computeRS60(dailyCandles, niftyCandles) : 1.0;
+    const rs60 = niftyCandles ? computeRS60(dailyCandles, niftyCandles) : NaN;
 
     // Walk-forward validation: Reject natively disabled setups OR setups demoted by recent rolling expectancy
     const currentRegime = getLastRegimeOutput()?.regime ?? null;
@@ -1862,6 +1865,7 @@ export async function scanStock(
           c,
           rs60,
           mtfSignal,
+          stock.symbol,
         );
         if (!quality.accepted) {
           logger.debug(
@@ -1922,6 +1926,7 @@ export async function scanStock(
       MEAN_REVERSION_SHORT: "MEAN_REVERSION",
       RANGE_LONG: "RANGE",
       RANGE_SHORT: "RANGE",
+      MATRIX_ENSEMBLE: "MOMENTUM",
     };
 
     const mtfSignal = multiTf.signal;
@@ -1956,6 +1961,7 @@ export async function scanStock(
       higherTfReliability: hasStrongHigherTfContext ? "full" : "fallback",
       candles: dailyCandles,
       snapshot: snap,
+      stockChampion: getStockChampion(stock.symbol),
     };
   } catch (err) {
     logger.warn({ err, symbol: stock.symbol }, "Error scanning stock");
@@ -2046,6 +2052,7 @@ export async function diagnoseScanNullReason(
       detectMeanReversionShort(dailyCandles, snap),
       detectRangeLong(dailyCandles, snap),
       detectRangeShort(dailyCandles, snap),
+      detectMatrixEnsembleSetup(dailyCandles, snap),
     ].filter(
       (c): c is NonNullable<typeof c> =>
         c !== null &&
@@ -2067,7 +2074,7 @@ export async function diagnoseScanNullReason(
       const sellThreshold = isIntradayFallback ? 1.25 : 1.2;
       if (c.direction === "BUY" && rs60 < buyThreshold) return false;
       if (c.direction === "SELL" && rs60 > sellThreshold) return false;
-      const quality = scoreSetupQuality(dailyCandles, snap, c, rs60, multiTf.signal);
+      const quality = scoreSetupQuality(dailyCandles, snap, c, rs60, multiTf.signal, stock.symbol);
       return quality.accepted;
     });
 

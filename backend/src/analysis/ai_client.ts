@@ -1,12 +1,12 @@
 import axios from "axios";
 import { logger } from "../lib/logger";
-import { getMarketState } from "../market_data/market_state";
 import { fetchOptionChainData } from "../market_data/option_chain";
-import { getGlobalMacroState } from "./global_macro";
 import { getFiiDiiDivergence } from "./divergence_engine";
 import { computeOFI } from "./order_flow";
 import { fetchFIIDIIData } from "../market_data/fii_dii";
-import { buildSnapshot, computeMACD, type OHLCV } from "./technical";
+import { getMarketFeedSnapshot } from "../market_data/market_feed";
+import type { OHLCV } from "./technical";
+import { inferenceSentiment } from "./inference_sentiment";
 import type { LayaDecision, LayaVerdict, LayaAction, LayaDecisionRequest } from "./laya_contract";
 import type {
   System1Decision,
@@ -49,12 +49,13 @@ export interface BatchResult {
     median_forecast: number[];
     quantile_forecasts: Record<string, number[]>;
     trend: string;
-    forecast_return_pct: number;
+    forecast_return_pct: number | null;
     source: string;
   };
   /** 0-100 news sentiment (Python's -1..1 is normalized at the parse boundary). */
-  sentiment_score: number;
-  world_sentiment_score?: number;
+  sentiment_score: number | null;
+  world_sentiment_score?: number | null;
+  sentiment_evidence?: Record<string, unknown>;
   composite_score: number;
   components?: Record<string, number>;
   /** Calibrated P(target1 before stop) from the learned ranker; null/undefined
@@ -279,28 +280,26 @@ export async function batchInference(
             res.technicalRanking = (res as any).kronos;
           }
           // `isFallback` means the AI contribution is unusable and the signal
-          // generator should revert to pure-technical confidence. The pattern
-          // engine (source "engine") and sentiment always run when the Python
-          // service responds, so a *synthetic Chronos* forecast alone is NOT a
-          // fallback — it is a real, if simpler, momentum/mean-reversion estimate
-          // carrying only 10% weight. Treat it as fallback only when the pattern
-          // engine itself failed (its bullish_probability is the primary driver).
-          // Chronos degradation is still visible to consumers via `chronos.source`.
+          // generator should revert to pure-technical confidence. Chronos can
+          // explicitly abstain when its model or required inputs are unavailable;
+          // that advisory forecast must not be presented as verified evidence.
           // Treat as fallback when the pattern engine errored OR when Python
           // explicitly flagged the candidate as unscored (per-candidate exception
           // → neutral 50 placeholder). Either way the AI contribution is unusable
           // and the signal generator must revert to pure-technical confidence.
-          const isFallback = res.technicalRanking?.source === "error" || (res as BatchResult).scored === false;
+          if (res.technicalRanking?.source === "error" || res.scored === false) continue;
+          const isFallback = false;
           // Python emits sentiment_score on a -1.0..1.0 scale; normalize to the
-          // 0-100 scale consumers expect (matching the native fallback below),
-          // with a missing score mapping to neutral 50.
-          const sentiment_score = Math.max(0, Math.min(100, ((res.sentiment_score ?? 0) + 1) * 50));
+          // 0-100 scale consumers expect. Missing source evidence stays unknown.
+          const measuredSentiment = inferenceSentiment(res.sentiment_score, res.sentiment_evidence?.symbol);
+          const sentiment_score = measuredSentiment == null ? null : (measuredSentiment + 1) * 50;
           // Stamp the batch-level ranker metadata onto each result so the signal
           // generator can apply the learned-probability gate per candidate without
           // threading a separate return value.
           aiResults.set(res.symbol, {
             ...res,
             sentiment_score,
+            world_sentiment_score: inferenceSentiment(res.world_sentiment_score, res.sentiment_evidence?.world),
             isFallback,
             ranker_loaded: response.data.ranker_loaded ?? false,
             ranker_threshold: response.data.ranker_threshold ?? null,
@@ -318,261 +317,15 @@ export async function batchInference(
           reason: isTimeout ? "inference_timeout" : "unreachable_or_error",
           candidates: candidates.length,
         },
-        "Python AI batch inference failed; falling back to Native Math Model (results flagged isFallback=true)",
+        "Python AI batch inference unavailable; no synthetic model results published",
       );
     }
   } else {
-    logger.debug("AI Circuit Breaker open, skipping FastAPI call and using Native Math Model directly.");
+    logger.debug("AI Circuit Breaker open; model results unavailable.");
   }
 
-  // FALLBACK: Native Math Model (Advanced Stochastic Engine)
-  const [fiiDii, optionChain] = await Promise.all([
-    fetchFIIDIIData(),
-    fetchOptionChainData(),
-  ]);
-  const macroState = getGlobalMacroState();
-  const marketState = getMarketState();
-    const defaultEngine = "laya" as const;
-
-  for (const c of candidates) {
-    if (c.ohlcv.length < 55) continue; // We need at least 55 for a good technical snapshot
-
-    // Per-candidate isolation. This loop sits OUTSIDE the microservice try/catch
-    // above, so a single malformed row (`row[0]` on a null entry throws a
-    // TypeError) or a non-numeric field (Number(undefined) -> NaN) previously
-    // rejected the whole batch and discarded every other candidate's results.
-    let candles: OHLCV[];
-    try {
-      candles = c.ohlcv.map((row, index): OHLCV => ({
-        timestamp: String(index),
-        open: Number(row?.[0]),
-        high: Number(row?.[1]),
-        low: Number(row?.[2]),
-        close: Number(row?.[3]),
-        volume: Number(row?.[4] ?? 0),
-      }));
-    } catch (err) {
-      logger.warn({ err: (err as Error).message, symbol: c.symbol }, "Skipping candidate with malformed ohlcv in native fallback");
-      continue;
-    }
-
-    // Reject non-finite series outright: a NaN close propagates into lastClose,
-    // drift and forecast_return_pct, and every comparison against NaN is false,
-    // so the candidate would silently score off garbage.
-    if (candles.some((x) => !Number.isFinite(x.open) || !Number.isFinite(x.high) || !Number.isFinite(x.low) || !Number.isFinite(x.close))) {
-      logger.warn({ symbol: c.symbol }, "Skipping candidate with non-finite ohlcv in native fallback");
-      continue;
-    }
-
-    const snap = buildSnapshot(candles);
-    if (!snap) continue;
-
-    // Remaining per-candidate maths is wrapped so a throw in indicator maths or
-    // snapshot construction cannot reject the whole batchInference() promise.
-    try {
-    const returns: number[] = [];
-    for (let i = 1; i < candles.length; i++) {
-      const prev = candles[i - 1].close;
-      const curr = candles[i].close;
-      if (prev > 0) returns.push((curr - prev) / prev);
-    }
-    if (returns.length === 0) continue;
-
-    // 1. EWMA Volatility calculation (Lambda = 0.94 is standard for daily returns)
-    let ewmaVar = returns[0] * returns[0];
-    const lambda = 0.94;
-    for (let i = 1; i < returns.length; i++) {
-      ewmaVar = lambda * ewmaVar + (1 - lambda) * (returns[i] * returns[i]);
-    }
-    const stdDev = Math.sqrt(ewmaVar);
-
-    const lastClose = candles[candles.length - 1].close;
-    const HORIZON = 90; // 90 days forecast
-    const detected_patterns = [];
-
-    // 2. Indicator-Driven Drift
-    // Base drift is slightly positive
-    let drift = 0.0001; 
-
-    // Adjust drift based on Trend and ADX (Momentum strength)
-    if (snap.trend === "UP") {
-      const adxMultiplier = Math.min(snap.adx14 / 25, 2.0); // ADX > 25 adds strong drift
-      drift += 0.0005 * adxMultiplier;
-      detected_patterns.push("Trend Alignment: Bullish");
-    } else if (snap.trend === "DOWN") {
-      const adxMultiplier = Math.min(snap.adx14 / 25, 2.0);
-      drift -= 0.0005 * adxMultiplier;
-      detected_patterns.push("Trend Alignment: Bearish");
-    }
-
-    // Adjust drift based on distance from EMA20 (Rubber band effect)
-    if (snap.distFromEma20Pct > 10) {
-      drift -= 0.001; // Pulled too far up
-    } else if (snap.distFromEma20Pct < -10) {
-      drift += 0.001; // Pulled too far down
-    }
-
-    // Smart Money VWAP & Volume Profile Adjustment
-    if (snap.vwap && snap.vpvrPOC) {
-      const distFromVwapPct = ((lastClose - snap.vwap) / snap.vwap) * 100;
-      const distFromPocPct = ((lastClose - snap.vpvrPOC) / snap.vpvrPOC) * 100;
-      
-      // If we are slightly above VWAP and POC, institutions are defending this level.
-      if (distFromVwapPct > 0 && distFromPocPct > 0 && distFromPocPct < 5) {
-        drift += 0.0008; 
-        detected_patterns.push("Institutional Support: Above POC & VWAP");
-      } 
-      // If we are far below POC, we are in a low liquidity void, expect mean reversion towards POC
-      else if (distFromPocPct < -3) {
-        drift += 0.0005;
-        detected_patterns.push("Liquidity Void: Magnet to POC");
-      }
-      // If price is crashing through VWAP and POC downwards
-      else if (distFromVwapPct < 0 && distFromPocPct < 0) {
-        drift -= 0.0008;
-        detected_patterns.push("Institutional Distribution: Below POC & VWAP");
-      }
-    }
-
-    // 3. Mean Reversion (RSI Penalty)
-    if (snap.rsi14 > 75) {
-      drift -= 0.0015; // Heavy penalty for extreme overbought
-      detected_patterns.push("Overbought: Mean Reversion Expected");
-    } else if (snap.rsi14 < 30) {
-      drift += 0.0015; // Heavy boost for extreme oversold
-      detected_patterns.push("Oversold: Bounce Expected");
-    }
-
-    // 3.5 MACD Histogram Slope Confluence
-    const closes = candles.map((c) => c.close);
-    const macdResults = computeMACD(closes);
-    if (macdResults.length >= 2) {
-      const lastMacd = macdResults[macdResults.length - 1];
-      const prevMacd = macdResults[macdResults.length - 2];
-      if (lastMacd && prevMacd && lastMacd.histogram > prevMacd.histogram && lastMacd.histogram > 0) {
-        drift += 0.0006;
-        detected_patterns.push("MACD Momentum Confluence: Positive Slope");
-      } else if (lastMacd && prevMacd && lastMacd.histogram < prevMacd.histogram && lastMacd.histogram < 0) {
-        drift -= 0.0006;
-        detected_patterns.push("MACD Momentum Confluence: Negative Slope");
-      }
-    }
-
-    // Prevent impossible drifts
-    drift = Math.max(-0.005, Math.min(0.005, drift));
-
-    const median_forecast: number[] = [];
-    const q10: number[] = [];
-    const q25: number[] = [];
-    const q75: number[] = [];
-    const q90: number[] = [];
-
-    for (let t = 1; t <= HORIZON; t++) {
-      const driftTerm = (drift - 0.5 * ewmaVar) * t;
-      const volTerm = stdDev * Math.sqrt(t);
-
-      median_forecast.push(lastClose * Math.exp(driftTerm));
-      q10.push(lastClose * Math.exp(driftTerm - 1.28 * volTerm));
-      q25.push(lastClose * Math.exp(driftTerm - 0.67 * volTerm));
-      q75.push(lastClose * Math.exp(driftTerm + 0.67 * volTerm));
-      q90.push(lastClose * Math.exp(driftTerm + 1.28 * volTerm));
-    }
-
-    const forecast_return_pct = ((median_forecast[HORIZON - 1] - lastClose) / lastClose) * 100;
-    const trend = forecast_return_pct > 2 ? "bullish" : forecast_return_pct < -2 ? "bearish" : "neutral";
-
-    if (stdDev > 0.025) detected_patterns.push("High Recent Volatility (EWMA)");
-    if (snap.volumeAnomaly) detected_patterns.push("Volume Anomaly Detected");
-
-    // Baseline probability using Logistic function on the Sharpe-like ratio
-    const x = drift / (stdDev * Math.sqrt(1) + 1e-9);
-    let prob = 1 / (1 + Math.exp(-x * 2.0)); 
-
-    // 4. Volume-Weighted Confidence
-    let confidence = Math.max(0.1, 1 - stdDev * 12);
-    if (snap.volumeRatio > 1.5) {
-      confidence = Math.min(0.99, confidence * 1.2); // 20% boost to confidence on high volume
-    } else if (snap.volumeRatio < 0.7) {
-      confidence *= 0.8; // Penalty for low volume
-    }
-
-    // Phase 5: Macro-Coupled AI Penalty
-    if (macroState.eventRiskActive) {
-      prob *= 0.90; // 10% penalty
-      confidence *= 0.85;
-      detected_patterns.push("Macro Risk Penalty Applied");
-    }
-
-    // Phase 6: Indian Market Institutional & Sentiment Edge
-    if (fiiDii) {
-      if (fiiDii.fiiNetInr < -2000) {
-        prob *= 0.85; 
-        detected_patterns.push("Heavy FII Selling Penalty");
-      } else if (fiiDii.fiiNetInr > 2000) {
-        prob *= 1.15; 
-        detected_patterns.push("FII Buying Boost");
-      }
-    }
-
-    if (optionChain) {
-      if (optionChain.pcr < 0.7) {
-        prob *= 0.90; 
-        detected_patterns.push("Bearish PCR Penalty");
-      } else if (optionChain.pcr > 1.2) {
-        prob *= 1.10; 
-        detected_patterns.push("Bullish PCR Boost");
-      }
-    }
-
-    prob = Math.max(0, Math.min(0.99, prob)); 
-    const composite_score = Math.max(0, Math.min(100, Math.round(prob * 100)));
-
-    const sys1Req: System1DecisionRequest = {
-      symbol: c.symbol,
-      direction: c.features?.direction ?? "BUY",
-      setup_type: c.features?.setup_type ?? c.features?.setupType ?? "UNKNOWN",
-      technical_score: composite_score,
-      chronos_trend: trend,
-      risk_reward_ratio: c.features?.risk_reward_ratio ?? c.features?.riskReward ?? c.features?.riskRewardScore ?? 1.5,
-      india_vix: c.features?.india_vix ?? c.features?.vix ?? marketState.indiaVix ?? 15.0,
-      order_flow_imbalance_ratio: c.features?.order_flow_imbalance_ratio ?? c.features?.ofi_ratio ?? c.features?.bidAskImbalance ?? computeOFI(c.symbol).ofiRatio,
-      fii_dii_net: c.features?.fii_dii_net ?? c.features?.fiiNet ?? c.features?.fiiDiiNetFlowLag ?? fiiDii?.fiiNetInr ?? 0.0,
-      market_regime: c.features?.market_regime ?? c.features?.regime ?? "UNKNOWN",
-      win_probability: null,
-    };
-    const nativeDecision = computeNativeSystem1Decision(sys1Req, defaultEngine);
-    const nativeLaya: LayaDecision = defaultEngine === "laya"
-      ? nativeDecision
-      : computeNativeLayaDecision(sys1Req);
-
-    aiResults.set(c.symbol, {
-      symbol: c.symbol,
-      isFallback: true,
-      technicalRanking: {
-        bullish_probability: prob,
-        confidence: confidence,
-        detected_patterns,
-        source: "Advanced Stochastic Engine",
-      },
-      chronos: {
-        median_forecast,
-        quantile_forecasts: { q10, q25, q75, q90 },
-        trend,
-        forecast_return_pct,
-        source: "Indicator-Driven TS",
-      },
-      // The native fallback has no news data — report neutral 50, never a
-      // price-derived number masquerading as news sentiment.
-      sentiment_score: 50,
-      composite_score,
-      laya_decision: nativeLaya,
-      system1_decision: nativeDecision,
-    });
-    } catch (err) {
-      logger.warn({ err: (err as Error).message, symbol: c.symbol }, "Native fallback failed for candidate; continuing batch");
-    }
-  }
-
+  // An unavailable model cannot supply a forecast, news score, or probability.
+  // Real technical snapshots remain available through the scanner.
   return aiResults;
 }
 
@@ -645,14 +398,31 @@ export async function getRLPrediction(symbol: string, candles: OHLCV[]): Promise
   try {
     const ohlcv = candles.map((c) => [0, c.open, c.high, c.low, c.close, c.volume]);
     
-    // Fetch Macro Data
-    const marketState = getMarketState();
-    const vix = marketState.indiaVix ?? 15.0;
-    const fiiNet = marketState.fiiNetInr ?? 0.0;
-    
-    // Option chain is heavily cached internally
-    const optionChain = await fetchOptionChainData();
-    const pcr = optionChain?.pcr ?? 1.0;
+    // Missing macro sources must not be represented by plausible neutral
+    // constants, which the model would consume as genuine observations.
+    const feed = getMarketFeedSnapshot();
+    const feedAt = feed.fetchedAt ? Date.parse(feed.fetchedAt) : NaN;
+    const feedAgeMs = Date.now() - feedAt;
+    const vix = feed.vixLtp;
+    if (
+      vix == null || !Number.isFinite(vix) || vix <= 0 ||
+      !Number.isFinite(feedAgeMs) || feedAgeMs < -5_000 || feedAgeMs > 10 * 60_000
+    ) return null;
+
+    const [fiiDii, optionChain] = await Promise.all([
+      fetchFIIDIIData(),
+      fetchOptionChainData(),
+    ]);
+    if (
+      !fiiDii || !Number.isFinite(fiiDii.fiiNetInr) || !optionChain ||
+      !Number.isFinite(optionChain.pcr) || optionChain.pcr <= 0 ||
+      !Number.isFinite(optionChain.fetchedAt.getTime())
+    ) return null;
+    const optionAgeMs = Date.now() - optionChain.fetchedAt.getTime();
+    if (optionAgeMs < -5_000 || optionAgeMs > 15 * 60_000) return null;
+
+    const fiiNet = fiiDii.fiiNetInr;
+    const pcr = optionChain.pcr;
 
     const response = await axios.post(
       `${getAiServiceUrl()}/api/v1/predict_rl`,
@@ -812,7 +582,7 @@ export function computeNativeSystem1Decision(
     gateReasons.push("SEVERE_ORDER_FLOW_CONTRADICTION");
   }
 
-  // RLCD-Calibrated Noul Bernoulli Probabilities
+  // Private sigmoid rule diagnostics; no execution calibration artifact exists.
   const ofiConfluence = ((direction === "BUY" && ofi > 0.1) || (direction === "SELL" && ofi < -0.1))
     ? 0.5
     : (((direction === "BUY" && ofi < -0.1) || (direction === "SELL" && ofi > 0.1)) ? -0.5 : 0.0);
@@ -848,9 +618,11 @@ export function computeNativeSystem1Decision(
       opportunity_score: 15.0,
       gate_reasons: gateReasons,
       regime_alignment: Math.round(regimeAlignment * 100) / 100,
-      p_execution_success: Math.min(0.20, Math.round(pExec * 0.3 * 10000) / 10000),
-      p_stop_hunt_risk: Math.max(0.75, pHunt),
-      p_adverse_regime_shift: Math.max(0.70, pShift),
+      p_execution_success: null,
+      p_stop_hunt_risk: null,
+      p_adverse_regime_shift: null,
+      probability_validation: "not_established",
+      confidence_kind: "decision_score_not_win_probability",
       position_size_multiplier: 0.0,
       provider,
       model_id: modelId,
@@ -887,13 +659,12 @@ export function computeNativeSystem1Decision(
     }
     let confidence = Math.min(0.95, 0.65 + (oppScore - 70.0) * 0.01);
     const ofiAligned = (direction === "BUY" && ofi > 0.1) || (direction === "SELL" && ofi < -0.1);
-    // Size from calibrated probabilities, mirroring the Python tiers: scale up
-    // only on clean execution odds, and scale *down* when stop-hunt or
-    // regime-collapse risk is elevated rather than ignoring it.
+    // Heuristic diagnostics can reduce risk. They cannot establish execution
+    // odds or authorize increasing the upstream capital budget.
     let sizeMultiplier: number;
     if (confidence >= 0.80 && pExec >= 0.70 && pHunt <= 0.20 && pShift <= 0.20 && ofiAligned) {
-      sizeMultiplier = 1.25;
-      gateReasons.push("POSITION_SIZE_SCALED_UP_1.25X");
+      sizeMultiplier = 1.0;
+      gateReasons.push("UNVALIDATED_CONFIDENCE_CANNOT_INCREASE_SIZE");
     } else if (pHunt > 0.35 || pShift > 0.30 || pExec < 0.55) {
       sizeMultiplier = 0.85;
       gateReasons.push("POSITION_SIZE_SCALED_DOWN_0.85X");
@@ -910,9 +681,11 @@ export function computeNativeSystem1Decision(
       opportunity_score: oppScore,
       gate_reasons: gateReasons,
       regime_alignment: Math.round(regimeAlignment * 100) / 100,
-      p_execution_success: pExec,
-      p_stop_hunt_risk: pHunt,
-      p_adverse_regime_shift: pShift,
+      p_execution_success: null,
+      p_stop_hunt_risk: null,
+      p_adverse_regime_shift: null,
+      probability_validation: "not_established",
+      confidence_kind: "decision_score_not_win_probability",
       position_size_multiplier: sizeMultiplier,
       provider,
       model_id: modelId,
@@ -928,9 +701,11 @@ export function computeNativeSystem1Decision(
       opportunity_score: oppScore,
       gate_reasons: gateReasons,
       regime_alignment: Math.round(regimeAlignment * 100) / 100,
-      p_execution_success: pExec,
-      p_stop_hunt_risk: pHunt,
-      p_adverse_regime_shift: pShift,
+      p_execution_success: null,
+      p_stop_hunt_risk: null,
+      p_adverse_regime_shift: null,
+      probability_validation: "not_established",
+      confidence_kind: "decision_score_not_win_probability",
       position_size_multiplier: 0.65,
       provider,
       model_id: modelId,
@@ -946,9 +721,11 @@ export function computeNativeSystem1Decision(
       opportunity_score: oppScore,
       gate_reasons: gateReasons,
       regime_alignment: Math.round(regimeAlignment * 100) / 100,
-      p_execution_success: pExec,
-      p_stop_hunt_risk: pHunt,
-      p_adverse_regime_shift: pShift,
+      p_execution_success: null,
+      p_stop_hunt_risk: null,
+      p_adverse_regime_shift: null,
+      probability_validation: "not_established",
+      confidence_kind: "decision_score_not_win_probability",
       position_size_multiplier: 0.0,
       provider,
       model_id: modelId,

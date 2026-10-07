@@ -2,11 +2,12 @@
  * Corporate Actions Blacklist
  * ─────────────────────────────────────────────────────────────────────────────
  * Fetches the NSE event calendar to identify stocks with upcoming earnings
- * results, board meetings, or dividend ex-dates within the next 3 days.
+ * results, board meetings, or dividend ex-dates through three forward weekdays.
  * Suggestions are skipped for blacklisted symbols to avoid binary event risk.
  *
  * Data source: NSE event calendar API (public, requires browser-like headers).
- * Cache TTL: 6 hours. Fails gracefully — returns empty set on error.
+ * Cache TTL: 6 hours. Failed/expired coverage is explicitly unavailable.
+ * Weekday coverage does not account for exchange holidays.
  */
 
 import axios from "axios";
@@ -36,8 +37,27 @@ let cachedBlacklist: Set<string> = new Set();
 let cacheTime = 0;
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 let fetchInFlight: Promise<Set<string>> | null = null;
+let cacheWindowKey = "";
 let lastFailureTime = 0;
 const FAILURE_COOLDOWN_MS = 60 * 1000;
+
+function getWindow(): { from: string; to: string; key: string } {
+  const from = getISTDateStr();
+  let to = from;
+  let weekdays = 0;
+  while (weekdays < 3) {
+    to = shiftISTDateStr(to, 1);
+    const day = new Date(`${to}T00:00:00Z`).getUTCDay();
+    if (day !== 0 && day !== 6) weekdays++;
+  }
+  return { from, to, key: `${from}:${to}` };
+}
+
+export function getCorporateActionBlacklistStatus(): { available: boolean; from: string | null; to: string | null } {
+  const window = getWindow();
+  const available = cacheWindowKey === window.key && Date.now() - cacheTime < CACHE_TTL_MS;
+  return { available, from: available ? window.from : null, to: available ? window.to : null };
+}
 
 async function getNSECookies(): Promise<string> {
   try {
@@ -57,10 +77,13 @@ async function getNSECookies(): Promise<string> {
 
 /**
  * Returns a Set of NSE symbols that have a corporate event (earnings, board
- * meeting, ex-dividend) within the next 3 trading days. Empty set on failure.
+ * meeting, ex-dividend) through the third forward weekday. NSE exchange
+ * holidays are not known here, so the date range is weekday coverage rather
+ * than a verified three-session trading calendar.
  */
 export async function fetchCorporateActionBlacklist(): Promise<Set<string>> {
-  if (Date.now() - cacheTime < CACHE_TTL_MS) return cachedBlacklist;
+  const window = getWindow();
+  if (cacheWindowKey === window.key && Date.now() - cacheTime < CACHE_TTL_MS) return cachedBlacklist;
   if (fetchInFlight) return fetchInFlight;
   if (Date.now() - lastFailureTime < FAILURE_COOLDOWN_MS) return cachedBlacklist;
 
@@ -70,8 +93,7 @@ export async function fetchCorporateActionBlacklist(): Promise<Set<string>> {
 
       // NSE dates must be IST calendar days — toISOString (UTC) is a day behind
       // between 00:00 and 05:29 IST.
-      const from = getISTDateStr();
-      const to = shiftISTDateStr(from, 3);
+      const { from, to } = window;
 
       const url = `${NSE_BASE}/api/event-calendar?index=equities&from=${from}&to=${to}`;
 
@@ -103,12 +125,13 @@ export async function fetchCorporateActionBlacklist(): Promise<Set<string>> {
 
       cachedBlacklist = blacklist;
       cacheTime = Date.now();
+      cacheWindowKey = window.key;
       lastFailureTime = 0;
       logger.info({ count: blacklist.size }, "Corporate action blacklist refreshed");
       return blacklist;
     } catch (err) {
       lastFailureTime = Date.now();
-      logger.warn({ err }, "Corporate actions fetch failed — using empty blacklist");
+      logger.warn({ err }, "Corporate actions fetch failed — blacklist availability is unknown");
       return cachedBlacklist;
     } finally {
       fetchInFlight = null;

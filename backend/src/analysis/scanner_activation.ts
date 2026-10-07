@@ -203,6 +203,7 @@ export function setupTypeToScannerType(setupType: string): ScannerType | null {
     "RANGE_LONG": "RANGE_TRADING",
     "RANGE_SHORT": "RANGE_TRADING",
     "LIQUIDITY_SWEEP": "LIQUIDITY_SWEEP",
+    "MATRIX_ENSEMBLE": "PULLBACK",
   };
   return map[setupType] ?? null;
 }

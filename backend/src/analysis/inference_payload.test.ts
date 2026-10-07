@@ -33,6 +33,15 @@ function featureVector(overrides: Partial<FeatureVector> = {}): FeatureVector {
 }
 
 describe("inference payload boundary", () => {
+  it("preserves missing market measurements instead of inventing neutral values", () => {
+    const payload = toBatchInferenceCandidate({ symbol: "RELIANCE", candles: [],
+      features: featureVector({ bidAskImbalance: null, optionsOiChangeRate: null, fiiDiiNetFlowLag: NaN }) });
+    expect(payload.features.vix).toBeNull();
+    expect(payload.features.india_vix).toBeNull();
+    expect(payload.features.ofi_ratio).toBeNull();
+    expect(payload.features.optionsOiChangeRate).toBeNull();
+    expect(payload.features.fii_dii_net).toBeNull();
+  });
   it("preserves OHLCV column order and emits ranker features", () => {
     const payload = toBatchInferenceCandidate({
       symbol: "RELIANCE",

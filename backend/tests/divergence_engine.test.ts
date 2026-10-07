@@ -1,11 +1,11 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { computeFiiDiiDivergence } from "../src/analysis/divergence_engine";
-import yahooFinance from "yahoo-finance2";
-import { db } from "../../db/src";
+import { yahooFinance } from "../src/lib/yahoo-client";
+import { db } from "../db/src";
 
-vi.mock("yahoo-finance2", () => {
+vi.mock("../src/lib/yahoo-client", () => {
   return {
-    default: {
+    yahooFinance: {
       historical: vi.fn()
     }
   };
@@ -32,8 +32,11 @@ const getLimitMock = () => {
 
 describe("Divergence Engine", () => {
   beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-04T12:00:00Z"));
     vi.clearAllMocks();
   });
+  afterEach(() => vi.useRealTimers());
 
   it("should flag bullish divergence when Nifty falls but FII/DII buys heavily", async () => {
     // 5-day flow: 2500 Cr (Bullish)
@@ -44,17 +47,18 @@ describe("Divergence Engine", () => {
       { fiiNet: 200, diiNet: 200 },
       { fiiNet: 800, diiNet: 0 },
       { fiiNet: 50, diiNet: 0 }
-    ]); // Total = 500+500+500-250+200+200+800+0+50+0 = 2500 Cr
+    ].map((row, i) => ({ ...row, date: ["2026-10-01", "2026-09-30", "2026-09-29", "2026-09-28", "2026-09-25"][i] }))); // 2500 Cr
 
     // Nifty returns: falls by 2%
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (yahooFinance.historical as any).mockResolvedValue([
       { close: 20000 },
+      { close: 20000 },
       { close: 19900 },
       { close: 19800 },
       { close: 19700 },
       { close: 19600 } // 19600/20000 - 1 = -2%
-    ]);
+    ].map((row, i) => ({ ...row, date: new Date(["2026-09-24", "2026-09-25", "2026-09-28", "2026-09-29", "2026-09-30", "2026-10-01"][i]) })));
 
     const result = await computeFiiDiiDivergence();
     
@@ -74,17 +78,18 @@ describe("Divergence Engine", () => {
       { fiiNet: -500, diiNet: 0 },
       { fiiNet: 0, diiNet: 0 },
       { fiiNet: 0, diiNet: 0 }
-    ]);
+    ].map((row, i) => ({ ...row, date: ["2026-10-01", "2026-09-30", "2026-09-29", "2026-09-28", "2026-09-25"][i] })));
 
     // Nifty returns: rallies by 2%
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (yahooFinance.historical as any).mockResolvedValue([
       { close: 20000 },
+      { close: 20000 },
       { close: 20100 },
       { close: 20200 },
       { close: 20300 },
       { close: 20400 } // 20400/20000 - 1 = +2%
-    ]);
+    ].map((row, i) => ({ ...row, date: new Date(["2026-09-24", "2026-09-25", "2026-09-28", "2026-09-29", "2026-09-30", "2026-10-01"][i]) })));
 
     const result = await computeFiiDiiDivergence();
     

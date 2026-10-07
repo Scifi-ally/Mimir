@@ -1,5 +1,6 @@
 import { Worker } from "node:worker_threads";
 import path from "node:path";
+import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import crypto from "node:crypto";
 import { logger } from "../lib/logger";
@@ -159,6 +160,7 @@ export class ScanWorkerPool {
         mr.detectMeanReversionShort(dailyCandles, snap),
         rg.detectRangeLong(dailyCandles, snap),
         rg.detectRangeShort(dailyCandles, snap),
+        tech.detectMatrixEnsembleSetup(dailyCandles, snap),
       ].filter((c): c is NonNullable<typeof c> => c !== null && (minRR == null || c.riskReward >= minRR));
       return { snap, allCandidates } as unknown as T;
     }
@@ -255,12 +257,16 @@ const dirname = globalThis.__dirname || (isEsm ? path.dirname(fileURLToPath(impo
 let workerScriptPath: string | URL;
 if (process.env.NODE_ENV === "test" || process.env.VITEST) {
   workerScriptPath = new URL("./scan_worker.ts", import.meta.url);
-} else if (dirname.includes("src" + path.sep + "workers") || dirname.includes("src/workers")) {
-  // When running TS node directly, point to dist for actual worker execution
-  workerScriptPath = path.resolve(process.cwd(), "dist", "workers", "scan_worker.mjs");
 } else {
-  // When running from bundled dist/api_server.mjs, dirname is dist
-  workerScriptPath = path.resolve(dirname, "workers", "scan_worker.mjs");
+  const candidates = [
+    path.resolve(process.cwd(), "dist", "workers", "scan_worker.mjs"),
+    path.resolve(process.cwd(), "backend", "dist", "workers", "scan_worker.mjs"),
+    path.resolve(dirname, "workers", "scan_worker.mjs"),
+    path.resolve(dirname, "..", "workers", "scan_worker.mjs"),
+    path.resolve(dirname, "..", "..", "workers", "scan_worker.mjs"),
+  ];
+  const found = candidates.find((c) => fs.existsSync(c));
+  workerScriptPath = found || path.resolve(process.cwd(), "dist", "workers", "scan_worker.mjs");
 }
 
 export const scanWorkerPool = new ScanWorkerPool(workerScriptPath);

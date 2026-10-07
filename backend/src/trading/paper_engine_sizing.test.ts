@@ -11,7 +11,7 @@
 
 import { describe, it, expect } from "vitest";
 import Decimal from "decimal.js";
-import { resolveOrderQuantity } from "./paper_engine";
+import { calculateRequiredMargin, resolveOrderQuantity } from "./paper_engine";
 
 const BALANCE = new Decimal(10000);
 const STOP = new Decimal(5); // ₹5/share risk
@@ -141,5 +141,12 @@ describe("resolveOrderQuantity honours the upstream risk decision", () => {
     expect(sized.cappedByUpstream).toBe(true);
     expect(sized.riskAmount.toString()).toBe("33.33");
     expect(sized.quantity).toBe(10);
+  });
+});
+
+describe("calculateRequiredMargin", () => {
+  it("reserves full notional for SWING/CNC and only the MIS assumption for intraday", () => {
+    expect(calculateRequiredMargin(new Decimal(1000), 10, true).toFixed(2)).toBe("10000.00");
+    expect(calculateRequiredMargin(new Decimal(1000), 10, false).toFixed(2)).toBe("2000.00");
   });
 });

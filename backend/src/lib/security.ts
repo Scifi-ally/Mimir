@@ -150,12 +150,31 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction): v
  */
 const inMemoryRateLimits = new Map<string, number[]>();
 
+// Admit requests atomically and only record accepted requests. Recording
+// rejected requests would let a steady stream of over-limit traffic keep
+// refreshing the window and extend the lockout indefinitely.
+const RATE_LIMIT_SCRIPT = `
+  redis.call('ZREMRANGEBYSCORE', KEYS[1], 0, ARGV[1] - ARGV[2])
+  local count = redis.call('ZCARD', KEYS[1])
+  if count >= tonumber(ARGV[3]) then
+    return 0
+  end
+  redis.call('ZADD', KEYS[1], ARGV[1], ARGV[4])
+  redis.call('PEXPIRE', KEYS[1], ARGV[2])
+  return 1
+`;
+
 export async function apiRateLimit(req: Request, res: Response, next: NextFunction): Promise<void> {
   const ip = normalizeIp(req.ip || req.socket.remoteAddress) || "unknown";
   const isAuthRoute = req.path.includes("/auth") || req.path.includes("/token");
   
   const windowSec = 60;
-  const maxRequests = isAuthRoute ? 10 : Number(process.env["UPSTOXBOT_RATE_LIMIT_MAX"] ?? 100);
+  const configuredMax = Number(process.env["UPSTOXBOT_RATE_LIMIT_MAX"] ?? 100);
+  const maxRequests = isAuthRoute
+    ? 10
+    : Number.isSafeInteger(configuredMax) && configuredMax > 0
+      ? configuredMax
+      : 100;
   const now = Date.now();
   const bucketKey = `ratelimit:${isAuthRoute ? "auth" : "api"}:${ip}`;
 
@@ -192,26 +211,21 @@ export async function apiRateLimit(req: Request, res: Response, next: NextFuncti
       return;
     }
     
-    // Sliding window using sorted sets
-    const multi = redisClient.multi();
-    // Remove old requests outside the 60s window
-    multi.zremrangebyscore(bucketKey, 0, now - windowSec * 1000);
-    // Count remaining requests
-    multi.zcard(bucketKey);
-    // Add current request
-    multi.zadd(bucketKey, now.toString(), `${now}-${Math.random()}`);
-    // Set expiry on the whole set so it cleans up inactive IPs
-    multi.expire(bucketKey, windowSec);
+    // Sliding window. Lua makes the admission decision atomic across workers.
+    const allowed = await redisClient.eval(
+      RATE_LIMIT_SCRIPT,
+      1,
+      bucketKey,
+      now.toString(),
+      (windowSec * 1000).toString(),
+      maxRequests.toString(),
+      `${now}-${crypto.randomUUID()}`,
+    );
 
-    const results = await multi.exec();
-    
-    if (results && results.length >= 2) {
-      const count = (results[1]?.[1] as number) || 0; // Result of zcard
-      if (count >= maxRequests) {
-        res.setHeader("Retry-After", windowSec.toString());
-        res.status(429).json({ error: "Too many requests. Rate limit exceeded." });
-        return;
-      }
+    if (Number(allowed) !== 1) {
+      res.setHeader("Retry-After", windowSec.toString());
+      res.status(429).json({ error: "Too many requests. Rate limit exceeded." });
+      return;
     }
   } catch (err) {
     logger.warn({ err }, "Redis rate limiter error, degrading to in-memory fallback");

@@ -12,6 +12,7 @@ import {
   detectBollingerSqueezeBreakout,
   detectLiquiditySweep,
   detectMomentumBreakout,
+  detectMatrixEnsembleSetup,
 } from "../analysis/technical";
 import { detectMeanReversionLong, detectMeanReversionShort } from "../analysis/mean_reversion_scanner";
 import { detectRangeLong, detectRangeShort } from "../analysis/range_scanner";
@@ -48,6 +49,7 @@ parentPort.on("message", (msg: { id: string; payload: any }) => {
       detectMeanReversionShort(dailyCandles, snap),
       detectRangeLong(dailyCandles, snap),
       detectRangeShort(dailyCandles, snap),
+      detectMatrixEnsembleSetup(dailyCandles, snap),
     ].filter((c): c is NonNullable<typeof c> => c !== null && c.riskReward >= minRR);
 
     parentPort!.postMessage({ id, success: true, result: { snap, allCandidates } });

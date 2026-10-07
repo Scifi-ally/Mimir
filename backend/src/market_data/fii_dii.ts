@@ -11,7 +11,14 @@ import { logger } from "../lib/logger";
 import { db } from "../../db/src";
 import { institutionalFlowsTable } from "../../db/src/schema/institutional_flows";
 import { resetDivergenceCache } from "../analysis/divergence_engine";
-import { getISTDateStr } from "../lib/ist-time";
+import { getISTDateStr, parseISTDate } from "../lib/ist-time";
+import { updateMarketState } from "./market_state";
+import {
+  isUsableInstitutionalFlowSourceDate,
+  normalizeInstitutionalFlowCategory,
+  parseInstitutionalFlowNetValue,
+  parseInstitutionalFlowSourceDate,
+} from "./fii_dii_validation";
 
 const NSE_HOME_URL = "https://www.nseindia.com/";
 const NSE_WARMUP_URL = "https://www.nseindia.com/reports-indices-historical-index-data";
@@ -39,6 +46,7 @@ export interface FIIDIISnapshot {
 let cache: FIIDIISnapshot | null = null;
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24h
 let isFetching = false;
+let cacheLoadedAt = 0;
 
 async function doFetchFIIDIIData(): Promise<FIIDIISnapshot | null> {
   if (isFetching && cache) return cache;
@@ -98,28 +106,38 @@ async function doFetchFIIDIIData(): Promise<FIIDIISnapshot | null> {
       throw new Error("Unexpected response format from NSE API");
     }
 
-    let fiiNet = 0;
-    let diiNet = 0;
+    let fiiNet: number | null = null;
+    let diiNet: number | null = null;
+    let fiiDate: string | null = null;
+    let diiDate: string | null = null;
 
     for (const item of data) {
-      if (item.category === "FII/FPI") {
-        fiiNet = parseFloat(item.netValue || "0");
-      } else if (item.category === "DII") {
-        diiNet = parseFloat(item.netValue || "0");
+      const category = normalizeInstitutionalFlowCategory(item.category);
+      if (category === "FII") {
+        fiiNet = parseInstitutionalFlowNetValue(item.netValue);
+        fiiDate = parseInstitutionalFlowSourceDate(item.date);
+      } else if (category === "DII") {
+        diiNet = parseInstitutionalFlowNetValue(item.netValue);
+        diiDate = parseInstitutionalFlowSourceDate(item.date);
       }
     }
 
-    if (Number.isNaN(fiiNet) || Number.isNaN(diiNet)) {
-      throw new Error("Parse failed on net values");
+    if (
+      fiiNet === null || diiNet === null || !Number.isFinite(fiiNet) || !Number.isFinite(diiNet) ||
+      fiiDate === null || diiDate === null || fiiDate !== diiDate
+    ) throw new Error("FII/DII values or source report date are missing or invalid");
+
+    const sourceDate = fiiDate;
+    if (!isUsableInstitutionalFlowSourceDate(sourceDate, getISTDateStr())) {
+      throw new Error(`NSE report date ${sourceDate} is future-dated or too old`);
     }
 
     // IST trading date, not UTC — at 02:00 UTC the IST day has already rolled,
     // and a UTC key would upsert under the previous day's row.
-    const todayStr = getISTDateStr();
     try {
       await db.insert(institutionalFlowsTable)
         .values({
-          date: todayStr,
+          date: sourceDate,
           fiiNet,
           diiNet,
           fiiIndexFuturesNet: 0,
@@ -133,7 +151,8 @@ async function doFetchFIIDIIData(): Promise<FIIDIISnapshot | null> {
       logger.error({ err: dbErr }, "Failed to save FII/DII flows to DB");
     }
 
-    cache = { fiiNetInr: fiiNet, diiNetInr: diiNet, fetchedAt: new Date() };
+    cache = { fiiNetInr: fiiNet, diiNetInr: diiNet, fetchedAt: parseISTDate(sourceDate) };
+    cacheLoadedAt = Date.now();
     resetDivergenceCache();
     return cache;
   } catch (err) {
@@ -141,15 +160,20 @@ async function doFetchFIIDIIData(): Promise<FIIDIISnapshot | null> {
     
     try {
       const dbRow = await db.select().from(institutionalFlowsTable).orderBy(desc(institutionalFlowsTable.date)).limit(1);
-      if (dbRow && dbRow.length > 0 && typeof dbRow[0].fiiNet === "number" && typeof dbRow[0].diiNet === "number") {
+      const row = dbRow?.[0];
+      if (
+        row && Number.isFinite(row.fiiNet) && Number.isFinite(row.diiNet) &&
+        isUsableInstitutionalFlowSourceDate(row.date, getISTDateStr())
+      ) {
         cache = {
-          fiiNetInr: dbRow[0].fiiNet,
-          diiNetInr: dbRow[0].diiNet,
-          fetchedAt: new Date(),
+          fiiNetInr: row.fiiNet,
+          diiNetInr: row.diiNet,
+          fetchedAt: parseISTDate(row.date),
         };
+        cacheLoadedAt = Date.now();
         resetDivergenceCache();
         logger.warn(
-          { date: dbRow[0].date },
+          { date: row.date },
           "STALE FEED ALERT: FII/DII scraper live fetch failed — serving stale historical fallback data"
         );
         return cache;
@@ -160,6 +184,10 @@ async function doFetchFIIDIIData(): Promise<FIIDIISnapshot | null> {
 
     // No live data and no DB history — return null so callers/UI show N/A.
     // Never fabricate flows: fake numbers feed regime detection and scoring.
+    cache = null;
+    cacheLoadedAt = 0;
+    updateMarketState({ fiiNetInr: null, diiNetInr: null });
+    resetDivergenceCache();
     return null;
   } finally {
     isFetching = false;
@@ -167,7 +195,15 @@ async function doFetchFIIDIIData(): Promise<FIIDIISnapshot | null> {
 }
 
 export async function fetchFIIDIIData(): Promise<FIIDIISnapshot | null> {
-  if (cache && Date.now() - cache.fetchedAt.getTime() < CACHE_TTL_MS) {
+  if (cache && !isUsableInstitutionalFlowSourceDate(getISTDateStr(cache.fetchedAt), getISTDateStr())) {
+    // A recent fetch can still contain an old source report. Evict it before
+    // returning cached values or starting a background refresh.
+    cache = null;
+    cacheLoadedAt = 0;
+    updateMarketState({ fiiNetInr: null, diiNetInr: null });
+    resetDivergenceCache();
+  }
+  if (cache && Date.now() - cacheLoadedAt < CACHE_TTL_MS) {
     return cache;
   }
   

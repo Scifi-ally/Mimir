@@ -66,6 +66,8 @@ import {
 } from "../lib/ist-time";
 import { evaluateAutomationHealth } from "../analysis/confidence_engine";
 import { getSuccessfulScanForDate } from "../workflow/scan_persistence";
+import { runStrategyJob } from "../analysis/strategy_lab";
+import { isNseNormalSessionDate } from "../lib/exchange-calendar";
 
 // HIGH FIX (Issue #10, #18): Add Redis-based distributed locking for scheduler jobs
 import crypto from "crypto";
@@ -473,6 +475,15 @@ export function startScheduler(): void {
   
   schedulerRunning = true;
   logger.info({ timezone: SCHEDULER_TIMEZONE }, "Scheduler started");
+  scheduleJob("corporate-preopen-evidence", "30 7 * * *", async () => {
+    await runStrategyJob("corporate");
+  });
+  scheduleJob("strategy-forward-evidence", "10 16 * * *", async () => {
+    if (isNseNormalSessionDate(getISTDateStr())) await runStrategyJob("forward");
+  });
+  scheduleJob("exchange-eod-evidence", "10 19 * * *", async () => {
+    if (isNseNormalSessionDate(getISTDateStr())) await runStrategyJob("archive");
+  });
 
   // Fetch initial baseline data so the UI isn't empty on off-hours restarts
   setTimeout(() => {
@@ -855,6 +866,17 @@ export function startScheduler(): void {
     await generateDailyReport();
   });
 
+  // ── ETF DUAL MOMENTUM ROTATION: 16:30 IST (11:00 UTC) Mon–Fri — refresh rotation signal ──
+  scheduleJob("etf-dual-momentum-rotation", "30 16 * * 1-5", async () => {
+    try {
+      const { syncEtfSuggestionToEngine } = await import("../analysis/etf_suggestion_service");
+      logger.info("Post-market: evaluating ETF Dual Momentum rotation signal");
+      await syncEtfSuggestionToEngine();
+    } catch (err) {
+      logger.warn({ err }, "Post-market ETF rotation sync failed");
+    }
+  });
+
 
 
   // ── MIDNIGHT IST (18:30 UTC) daily — cleanup + reset ─────────────────────
@@ -928,6 +950,9 @@ export function startScheduler(): void {
   void refreshCalibration();
   void refreshSetupDemotions();
   void refreshNSEFreeData();
+  void import("../analysis/etf_suggestion_service")
+    .then((s) => s.syncEtfSuggestionToEngine())
+    .catch((err) => logger.warn({ err }, "Startup ETF rotation sync skipped"));
 
   if (!isMarketOpen()) {
     runExclusive("startup-market-feed-offhours", async () => {

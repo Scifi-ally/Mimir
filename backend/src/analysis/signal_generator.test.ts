@@ -4,6 +4,12 @@ import { computeFeatureVector } from './feature_engine';
 import * as aiClient from './ai_client';
 import type { ScanResult } from './stock_scanner';
 
+// Pipeline routing is isolated here; recorded-candle tests exercise the real
+// data-quality and benchmark implementations in signal_quality.test.ts.
+vi.mock('./signal_data_quality', () => ({ assessSignalData: vi.fn(() => null) }));
+vi.mock('./sector_history', () => ({ loadSectorHistories: vi.fn(async () => ({ histories: new Map(), sectors: new Map() })) }));
+vi.mock('./relative_strength', () => ({ sectorRelativeStrength60: vi.fn(() => 1.1) }));
+
 // Mock dependencies
 vi.mock('./ai_client', () => ({
   checkAIHealth: vi.fn(),
@@ -166,6 +172,8 @@ describe('runIntelligencePipeline', () => {
     const trace = result.signals[0]?.decisionTrace || result.rejectedSignals![0]?.decisionTrace;
     expect(trace).toBeDefined();
     expect(trace?.confidencePath).toBe('native_math_fallback');
+    expect(result.signals).toHaveLength(0);
+    expect(trace?.rejectionGate).toBe('no_validated_quantitative_model');
   });
 
   it('should reject signal when LAYA System-1 triage rejects setup with high confidence', async () => {
@@ -292,5 +300,37 @@ describe('runIntelligencePipeline', () => {
 
     const call = vi.mocked(computeFeatureVector).mock.calls.at(-1);
     expect(call![9]).toBe(true);
+  });
+
+  it('incorporates CVD bullish absorption divergence into confluence and signal factors', async () => {
+    const aiResults = new Map();
+    aiResults.set('RELIANCE', {
+      composite_score: 80, win_probability: 0.65, ranker_threshold: 0.5,
+      ranker_loaded: true, isFallback: false,
+      technicalRanking: { bullish_probability: 0.8, detected_patterns: [] },
+      chronos: { trend: 'bullish', forecast_return_pct: 2 }, sentiment_score: 60
+    });
+    vi.mocked(aiClient.batchInference).mockResolvedValue(aiResults);
+
+    // Build 20 candles where price trends down slightly but close sits at high of bar with rising volume (delta absorption)
+    const cvdCandles = Array.from({ length: 20 }, (_, i) => ({
+      open: 100 - i * 0.5,
+      high: 101 - i * 0.5,
+      low: 99 - i * 0.5,
+      close: 100.9 - i * 0.5, // near the high -> positive CLV/delta
+      volume: 1000 + i * 200,
+      timestamp: 123456 + i * 86400000,
+    }));
+
+    const scan = { ...mockScanResult, candles: cvdCandles } as unknown as ScanResult;
+    const result = await runIntelligencePipeline([scan]);
+
+    expect(result.signals.length).toBe(1);
+    const sig = result.signals[0]!;
+    expect(sig.cvdDivergence).toBeDefined();
+    expect(sig.cvdDivergence?.divergenceType).toBe('BULLISH_ABSORPTION');
+    expect(sig.confluence.some(c => c.includes('CVD: Bullish Delta Absorption'))).toBe(true);
+    expect(sig.signalFactors?.cvd?.divergenceType).toBe('BULLISH_ABSORPTION');
+    expect(sig.decisionTrace?.cvd_divergence).toBe('BULLISH_ABSORPTION');
   });
 });

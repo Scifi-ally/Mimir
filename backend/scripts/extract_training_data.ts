@@ -28,7 +28,7 @@
 import { writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { db, candlesTable, institutionalFlowsTable } from "../db/src";
+import { db, candlesTable } from "../db/src";
 import { and, eq, gte, asc } from "drizzle-orm";
 import {
   buildSnapshot,
@@ -43,6 +43,10 @@ import {
 } from "../src/analysis/technical";
 import { NSE_UNIVERSE } from "../src/analysis/stock_scanner";
 import { computeFeatureVector, toRankerFeatureArray } from "../src/analysis/feature_engine";
+import { replayTrade, type ReplayResult } from "../src/analysis/trade_replay";
+import { relativeStrength60, sectorRelativeStrength60 } from "../src/analysis/relative_strength";
+import { DELIVERY_FEE_MODEL } from "../src/analysis/transaction_costs";
+import { dailySessionDate, dailyAvailableAt } from "../src/analysis/daily_session";
 
 // Only the detectors that actually produce live suggestions today. Keeping this
 // in sync with the pipeline's enabled set (NEGATIVE_EXPECTANCY_SETUPS removes the
@@ -56,9 +60,12 @@ const DETECTORS = [
   detectMacdCrossover,
 ];
 
-const COST_RATE_PER_SIDE = 0.0005; // keep in sync with accuracy_tracker + backtest_setups
-const WARMUP_BARS = 60;
+const WARMUP_BARS = 200;
 const NIFTY_KEY = "NSE_INDEX|Nifty 50";
+const VALIDATED_HOLD_BARS = 5;
+const MIN_AVERAGE_TURNOVER_20D_INR = 50_000_000;
+const MAX_NOTIONAL_TO_TURNOVER_20D = 0.001;
+const STRATEGY_SCOPE_VERSION = "cash-long-5bar-20d-turnover-v1";
 
 function argNum(name: string, dflt: number): number {
   const i = process.argv.indexOf(`--${name}`);
@@ -71,11 +78,7 @@ function argStr(name: string, dflt: string): string {
   return i >= 0 ? process.argv[i + 1] ?? dflt : dflt;
 }
 
-interface Labeled {
-  outcome: "WIN" | "LOSS" | "NO_FILL" | "TIMEOUT";
-  retPct: number; // net of costs, 0 for NO_FILL
-  resolutionTs?: string;
-}
+type Labeled = ReplayResult;
 
 /** Honest-fill walk-forward, identical rules to backtest_setups.simulate(). */
 function labelTrade(
@@ -84,70 +87,7 @@ function labelTrade(
   setup: SetupCandidate,
   holdBars: number,
 ): Labeled {
-  const { direction, entryPrice, stopLoss, target1 } = setup;
-  const isBuy = direction === "BUY";
-  let filled = false;
-
-  for (let i = signalIdx + 1; i < Math.min(signalIdx + 1 + holdBars, candles.length); i++) {
-    const bar = candles[i]!;
-
-    if (!filled) {
-      const touched = isBuy ? bar.low <= entryPrice : bar.high >= entryPrice;
-      if (!touched) continue;
-      const gappedPastTarget = isBuy ? bar.open >= target1 : bar.open <= target1;
-      if (gappedPastTarget) return { outcome: "NO_FILL", retPct: 0 };
-      filled = true;
-    }
-
-    const stopHit = isBuy ? bar.low <= stopLoss : bar.high >= stopLoss;
-    const targetHit = isBuy ? bar.high >= target1 : bar.low <= target1;
-
-    if (stopHit) {
-      const gross = isBuy ? (stopLoss - entryPrice) / entryPrice : (entryPrice - stopLoss) / entryPrice;
-      return { outcome: "LOSS", retPct: (gross - 2 * COST_RATE_PER_SIDE) * 100, resolutionTs: bar.timestamp };
-    }
-    if (targetHit) {
-      const gross = isBuy ? (target1 - entryPrice) / entryPrice : (entryPrice - target1) / entryPrice;
-      return { outcome: "WIN", retPct: (gross - 2 * COST_RATE_PER_SIDE) * 100, resolutionTs: bar.timestamp };
-    }
-  }
-
-  if (!filled) return { outcome: "NO_FILL", retPct: 0 };
-
-  const lastIdx = Math.min(signalIdx + holdBars, candles.length - 1);
-  const exit = candles[lastIdx]!.close;
-  const exitTs = candles[lastIdx]!.timestamp;
-  const gross = isBuy ? (exit - entryPrice) / entryPrice : (entryPrice - exit) / entryPrice;
-  return { outcome: "TIMEOUT", retPct: (gross - 2 * COST_RATE_PER_SIDE) * 100, resolutionTs: exitTs };
-}
-
-/** RS vs Nifty over the trailing 60 bars, reconstructed from the visible window. */
-function computeRS60PIT(stockVisible: OHLCV[], niftyByTs: Map<number, number>, asOf: number): number {
-  const len = stockVisible.length;
-  if (len < 62) return 1.0;
-  const stockNow = stockVisible[len - 1]!.close;
-  const stock60Ago = stockVisible[len - 61]!.close;
-  // Find the Nifty close at asOf and ~60 bars earlier by timestamp.
-  const niftyNow = niftyByTs.get(asOf);
-  const ago60 = stockVisible[len - 61]!.timestamp;
-  const niftyAgo = niftyByTs.get(new Date(ago60).getTime());
-  if (!niftyNow || !niftyAgo || stock60Ago === 0 || niftyAgo === 0) return 1.0;
-  const stockRet = stockNow / stock60Ago;
-  const niftyRet = niftyNow / niftyAgo;
-  if (niftyRet === 0) return 1.0;
-  return Math.round((stockRet / niftyRet) * 1000) / 1000;
-}
-
-function getLaggedFlow(asOf: number, flowDates: number[], flowByTs: Map<number, number>): number {
-  let bestDate = 0;
-  for (const d of flowDates) {
-    if (d < asOf) {
-      bestDate = d;
-    } else {
-      break;
-    }
-  }
-  return bestDate > 0 ? (flowByTs.get(bestDate) ?? 0) : 0;
+  return replayTrade(candles, signalIdx, setup, holdBars);
 }
 
 async function loadDaily(instrumentKey: string, since: Date): Promise<OHLCV[]> {
@@ -162,7 +102,27 @@ async function loadDaily(instrumentKey: string, since: Date): Promise<OHLCV[]> {
       ),
     )
     .orderBy(asc(candlesTable.timestamp));
-  return rows.map((r) => ({
+  const isEquity = instrumentKey !== NIFTY_KEY;
+  const validRows = rows.filter((row) => {
+    const { open, high, low, close, volume } = row;
+    return [open, high, low, close, volume, row.timestamp.getTime()].every(Number.isFinite) &&
+      low > 0 && high >= Math.max(open, low, close) && low <= Math.min(open, close) &&
+      volume >= 0 && (!isEquity || volume > 0);
+  });
+  if (validRows.length !== rows.length) {
+    console.warn(`Excluded ${rows.length - validRows.length} invalid${isEquity ? " or zero-volume" : ""} bars from ${instrumentKey}`);
+  }
+  const seen = new Set<string>();
+  let ambiguousFrom = "9999-12-31";
+  for (const row of validRows) {
+    const date = dailySessionDate(row.timestamp.getTime());
+    if (seen.has(date) && date < ambiguousFrom) ambiguousFrom = date;
+    seen.add(date);
+  }
+  // Do not choose between conflicting vendor bars or silently count one
+  // session twice. Preserve only the uncontested prefix for research.
+  if (ambiguousFrom !== "9999-12-31") console.warn(`Excluded ${instrumentKey} history from duplicate session ${ambiguousFrom}`);
+  return validRows.filter(r => dailySessionDate(r.timestamp.getTime()) < ambiguousFrom).map((r) => ({
     timestamp: r.timestamp.toISOString(),
     open: r.open, high: r.high, low: r.low, close: r.close, volume: r.volume,
   }));
@@ -201,8 +161,11 @@ export async function extractTrainingData(opts?: {
   holdBars?: number;
   outPath?: string;
 }): Promise<ExtractResult> {
-  const days = opts?.days ?? 420;
+  const days = opts?.days ?? 1900;
   const holdBars = opts?.holdBars ?? 5;
+  if (holdBars !== VALIDATED_HOLD_BARS) {
+    throw new Error(`Ranker training is validated only for ${VALIDATED_HOLD_BARS}-session outcomes`);
+  }
   const outPath = opts?.outPath ?? defaultTrainingDataPath();
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
@@ -210,20 +173,6 @@ export async function extractTrainingData(opts?: {
 
   // Nifty series for point-in-time RS reconstruction (optional — defaults to 1.0).
   const niftyCandles = await loadDaily(NIFTY_KEY, since);
-  const niftyByTs = new Map<number, number>();
-  for (const c of niftyCandles) niftyByTs.set(new Date(c.timestamp).getTime(), c.close);
-
-  // Load institutional flows for FII/DII lag reconstruction
-  const flows = await db
-    .select()
-    .from(institutionalFlowsTable)
-    .where(gte(institutionalFlowsTable.date, since.toISOString().split("T")[0]!));
-  
-  const flowByTs = new Map<number, number>();
-  for (const f of flows) {
-    flowByTs.set(new Date(f.date).getTime(), f.fiiNet + f.diiNet);
-  }
-  const sortedFlowDates = Array.from(flowByTs.keys()).sort((a, b) => a - b);
 
   const instruments = await db
     .selectDistinct({ instrumentKey: candlesTable.instrumentKey })
@@ -239,10 +188,19 @@ export async function extractTrainingData(opts?: {
   let losses = 0;
   let timeouts = 0;
 
+  const histories = new Map<string, OHLCV[]>();
+  const sectors = new Map<string, string>();
+  for (const { instrumentKey } of instruments) {
+    const meta = keyToMeta.get(instrumentKey);
+    if (!meta) continue;
+    histories.set(meta.symbol, await loadDaily(instrumentKey, since));
+    sectors.set(meta.symbol, meta.sector);
+  }
+
   for (const { instrumentKey } of instruments) {
     const meta = keyToMeta.get(instrumentKey);
     if (!meta) continue; // not a tracked equity (indices, etc.)
-    const candles = await loadDaily(instrumentKey, since);
+    const candles = histories.get(meta.symbol)!;
     if (candles.length < WARMUP_BARS + holdBars) continue;
 
     const lastSignalIdx = new Map<string, number>();
@@ -255,9 +213,12 @@ export async function extractTrainingData(opts?: {
       } catch { /* edge-case data */ }
       if (!snap) continue;
 
-      const asOf = new Date(candles[i]!.timestamp).getTime();
-      const rs60 = computeRS60PIT(visible, niftyByTs, asOf);
-      const historicalFiiDiiFlowLag = getLaggedFlow(asOf, sortedFlowDates, flowByTs);
+      const rs60 = relativeStrength60(visible, niftyCandles);
+      const sectorRs = sectorRelativeStrength60(meta.symbol, meta.sector, visible, histories, sectors);
+      if (rs60 === null || sectorRs === null) continue;
+      // The legacy table stores no source or publication timestamp, so even
+      // nonzero values cannot be reconstructed as point-in-time features.
+      const historicalFiiDiiFlowLag = null;
 
       for (const detect of DETECTORS) {
         let setup: SetupCandidate | null = null;
@@ -265,6 +226,12 @@ export async function extractTrainingData(opts?: {
           setup = detect(visible, snap);
         } catch { /* detector threw */ }
         if (!setup) continue;
+        // This corpus contains CASH equities, not borrowable stocks/futures.
+        // A five-session naked short is not an executable delivery position.
+        if (setup.direction === "SELL") continue;
+        const averageTurnover = visible.slice(-20).reduce((sum, c) => sum + c.close * c.volume, 0) / 20;
+        if (averageTurnover < MIN_AVERAGE_TURNOVER_20D_INR ||
+            100_000 / averageTurnover > MAX_NOTIONAL_TO_TURNOVER_20D) continue;
 
         // Per-setup cooldown so a persistent condition doesn't flood identical rows.
         const prev = lastSignalIdx.get(setup.setupType);
@@ -272,7 +239,7 @@ export async function extractTrainingData(opts?: {
         lastSignalIdx.set(setup.setupType, i);
 
         const labeled = labelTrade(candles, i, setup, holdBars);
-        if (labeled.outcome === "NO_FILL") continue; // never became a position
+        if (!["WIN", "LOSS", "TIMEOUT"].includes(labeled.outcome)) continue; // never became a position
 
         const fv = computeFeatureVector(
           meta.symbol,
@@ -280,7 +247,7 @@ export async function extractTrainingData(opts?: {
           visible,
           snap,
           rs60,
-          1.0, // sector RS: scanner's own fallback when sector series unavailable
+          sectorRs,
           setup.riskReward,
           undefined, // bidAskImbalance
           undefined, // optionsOiChangeRate
@@ -300,7 +267,16 @@ export async function extractTrainingData(opts?: {
 
         lines.push(
           JSON.stringify({
-            ts: candles[i]!.timestamp,
+            ts: dailyAvailableAt(candles[i]!.timestamp),
+            fillTs: labeled.fillTs,
+            outcome: labeled.outcome,
+            replayVersion: "limit-gap-v2",
+            feeModel: DELIVERY_FEE_MODEL,
+            notionalInr: 100_000,
+            slippageBpsPerSide: 5,
+            horizonBars: holdBars,
+            strategyScopeVersion: STRATEGY_SCOPE_VERSION,
+            averageTurnover20dInr: averageTurnover,
             resolutionTs: labeled.resolutionTs,
             symbol: meta.symbol,
             setupType: setup.setupType,
@@ -322,7 +298,7 @@ export async function extractTrainingData(opts?: {
 }
 
 async function main() {
-  const days = argNum("days", 420);
+  const days = argNum("days", 1900);
   const holdBars = argNum("holdBars", 5);
   // An explicit --out overrides the anchored default: absolute is used as-is,
   // relative resolves against cwd for interactive runs.

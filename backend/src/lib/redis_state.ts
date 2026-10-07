@@ -8,7 +8,7 @@ export function getRedisClient(): Redis | null {
 
 export interface RealtimeFeatures {
   bidAskImbalance: number;
-  optionsOiChangeRate: number;
+  optionsOiChangeRate: number | null;
   timestamp: string;
 }
 

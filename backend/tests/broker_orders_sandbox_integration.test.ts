@@ -9,21 +9,24 @@ import * as scannerModule from "../src/analysis/stock_scanner";
 // Mock DB queries so database reads/writes resolve cleanly during sandbox testing
 vi.mock("../db/src", () => ({
   db: {
-    insert: vi.fn().mockImplementation(() => ({
-      values: vi.fn().mockImplementation((val) => ({
-        returning: vi.fn().mockResolvedValue([{ id: "sandbox-audit-id-001", ...val }]),
+    transaction: vi.fn().mockImplementation(async (run) => run({
+      execute: vi.fn().mockResolvedValue({ rows: [] }),
+      insert: vi.fn().mockImplementation(() => ({
+        values: vi.fn().mockImplementation((val) => ({
+          returning: vi.fn().mockResolvedValue([{ id: "sandbox-audit-id-001", ...val }]),
+        })),
       })),
+      select: vi.fn().mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue([]),
+          }),
+        }),
+      }),
     })),
     update: vi.fn().mockReturnValue({
       set: vi.fn().mockReturnValue({
         where: vi.fn().mockResolvedValue({}),
-      }),
-    }),
-    select: vi.fn().mockReturnValue({
-      from: vi.fn().mockReturnValue({
-        where: vi.fn().mockReturnValue({
-          limit: vi.fn().mockResolvedValue([]),
-        }),
       }),
     }),
   },

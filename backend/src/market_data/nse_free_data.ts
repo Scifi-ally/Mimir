@@ -16,6 +16,8 @@
 import axios from "axios";
 import { logger } from "../lib/logger";
 import { getISTDateStr, getLastCompletedTradingDayStr, shiftISTDateStr } from "../lib/ist-time";
+import { getTargetTradingSessionDate } from "./market_state";
+import { parseNseTradeDate } from "./nse_free_data_validation";
 
 const NSE_BASE = "https://www.nseindia.com";
 const NSE_ARCHIVES = "https://archives.nseindia.com";
@@ -182,7 +184,11 @@ export async function getDeliveryData(): Promise<Map<string, DeliveryData>> {
 }
 
 export function getDeliveryPct(symbol: string): number | null {
-  return deliveryCache.get(symbol.toUpperCase())?.deliveryPct ?? null;
+  const data = deliveryCache.get(symbol.toUpperCase());
+  if (!data || data.date > getISTDateStr()) return null;
+  const ageMs = Date.parse(`${getISTDateStr()}T00:00:00Z`) - Date.parse(`${data.date}T00:00:00Z`);
+  if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > 4 * 24 * 60 * 60 * 1000) return null;
+  return data.deliveryPct;
 }
 
 // ── 2. F&O ban list ───────────────────────────────────────────────────────────
@@ -190,14 +196,20 @@ export function getDeliveryPct(symbol: string): number | null {
 let banListCache: Set<string> = new Set();
 let banListCacheDate = "";
 
+export function getFnOBanListStatus(): { available: boolean; tradeDate: string | null } {
+  const expectedDate = getTargetTradingSessionDate();
+  const available = banListCacheDate === expectedDate;
+  return { available, tradeDate: available ? banListCacheDate : null };
+}
+
 /**
  * Symbols in the F&O ban period today. Hard-reject: these stocks are at
  * open-interest limits and move erratically. Empty set on failure (fail-open:
  * a missing ban list should not halt all suggestion generation).
  */
 export async function getFnOBanList(): Promise<Set<string>> {
-  const today = getISTDateStr();
-  if (banListCacheDate === today) return banListCache;
+  const expectedDate = getTargetTradingSessionDate();
+  if (banListCacheDate === expectedDate) return banListCache;
 
   try {
     // The old /api/reportSecBanApi JSON endpoint is dead (404). NSE now publishes
@@ -210,8 +222,16 @@ export async function getFnOBanList(): Promise<Set<string>> {
       validateStatus: (s) => s === 200,
     });
 
+    const lines = resp.data.split("\n");
+    const header = lines.find((line) => /ban for trade date/i.test(line)) ?? "";
+    const sourceDate = parseNseTradeDate(header.match(/trade date\s+([^:]+):?/i)?.[1]);
+    if (sourceDate !== expectedDate) {
+      logger.warn({ expectedDate, sourceDate }, "F&O ban list trade date is missing or does not match the target session");
+      return banListCache;
+    }
+
     const set = new Set<string>();
-    for (const line of resp.data.split("\n")) {
+    for (const line of lines) {
       const trimmed = line.trim();
       if (!trimmed || /ban for trade date/i.test(trimmed)) continue;
       // Rows look like "1,KAYNES" — take the token after the leading index.
@@ -223,7 +243,7 @@ export async function getFnOBanList(): Promise<Set<string>> {
     }
 
     banListCache = set;
-    banListCacheDate = today;
+    banListCacheDate = sourceDate;
     logger.info({ count: set.size }, "F&O ban list refreshed");
     return set;
   } catch (err) {
@@ -232,7 +252,8 @@ export async function getFnOBanList(): Promise<Set<string>> {
   }
 }
 
-export function isSymbolBanned(symbol: string): boolean {
+export function isSymbolBanned(symbol: string): boolean | null {
+  if (!getFnOBanListStatus().available) return null;
   return banListCache.has(symbol.toUpperCase());
 }
 
@@ -294,8 +315,12 @@ export async function getBulkDeals(): Promise<Map<string, BulkDealSignal>> {
       const symbol = (row.BD_SYMBOL ?? row.symbol ?? "").toUpperCase().trim();
       if (!symbol) continue;
       const side = (row.BD_BUY_SELL ?? row.buySell ?? "").toUpperCase();
-      const qty = Number(String(row.BD_QTY_TRD ?? row.qty ?? "0").replace(/,/g, "")) || 0;
       const date = row.BD_DT_DATE ?? row.date ?? "";
+      const parsedDate = parseNseTradeDate(date);
+      const qtyText = String(row.BD_QTY_TRD ?? row.qty ?? "").trim();
+      if (!parsedDate || parsedDate < from || parsedDate > to || !/^[\d,]+(?:\.\d+)?$/.test(qtyText)) continue;
+      const qty = Number(qtyText.replace(/,/g, ""));
+      if (!Number.isFinite(qty) || qty <= 0 || (!side.startsWith("B") && !side.startsWith("S"))) continue;
       const existing = map.get(symbol) ?? { netBuyQty: 0, dealCount: 0, lastDealDate: "" };
       existing.netBuyQty += side.startsWith("B") ? qty : side.startsWith("S") ? -qty : 0;
       existing.dealCount += 1;
@@ -316,6 +341,7 @@ export async function getBulkDeals(): Promise<Map<string, BulkDealSignal>> {
 }
 
 export function getBulkDealSignal(symbol: string): BulkDealSignal | null {
+  if (Date.now() - bulkDealsCacheTime >= BULK_DEALS_TTL_MS) return null;
   return bulkDealsCache.get(symbol.toUpperCase()) ?? null;
 }
 

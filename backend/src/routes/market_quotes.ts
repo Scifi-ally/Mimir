@@ -9,7 +9,7 @@ import axios, { AxiosError } from "axios";
 import { desc, eq } from "drizzle-orm";
 import { db, overnightWatchlistTable } from "../../db/src";
 import { upstoxClient, fetchIndexPrevClose } from "./market_utils";
-import { getFiiDiiDivergence, type DivergenceResult } from "../analysis/divergence_engine";
+import { getFiiDiiDivergence, getCvdDivergence, type DivergenceResult, type CvdDivergenceResult } from "../analysis/divergence_engine";
 import { computeOFI } from "../analysis/order_flow";
 import { getLatestPrice, getOHLC } from "../market_data/tick_feeder";
 import { z } from "zod";
@@ -29,6 +29,7 @@ type DashboardIndices = {
   finnifty: LiveIndexQuote;
   indiaVix: LiveIndexQuote;
   fiiDiiDivergence?: DivergenceResult | null;
+  cvdDivergence?: CvdDivergenceResult | null;
   fetchedAt: string;
 };
 
@@ -82,6 +83,7 @@ function fallbackDashboardIndices(): DashboardIndices {
       ? vix
       : { keyUsed: state.indiaVix == null ? null : "cached:VIX", ltp: state.indiaVix, changePct: null },
     fiiDiiDivergence: null,
+    cvdDivergence: null,
     fetchedAt: new Date().toISOString(),
   };
 }
@@ -139,13 +141,14 @@ async function buildDashboardIndices(): Promise<DashboardIndices | null> {
     return { keyUsed: null, ltp: null, changePct: null };
   };
 
-  const [nifty50, sensex, bankNifty, finnifty, indiaVix, fiiDiiDivergence] = await Promise.all([
+  const [nifty50, sensex, bankNifty, finnifty, indiaVix, fiiDiiDivergence, cvdDivergence] = await Promise.all([
     computeYF('^NSEI'),
     computeYF('^BSESN'),
     computeYF('^NSEBANK'),
     computeYF('^CNXFIN'),
     computeYF('^INDIAVIX'),
-    getFiiDiiDivergence().catch(() => null)
+    getFiiDiiDivergence().catch(() => null),
+    getCvdDivergence('NIFTY 50', '15m').catch(() => null),
   ]);
 
   const result = {
@@ -155,6 +158,7 @@ async function buildDashboardIndices(): Promise<DashboardIndices | null> {
     finnifty,
     indiaVix,
     fiiDiiDivergence,
+    cvdDivergence,
     fetchedAt: new Date().toISOString(),
   };
 
@@ -222,6 +226,19 @@ router.get("/market/ofi", (req, res) => {
   
   const ofi = computeOFI(symbol);
   res.json(ofi);
+});
+
+// GET /api/market/cvd-divergence?symbol=NIFTY%2050&timeframe=15m
+router.get("/market/cvd-divergence", async (req, res) => {
+  try {
+    const symbol = String(req.query.symbol ?? "NIFTY 50").trim();
+    const timeframe = String(req.query.timeframe ?? "15m").trim();
+    const result = await getCvdDivergence(symbol, timeframe);
+    res.json(result);
+  } catch (err: unknown) {
+    logApiError(req, err);
+    res.status(500).json({ error: "Failed to compute CVD divergence" });
+  }
 });
 
 // GET /api/market/ltp?symbol=TCS

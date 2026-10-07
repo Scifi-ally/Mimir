@@ -12,29 +12,33 @@ vi.mock("../src/upstox/auth");
 vi.mock("../src/analysis/stock_scanner");
 
 let existingOrdersInDb: Array<{ id: string; suggestionId: string; orderType: string; status: string; brokerOrderId: string | null }> = [];
+let statusWrites: string[] = [];
 
 vi.mock("../db/src", () => ({
   db: {
-    insert: vi.fn().mockImplementation(() => ({
-      values: vi.fn().mockImplementation((val) => {
-        const created = { id: "test-live-order-123", ...val };
-        return {
-          returning: vi.fn().mockResolvedValue([created]),
-        };
-      }),
-    })),
-    update: vi.fn().mockReturnValue({
-      set: vi.fn().mockReturnValue({
-        where: vi.fn().mockResolvedValue({}),
-      }),
-    }),
-    select: vi.fn().mockImplementation(() => ({
-      from: vi.fn().mockImplementation(() => ({
-        where: vi.fn().mockImplementation(() => ({
-          limit: vi.fn().mockImplementation(() => Promise.resolve(existingOrdersInDb)),
+    transaction: vi.fn().mockImplementation(async (run) => run({
+      execute: vi.fn().mockResolvedValue({ rows: [] }),
+      insert: vi.fn().mockImplementation(() => ({
+        values: vi.fn().mockImplementation((val) => ({
+          returning: vi.fn().mockResolvedValue([{ id: "test-live-order-123", ...val }]),
+        })),
+      })),
+      select: vi.fn().mockImplementation(() => ({
+        from: vi.fn().mockImplementation(() => ({
+          where: vi.fn().mockImplementation(() => ({
+            limit: vi.fn().mockResolvedValue(existingOrdersInDb),
+          })),
         })),
       })),
     })),
+    update: vi.fn().mockReturnValue({
+      set: vi.fn().mockImplementation((values) => {
+        if (values?.status) statusWrites.push(values.status);
+        return {
+        where: vi.fn().mockResolvedValue({}),
+        };
+      }),
+    }),
   },
   liveOrdersTable: {
     id: "id",
@@ -48,6 +52,7 @@ describe("Broker Orders Pre-Flight Idempotency Guard", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     existingOrdersInDb = [];
+    statusWrites = [];
     vi.spyOn(configModule, "getConfig").mockReturnValue({
       tradingMode: "LIVE",
       paperTradingEnabled: false,
@@ -112,6 +117,70 @@ describe("Broker Orders Pre-Flight Idempotency Guard", () => {
     expect(retryRes.error).toContain("Duplicate order blocked");
 
     // CRITICAL Assertion: Axios post was NEVER called on the duplicate retry!
+    expect(axios.post).not.toHaveBeenCalled();
+  });
+
+  it("does not treat a different placed exit type as a successful requested exit", async () => {
+    existingOrdersInDb = [{
+      id: "existing-stop-exit",
+      suggestionId: "sug-cross-exit-12345",
+      orderType: "STOP_EXIT",
+      status: "PLACED",
+      brokerOrderId: "broker-stop-101",
+    }];
+
+    const res = await placeLiveOrder({
+      suggestionId: "sug-cross-exit-12345",
+      symbol: "RELIANCE",
+      direction: "SELL",
+      quantity: 10,
+      orderType: "TARGET_EXIT",
+      tradeType: "INTRADAY",
+    });
+
+    expect(res.ok).toBe(false);
+    expect(res.uncertain).toBe(true);
+    expect(res.error).toContain("STOP_EXIT order already PLACED");
+    expect(axios.post).not.toHaveBeenCalled();
+  });
+
+  it("records lost acknowledgements as UNKNOWN and blocks resubmission", async () => {
+    vi.mocked(axios.post).mockRejectedValueOnce(new Error("socket timeout"));
+
+    const first = await placeLiveOrder({
+      suggestionId: "sug-uncertain-12345",
+      symbol: "RELIANCE",
+      direction: "BUY",
+      quantity: 10,
+      orderType: "ENTRY",
+      tradeType: "INTRADAY",
+    });
+
+    expect(first.ok).toBe(false);
+    expect(first.uncertain).toBe(true);
+    expect(statusWrites).toContain("UNKNOWN");
+
+    existingOrdersInDb = [{
+      id: first.liveOrderId,
+      suggestionId: "sug-uncertain-12345",
+      orderType: "ENTRY",
+      status: "UNKNOWN",
+      brokerOrderId: null,
+    }];
+    vi.mocked(axios.post).mockClear();
+
+    const retry = await placeLiveOrder({
+      suggestionId: "sug-uncertain-12345",
+      symbol: "RELIANCE",
+      direction: "BUY",
+      quantity: 10,
+      orderType: "ENTRY",
+      tradeType: "INTRADAY",
+    });
+
+    expect(retry.ok).toBe(false);
+    expect(retry.uncertain).toBe(true);
+    expect(retry.error).toContain("already UNKNOWN");
     expect(axios.post).not.toHaveBeenCalled();
   });
 });

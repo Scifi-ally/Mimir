@@ -62,6 +62,10 @@ export function toRankerFeatureArray(fv: FeatureVector): number[] {
     const row = RANKER_FEATURE_KEYS.map((key) => {
       const value = fv[key];
       if (typeof value === "number" && Number.isFinite(value)) return value;
+      // LightGBM has native missing-value routing. This optional source may be
+      // absent; NaN serializes as JSON null, and Python preserves it as NaN.
+      // Never replace missing institutional flow with a measured zero.
+      if (key === "fiiDiiNetFlowLag" && (value == null || Number.isNaN(value))) return NaN;
       missing.push(key);
       return 0;
     });

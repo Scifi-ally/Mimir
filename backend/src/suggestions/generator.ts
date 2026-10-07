@@ -22,7 +22,7 @@ import {
 } from "../analysis/stock_scanner";
 import { runIntelligencePipeline, type IntelligenceSignal } from "../analysis/signal_generator";
 import { checkSuggestionOutcomes, expireOldSuggestions, resolveCounterfactuals } from "./accuracy_tracker";
-import { fetchCorporateActionBlacklist } from "../market_data/corporate_actions";
+import { fetchCorporateActionBlacklist, getCorporateActionBlacklistStatus } from "../market_data/corporate_actions";
 import { agentCognition } from "../analysis/agent_cognition";
 import { isSymbolBanned, getDeliveryPct, getBulkDealSignal, refreshNSEFreeData } from "../market_data/nse_free_data";
 import { calibrateConfidence, isSetupDemoted, isSetupDemotedForRegime } from "../analysis/calibration_engine";
@@ -37,6 +37,7 @@ import { createUpstoxClient } from "../lib/upstox-client";
 import { getISTDateStr, getNextTradingDayStr, todayStartUTC } from "../lib/ist-time";
 import { beginWorkflow, endWorkflow } from "../workflow/coordinator";
 import { calculateSuggestionTiming } from "./timing";
+import { quantitativeAdmission } from "../analysis/quantitative_admission";
 
 // ── Create optimized API client (reused across calls) ────────────────────────
 
@@ -545,8 +546,13 @@ export async function generateSuggestionsFromWatchlist(options?: {
       symbol: normalizeSymbol(c.symbol),
     }));
 
+    const corporateActionsAvailable = getCorporateActionBlacklistStatus().available;
+    if (!corporateActionsAvailable) {
+      logger.warn("Corporate action feed is unavailable or expired; skipping signal generation");
+    }
     const eligibleCandidates = normalizedCandidates
       .filter((c) => {
+        if (!corporateActionsAvailable) return false;
         if (c.category === "AVOID") return false;
         if (existingSymbols.has(c.symbol)) return false;
         if (corporateBlacklist.has(c.symbol)) {
@@ -766,6 +772,7 @@ export async function generateSuggestionsFromWatchlist(options?: {
     // driven by empirical win rates, not raw model confidence. ingestSignal is
     // told the blend already happened (it is not idempotent).
     for (const signal of pipelineResult.signals) {
+      if (signal.quantitativeValidated) continue;
       const tradeType = isIntradayCandidate(signal.symbol) ? "INTRADAY" : "SWING";
       const { confidence: calibratedConfidence, empirical } = await calibrateConfidence(
         signal.confidence,
@@ -1018,6 +1025,13 @@ export async function ingestSignal(
 ): Promise<string | null> {
   const ltp = livePrice;
   const marketState = getMarketState();
+  // Every entry path, including the tick monitor, needs measured evidence.
+  // The daily ranker has no validated intraday holding-horizon contract.
+  const quantitativeRejection = quantitativeAdmission(signal.decisionTrace?.win_probability,
+    signal.quantitativeValidated === true, !!signal.featureVector?.rankerIncomplete);
+  if (quantitativeRejection) return quantitativeRejection;
+  if (options?.isIntraday || signal.timeHorizon !== "5 trading sessions") return "unvalidated_signal_horizon";
+  if (["SELL"].includes(signal.signal)) return "unsupported_cash_short_horizon";
 
   // Dynamic R:R floor mirrors the scheduler path (base 1.3, raised in
   // high-VIX / weak-breadth regimes) so the realtime path can't admit
@@ -1084,12 +1098,21 @@ export async function ingestSignal(
   }
 
   // F&O ban period: OI limits make these erratic — hard reject.
-  if (isSymbolBanned(signal.symbol)) {
+  const fnoBanned = isSymbolBanned(signal.symbol);
+  if (fnoBanned === null) {
+    logger.warn({ symbol: signal.symbol }, "Discarding suggestion: F&O ban-list status is unknown");
+    return "fno_ban_data_unavailable";
+  }
+  if (fnoBanned) {
     logger.warn({ symbol: signal.symbol }, "Discarding suggestion: symbol in F&O ban period");
     return "fno_ban";
   }
 
   // Earnings/corp-action blackout: no binary event risk on open positions.
+  if (!getCorporateActionBlacklistStatus().available) {
+    logger.warn({ symbol: signal.symbol }, "Discarding suggestion: corporate-action feed status is unknown");
+    return "corporate_action_data_unavailable";
+  }
   if (marketState.corporateActionSymbols.has(signal.symbol)) {
     logger.warn({ symbol: signal.symbol }, "Discarding suggestion: corporate event within 3 days");
     return "corporate_action";
@@ -1131,7 +1154,7 @@ export async function ingestSignal(
   const bulkDeal = getBulkDealSignal(signal.symbol);
   if (bulkDeal && bulkDeal.netBuyQty !== 0) {
     const aligned = signal.signal === "BUY" ? bulkDeal.netBuyQty > 0 : bulkDeal.netBuyQty < 0;
-    signal.confidence = Math.max(0, Math.min(100, signal.confidence + (aligned ? 5 : -5)));
+    signal.signalScore = Math.max(0, Math.min(100, (signal.signalScore ?? 0) + (aligned ? 5 : -5)));
     signal.confluence = [
       ...(signal.confluence ?? []),
       aligned ? "Institutional bulk-deal flow aligned" : "Bulk-deal flow against direction",
@@ -1145,7 +1168,7 @@ export async function ingestSignal(
   const vwapDist = signal.featureVector?.vwapDistance;
   if (typeof vwapDist === "number" && vwapDist !== 0) {
     const vwapAligned = signal.signal === "BUY" ? vwapDist > 0 : vwapDist < 0;
-    signal.confidence = Math.max(0, Math.min(100, signal.confidence + (vwapAligned ? 3 : -6)));
+    signal.signalScore = Math.max(0, Math.min(100, (signal.signalScore ?? 0) + (vwapAligned ? 3 : -6)));
     signal.confluence = [
       ...(signal.confluence ?? []),
       vwapAligned
@@ -1216,7 +1239,7 @@ export async function ingestSignal(
     signal.setupType,
     tradeType,
   );
-  if (!options?.confidenceCalibrated && calibratedConfidence !== signal.confidence) {
+  if (!signal.quantitativeValidated && !options?.confidenceCalibrated && calibratedConfidence !== signal.confidence) {
     logger.info(
       {
         symbol: signal.symbol,

@@ -1,5 +1,5 @@
-import { db, suggestionsTable } from "../../db/src";
-import { eq, sql, gte, and } from "drizzle-orm";
+import { db, suggestionsTable, liveOrdersTable } from "../../db/src";
+import { eq, sql, gte, and, inArray } from "drizzle-orm";
 import { intelligenceBus } from "../intelligence/event_bus";
 import { getConfig } from "../config";
 import { logger } from "../lib/logger";
@@ -14,7 +14,7 @@ import { broadcast } from "../ws/websocket_server";
 import { createServerEvent } from "../ws/events";
 import { isLiveModeActive, placeLiveOrder } from "./broker_orders";
 import { stateStore } from "../lib/redis_state";
-import { getCalibration, ensureFresh } from "../analysis/calibration_engine";
+import { cashDeliveryCosts, cashIntradayCosts, isDeliveryTrade } from "../analysis/transaction_costs";
 import Decimal from "decimal.js";
 import { computeAdx14, ADX_TREND_THRESHOLD } from "./adx_gate";
 
@@ -111,6 +111,10 @@ export function resolveOrderQuantity(params: {
   return { quantity, riskAmount, cappedByUpstream };
 }
 
+export function calculateRequiredMargin(entryPrice: Decimal, quantity: Decimal | number, isSwingTrade: boolean): Decimal {
+  return entryPrice.mul(quantity).div(isSwingTrade ? 1 : 5);
+}
+
 let engineActive = false;
 
 // Track symbols with active OPEN paper positions to eliminate DB query thrashing on ticks
@@ -134,6 +138,7 @@ async function syncActiveOpenSymbols() {
 const circuitLimitTracker = new Map<string, {
   consecutiveZeroVolumeTicks: number;
   firstDetectedAt: number;
+  alerted: boolean;
 }>();
 
 // HIGH FIX: Prevent race conditions when multiple ticks for the same symbol arrive concurrently
@@ -213,7 +218,8 @@ export async function initPaperEngine() {
         symbol: sugRow.symbol,
         direction: sugRow.direction,
         setup: sugRow.setupType,
-        confidence: sugRow.confidence || 50,
+        confidence: sugRow.confidence ?? 50,
+        tradeType: sugRow.tradeType,
         entry: parseFloat(sugRow.entryPrice),
         stopLoss: parseFloat(sugRow.stopLoss),
         target: parseFloat(sugRow.target1),
@@ -286,51 +292,19 @@ export async function initPaperEngine() {
       // ---------------------------------------------------------
 
       // ---------------------------------------------------------
-      // Dynamic Position Sizing — fixed-fractional risk scaled by realized edge.
-      // Issue #17 removed Kelly because AI confidence is not a win probability.
-      // The calibration engine now supplies EMPIRICAL per-setup win rates with
-      // sample counts, which is what Kelly actually needs — so risk is scaled
-      // by quarter-Kelly on measured edge, blended toward the base as samples
-      // grow, and hard-capped. Confidence still nudges only the base risk.
+      // Fixed-fractional risk. Suggestion hit rates and model conviction lack
+      // verified net-return evidence and cannot justify increasing capital risk.
       // ---------------------------------------------------------
-      const maxRiskCap = config.maxRiskPerTradePct || 2.0; // Hard cap at 2% risk
+      const maxRiskCap = Math.max(0, Math.min(config.maxRiskPerTradePct ?? 1.0, 1.0));
 
       // Start with conservative base risk
-      let riskPct = 1.0; // 1% base risk
+      const riskPct = Math.min(0.25, maxRiskCap);
 
-      // Scale up slightly for high confidence (but conservatively)
-      const confidence = suggestion.confidence || 50;
-      if (confidence >= 80) {
-        riskPct = 1.5; // High confidence: 1.5%
-      } else if (confidence >= 70) {
-        riskPct = 1.25; // Medium-high: 1.25%
-      } else if (confidence < 60) {
-        riskPct = 0.5; // Low confidence: reduce to 0.5%
-      }
-
-      // Quarter-Kelly on empirical edge: f* = p - (1-p)/b with b = risk:reward.
-      // Negative-edge setups shrink toward the floor instead of being skipped —
-      // the expectancy gate upstream is responsible for disabling them outright.
-      // ensureFresh guards against a stale cache (startup warm + TTL refresh
-      // usually cover it; this makes sizing not depend on scheduler health).
-      const KELLY_MIN_SAMPLES = 30;
-      await ensureFresh();
-      const isSwingTrade = Boolean(suggestion.setup?.toLowerCase().includes("swing") || suggestion.setup?.toLowerCase().includes("cnc"));
-      const tradeCategory = isSwingTrade ? "SWING" : "INTRADAY";
-      const cal = getCalibration(suggestion.setup, tradeCategory);
-      if (cal && cal.samples >= KELLY_MIN_SAMPLES && suggestion.riskReward > 0) {
-        const p = cal.winRate;
-        const b = suggestion.riskReward;
-        const kellyFraction = p - (1 - p) / b;
-        // Optimized via Phase 5 walk-forward grid search
-        const optimizedKellyPct = Math.max(0, kellyFraction) * 100 * 0.20;
-        // Blend toward the empirical size as evidence accumulates (full weight at 100 samples)
-        const w = Math.min(cal.samples, 100) / 100;
-        riskPct = riskPct * (1 - w) + Math.min(optimizedKellyPct, maxRiskCap) * w;
-      }
-
-      // Ensure within bounds
-      riskPct = Math.min(Math.max(riskPct, 0.20), maxRiskCap);
+      // Confidence is retained for diagnostics only.
+      const confidence = suggestion.confidence ?? 50;
+      // Signal hit rates do not measure the distribution of broker net returns.
+      // They cannot justify Kelly leverage or confidence-based risk increases.
+      const isSwingTrade = isDeliveryTrade(suggestion.tradeType, suggestion.setup);
 
       // The risk engine's maxRiskInr is a HARD cap, not advice: it already
       // accounts for portfolio state (open positions, sector exposure, deployed
@@ -459,16 +433,16 @@ export async function initPaperEngine() {
       }
 
       let quantity = sizing.quantity;
+      const liveEntry = isLiveModeActive();
 
-      // Proper trader intraday MIS leverage on NSE (5x leverage -> 20% margin required per share)
-      const intradayLeverage = new Decimal(5);
-      const marginPerShare = entry.div(intradayLeverage);
-
+      // MIS intraday can use the configured 5x assumption; CNC delivery must
+      // reserve the full notional or SWING orders can over-allocate cash.
       // Ensure we don't exceed available margin
-      let requiredMargin = marginPerShare.mul(quantity);
+      let requiredMargin = calculateRequiredMargin(entry, quantity, isSwingTrade);
       if (requiredMargin.gt(availableMargin)) {
+        const marginPerShare = entry.div(isSwingTrade ? 1 : 5);
         quantity = availableMargin.div(marginPerShare).floor().toNumber();
-        requiredMargin = marginPerShare.mul(quantity); // Recalculate with new quantity
+        requiredMargin = calculateRequiredMargin(entry, quantity, isSwingTrade);
         if (quantity <= 0) {
           logger.warn({ symbol: suggestion.symbol, availableMargin: availableMargin.toNumber(), entry: entry.toNumber() }, "PaperEngine: Aborted entry because quantity is 0 after margin adjustment");
           return;
@@ -477,7 +451,7 @@ export async function initPaperEngine() {
 
       // CRITICAL FIX (Issue #3): Use serializable isolation and row locking to prevent margin race condition
       // Two simultaneous suggestions could both see available margin and over-allocate
-      await db.transaction(async (tx) => {
+      const positionCreated = await db.transaction(async (tx) => {
         // 1. Lock the account row with FOR UPDATE to prevent concurrent modifications
         const lockRes = await tx.execute(sql`
           SELECT id, balance, allocated_margin
@@ -502,7 +476,7 @@ export async function initPaperEngine() {
           .limit(1);
         if (dup.length > 0) {
           logger.info({ symbol: suggestion.symbol }, "PaperEngine: Skipping — already have an OPEN position on this symbol");
-          return;
+          return false;
         }
 
         // 2. Re-check available margin with locked values
@@ -545,14 +519,22 @@ export async function initPaperEngine() {
               tech: suggestion.technicalScore
             }
           },
-          status: "EXECUTED"
+          // LIVE entries remain provisional until the broker confirms a fill.
+          status: liveEntry ? "PENDING" : "EXECUTED"
         });
 
         // 5. Update Account with locked values
         await tx.update(paperAccountsTable)
           .set({ allocatedMargin: sql`allocated_margin + ${requiredMargin.toFixed(2)}` })
           .where(eq(paperAccountsTable.id, account.id));
+
+        return true;
       });
+
+      // Returning from the transaction callback only exits that callback. Do
+      // not publish or mirror an entry when the duplicate guard skipped the
+      // position insert.
+      if (!positionCreated) return;
 
       activeOpenSymbols.add(suggestion.symbol);
       logger.info({ symbol: suggestion.symbol, quantity, requiredMargin }, "PaperEngine: Entered Position");
@@ -567,9 +549,8 @@ export async function initPaperEngine() {
         mode: "OPEN",
       }));
 
-      // LIVE mode: mirror the entry to the broker. The internal book is the
-      // strategy's source of truth; the broker order is the real-money mirror.
-      if (isLiveModeActive()) {
+      // LIVE mode submits the real order, but broker acceptance is not a fill.
+      if (liveEntry) {
         const orderResult = await placeLiveOrder({
           suggestionId: suggestion.id,
           symbol: suggestion.symbol,
@@ -578,27 +559,66 @@ export async function initPaperEngine() {
           orderType: "ENTRY",
           tradeType: isSwingTrade ? "SWING" : "INTRADAY",
           referencePrice: entry.toNumber(),
+          stopLossPrice: stopLoss.toNumber(),
         });
 
+        if (orderResult.ok) {
+          await db.update(paperOrdersTable)
+            .set({ status: "SUBMITTED" })
+            .where(and(
+              eq(paperOrdersTable.suggestionId, suggestion.id),
+              eq(paperOrdersTable.orderType, "ENTRY"),
+              eq(paperOrdersTable.status, "PENDING"),
+            ));
+        }
+
         if (!orderResult.ok) {
-          logger.error({ symbol: suggestion.symbol, error: orderResult.error }, "PaperEngine: Live broker order failed — reverting internal DB position");
-          await db.transaction(async (tx) => {
-            await tx.update(paperPositionsTable)
-              .set({ status: "REJECTED" })
-              .where(sql`${paperPositionsTable.suggestionId} = ${suggestion.id} AND ${paperPositionsTable.status} = 'OPEN'`);
-            
-            await tx.update(paperAccountsTable)
-              .set({ allocatedMargin: sql`GREATEST(0, allocated_margin - ${requiredMargin.toFixed(2)})` })
-              .where(eq(paperAccountsTable.id, account.id));
-          });
+          if (orderResult.uncertain) {
+            // The broker may have accepted an order whose acknowledgement was
+            // lost. Keep the internal position and margin reserved so a retry
+            // cannot create an untracked second exposure; reconciliation is
+            // required before this order can be retried or cleared.
+            logger.error(
+              { symbol: suggestion.symbol, suggestionId: suggestion.id, liveOrderId: orderResult.liveOrderId, error: orderResult.error },
+              "PaperEngine: LIVE order outcome is unknown; retaining reserved position pending broker reconciliation",
+            );
+          } else {
+            logger.error({ symbol: suggestion.symbol, error: orderResult.error }, "PaperEngine: Live broker order was rejected — reverting internal DB position");
+            await db.transaction(async (tx) => {
+              await tx.update(paperOrdersTable)
+                .set({ status: "FAILED" })
+                .where(and(
+                  eq(paperOrdersTable.suggestionId, suggestion.id),
+                  eq(paperOrdersTable.orderType, "ENTRY"),
+                  eq(paperOrdersTable.status, "PENDING"),
+                ));
+
+              await tx.update(paperPositionsTable)
+                .set({ status: "REJECTED" })
+                .where(sql`${paperPositionsTable.suggestionId} = ${suggestion.id} AND ${paperPositionsTable.status} = 'OPEN'`);
+
+              await tx.update(paperAccountsTable)
+                .set({ allocatedMargin: sql`GREATEST(0, allocated_margin - ${requiredMargin.toFixed(2)})` })
+                .where(eq(paperAccountsTable.id, account.id));
+            });
+          }
         }
 
         broadcast(createServerEvent.systemAlert({
-          message: orderResult.ok
-            ? `LIVE order placed: ${suggestion.direction} ${quantity} ${suggestion.symbol}`
+          message: orderResult.uncertain
+            ? `LIVE order outcome unknown for ${suggestion.symbol}. Position and margin remain reserved. Reconcile with the broker before retrying.`
+            : orderResult.ok
+            ? `LIVE entry accepted for ${suggestion.symbol}; fill is unconfirmed. Position and margin remain reserved pending broker reconciliation.`
             : `LIVE order FAILED: ${suggestion.symbol} — ${orderResult.error} (Position reverted)`,
-          severity: orderResult.ok ? "info" : "error",
+          severity: orderResult.ok && orderResult.protectiveStopPlaced !== false ? "info" : "error",
         }), "system");
+
+        if (orderResult.ok && orderResult.protectiveStopPlaced === false) {
+          broadcast(createServerEvent.systemAlert({
+            message: `LIVE entry accepted for ${suggestion.symbol}, but the broker-side protective stop failed. Fill is unconfirmed; review the broker order immediately.`,
+            severity: "error",
+          }), "system");
+        }
       }
 
     } catch (err) {
@@ -631,7 +651,6 @@ export async function initPaperEngine() {
       // For simplicity, we can fetch them or assume position_tracker updates them
       // Let's fetch the suggestions
       const { suggestionsTable } = await import("../../db/src/schema/suggestions");
-      const { inArray } = await import("drizzle-orm");
       const suggestions = await db.select().from(suggestionsTable)
         .where(inArray(suggestionsTable.id, positionsForSymbol.map(p => p.suggestionId!)));
 
@@ -640,6 +659,27 @@ export async function initPaperEngine() {
       for (const pos of positionsForSymbol) {
         const suggestion = sugMap.get(pos.suggestionId!);
         if (!suggestion) continue;
+
+        if (isLiveModeActive()) {
+          const unresolvedOrders = await db.select({ id: liveOrdersTable.id, status: liveOrdersTable.status, orderType: liveOrdersTable.orderType, statusMessage: liveOrdersTable.statusMessage })
+            .from(liveOrdersTable)
+            .where(and(
+              eq(liveOrdersTable.suggestionId, pos.suggestionId!),
+              inArray(liveOrdersTable.status, ["PENDING", "UNKNOWN", "PLACED"]),
+            ))
+            .limit(100);
+          const unresolvedOrder = unresolvedOrders.find((order) =>
+            order.orderType === "ENTRY" ||
+            (order.orderType !== "GTT_STOP" && !order.statusMessage?.includes("GTT Stop-Loss Order Placed")),
+          );
+          if (unresolvedOrder) {
+            logger.error(
+              { symbol: pos.symbol, suggestionId: pos.suggestionId, liveOrderStatus: unresolvedOrder.status, liveOrderType: unresolvedOrder.orderType },
+              "PaperEngine: Skipping automatic management until LIVE broker order fill is reconciled",
+            );
+            continue;
+          }
+        }
 
         const ltp = new Decimal(tick.ltp);
         const entryPrice = new Decimal(pos.avgEntryPrice);
@@ -714,28 +754,23 @@ if (ltp.lte(target)) exitReason = "TARGET_EXIT";
           // MEDIUM FIX (Issue #22): Enhanced circuit limit detection with tracking
           // Check for consecutive zero-volume ticks to confirm circuit hit (not just one tick)
           //
-          // Only a REAL WS tick can signal a circuit halt: on the WS path an absent
-          // bid/ask means no counterparty (genuine zero-liquidity / circuit signal).
-          // The HTTP fallback poll publishes ltp-only ticks (volume: null, no bid/ask)
-          // by design — treating that as "zero liquidity" made the guard fire on every
-          // fallback tick, deferring legitimate TARGET/STOP exits and force-filling them
-          // at 10x slippage (0.5% vs 0.05%) during a mere feed degradation. Skip the
-          // circuit path entirely for non-WS ticks and let the exit fill normally.
+          // An exit needs a counterparty quote: a sell requires a bid and a buy
+          // requires an ask. LTP-only fallback ticks cannot establish a fill.
           // NOTE (Issue #M6): tick.volume is the running DAY-cumulative volume from
           // the 1d OHLC candle, not per-tick traded quantity. It is 0 only pre-open
           // and null whenever a WS packet carries LTP/depth without the 1d candle, so
           // it is not a circuit-halt signal — using it here produced false positives
           // even on real WS ticks. The genuine zero-counterparty signal is an absent
           // bid (for a sell-side exit) or ask (for a buy-side exit) on a live book.
-          const isWsTick = tick.source === "ws" || tick.source === undefined;
-          const isLiquidityZero = isWsTick && (
-                                  (isBuy && (tick.bid == null || tick.bid === 0)) ||
-                                  (!isBuy && (tick.ask == null || tick.ask === 0)));
+          const isLiquidityZero =
+            (isBuy && (tick.bid == null || tick.bid <= 0)) ||
+            (!isBuy && (tick.ask == null || tick.ask <= 0));
 
           if (isLiquidityZero) {
             const tracker = circuitLimitTracker.get(pos.symbol) || {
               consecutiveZeroVolumeTicks: 0,
-              firstDetectedAt: Date.now()
+              firstDetectedAt: Date.now(),
+              alerted: false,
             };
             
             tracker.consecutiveZeroVolumeTicks++;
@@ -754,73 +789,19 @@ if (ltp.lte(target)) exitReason = "TARGET_EXIT";
               continue;
             }
             
-            // Force exit after 30 seconds of circuit limit (5+ ticks and 30+ seconds)
-            if (tracker.consecutiveZeroVolumeTicks >= 5 || elapsedSeconds > 30) {
-              logger.error({
-                symbol: pos.symbol,
-                exitReason,
-                consecutiveTicks: tracker.consecutiveZeroVolumeTicks,
-                durationSeconds: elapsedSeconds
-              }, "PaperEngine: Forcing exit due to prolonged circuit limit - using wider slippage");
-              
-              // Force exit with wider slippage (0.5% instead of 0.05%)
-              const ltpAtTrigger = new Decimal(tick.ltp || pos.avgEntryPrice); // Fallback to entry if no LTP
-              const slippedLtp = isBuy ? ltpAtTrigger.mul(0.995) : ltpAtTrigger.mul(1.005);
-              const realizedPnl = isBuy ? slippedLtp.minus(entryPrice).mul(qty) : entryPrice.minus(slippedLtp).mul(qty);
-              
-              // Create exit with circuit limit flag
-              const account = await getAccount();
-              await db.transaction(async (tx) => {
-                // Same status='OPEN' guard as normal exit — prevents double-close
-                // (and double margin release) if two ticks race here.
-                const updateRes = await tx.update(paperPositionsTable)
-                  .set({
-                    status: "CLOSED",
-                    realizedPnl: realizedPnl.toFixed(2),
-                    unrealizedPnl: "0.00",
-                    closedAt: sql`now()`
-                  })
-                  .where(sql`${paperPositionsTable.id} = ${pos.id} AND ${paperPositionsTable.status} = 'OPEN'`)
-                  .returning();
-
-                if (updateRes.length === 0) {
-                  throw new Error("PaperEngine: Race condition - position already closed (circuit exit)");
-                }
-
-                await tx.insert(paperOrdersTable).values({
-                  suggestionId: pos.suggestionId,
-                  symbol: pos.symbol,
-                  direction: isBuy ? "SELL" : "BUY",
-                  orderType: "CIRCUIT_LIMIT_EXIT",
-                  quantity: qty.toNumber(),
-                  price: slippedLtp.toFixed(2),
-                  status: "EXECUTED"
-                });
-
-                const releasedMargin = qty.mul(entryPrice).div(5);
-                await tx.update(paperAccountsTable)
-                  .set({ 
-                    allocatedMargin: sql`GREATEST(0, allocated_margin - ${releasedMargin.toFixed(2)})`,
-                    balance: sql`balance + ${realizedPnl.toFixed(2)}`
-                  })
-                  .where(eq(paperAccountsTable.id, account.id));
-              });
-              
-              circuitLimitTracker.delete(pos.symbol);
-              logger.warn({ symbol: pos.symbol, realizedPnl: realizedPnl.toNumber() }, "PaperEngine: Forced exit during circuit limit");
-
-              if (isLiveModeActive()) {
-                await placeLiveOrder({
-                  suggestionId: pos.suggestionId,
-                  symbol: pos.symbol,
-                  direction: isBuy ? "SELL" : "BUY",
-                  quantity: qty.toNumber(),
-                  orderType: "CIRCUIT_LIMIT_EXIT",
-                  tradeType: "INTRADAY",
-                  referencePrice: slippedLtp.toNumber(),
-                });
-              }
-              continue;
+            // Never invent a fill from LTP when the required side of the book
+            // is absent. Keep the position and margin reserved until liquidity
+            // returns, then let the normal exit path verify the broker quantity.
+            if ((tracker.consecutiveZeroVolumeTicks >= 5 || elapsedSeconds > 30) && !tracker.alerted) {
+              tracker.alerted = true;
+              logger.error(
+                { symbol: pos.symbol, exitReason, consecutiveTicks: tracker.consecutiveZeroVolumeTicks, durationSeconds: elapsedSeconds },
+                "PaperEngine: Exit is blocked because no counterparty quote is available; position remains open",
+              );
+              broadcast(createServerEvent.systemAlert({
+                message: `Exit for ${pos.symbol} is blocked because no counterparty quote is available. Position and margin remain reserved.`,
+                severity: "error",
+              }), "system");
             }
             
             // Still waiting for circuit to clear
@@ -858,18 +839,61 @@ if (ltp.lte(target)) exitReason = "TARGET_EXIT";
             // For SELL positions, we BUY on exit - slippage works against us
             slippedLtp = ltpAtTrigger.mul(1 + exitSlipFrac);
           }
+          const isSwingExit = isDeliveryTrade(suggestion.tradeType, suggestion.setupType);
+
+          if (isLiveModeActive()) {
+            const exitOrder = await placeLiveOrder({
+              suggestionId: pos.suggestionId,
+              symbol: pos.symbol,
+              direction: isBuy ? "SELL" : "BUY",
+              quantity: qty.toNumber(),
+              orderType: exitReason,
+              tradeType: isSwingExit ? "SWING" : "INTRADAY",
+              referencePrice: slippedLtp.toNumber(),
+            });
+
+            await db.insert(paperOrdersTable).values({
+              suggestionId: pos.suggestionId,
+              symbol: pos.symbol,
+              direction: isBuy ? "SELL" : "BUY",
+              orderType: exitReason as string,
+              quantity: qty.toNumber(),
+              price: slippedLtp.toFixed(2),
+              status: exitOrder.ok ? "SUBMITTED" : exitOrder.uncertain ? "PENDING" : "FAILED",
+            });
+
+            if (exitOrder.ok) {
+              logger.warn(
+                { symbol: pos.symbol, suggestionId: pos.suggestionId, liveOrderId: exitOrder.liveOrderId, brokerOrderId: exitOrder.brokerOrderId },
+                "PaperEngine: LIVE exit accepted; retaining position and margin until broker fill is reconciled",
+              );
+              broadcast(createServerEvent.systemAlert({
+                message: `LIVE exit accepted for ${pos.symbol}; fill is unconfirmed. Position and margin remain reserved pending broker reconciliation.`,
+                severity: "error",
+              }), "system");
+            } else {
+              logger.error(
+                { symbol: pos.symbol, suggestionId: pos.suggestionId, liveOrderId: exitOrder.liveOrderId, error: exitOrder.error, uncertain: exitOrder.uncertain },
+                "PaperEngine: LIVE exit not confirmed; retaining position and margin",
+              );
+              broadcast(createServerEvent.systemAlert({
+                message: exitOrder.uncertain
+                  ? `LIVE exit outcome for ${pos.symbol} is unknown. Position and margin remain reserved; reconcile with the broker.`
+                  : `LIVE exit failed for ${pos.symbol}. Position and margin remain reserved.`,
+                severity: "error",
+              }), "system");
+            }
+            continue;
+          }
           
           const grossPnl = isBuy ? slippedLtp.minus(entryPrice).mul(qty) : entryPrice.minus(slippedLtp).mul(qty);
-          const brokeragePerOrder = new Decimal(getConfig().brokeragePerOrderInr ?? 20);
-          const totalBrokerage = brokeragePerOrder.mul(2); // Entry + Exit orders
-          const sellValue = isBuy ? slippedLtp.mul(qty) : entryPrice.mul(qty);
-          const sttTax = sellValue.mul(0.00025); // 0.025% STT on sell leg for intraday equity
-          const totalCharges = totalBrokerage.add(sttTax);
+          const totalCharges = new Decimal(isSwingExit
+            ? cashDeliveryCosts(entryPrice.toNumber(), slippedLtp.toNumber(), qty.toNumber())
+            : cashIntradayCosts(isBuy ? entryPrice.toNumber() : slippedLtp.toNumber(),
+              isBuy ? slippedLtp.toNumber() : entryPrice.toNumber(), qty.toNumber()));
           const realizedPnl = grossPnl.minus(totalCharges);
 
-          const isSwingExit = pos.symbol.includes("-SWING");
-          const exitLeverage = isSwingExit ? 1 : 5;
-          const releasedMargin = qty.mul(entryPrice).div(exitLeverage);
+          const releasedMargin = calculateRequiredMargin(entryPrice, qty, isSwingExit);
 
           const account = await getAccount();
           await db.transaction(async (tx) => {
@@ -920,44 +944,6 @@ if (ltp.lte(target)) exitReason = "TARGET_EXIT";
             mode: "CLOSED",
           }));
 
-          if (isLiveModeActive()) {
-            const exitOrder = await placeLiveOrder({
-              suggestionId: pos.suggestionId,
-              symbol: pos.symbol,
-              direction: isBuy ? "SELL" : "BUY",
-              quantity: qty.toNumber(),
-              orderType: exitReason,
-              tradeType: isSwingExit ? "SWING" : "INTRADAY",
-              referencePrice: slippedLtp.toNumber(),
-            });
-
-            if (!exitOrder.ok) {
-              logger.error({ symbol: pos.symbol, error: exitOrder.error }, "PaperEngine: LIVE exit order failed — reverting internal position to OPEN");
-              await db.transaction(async (tx) => {
-                await tx.update(paperPositionsTable)
-                  .set({
-                    status: "OPEN",
-                    realizedPnl: "0.00",
-                    closedAt: null
-                  })
-                  .where(eq(paperPositionsTable.id, pos.id));
-
-                await tx.update(paperAccountsTable)
-                  .set({
-                    allocatedMargin: sql`allocated_margin + ${releasedMargin.toFixed(2)}`,
-                    balance: sql`balance - ${realizedPnl.toFixed(2)}`
-                  })
-                  .where(eq(paperAccountsTable.id, account.id));
-              });
-            }
-
-            broadcast(createServerEvent.systemAlert({
-              message: exitOrder.ok
-                ? `LIVE exit placed: ${isBuy ? "SELL" : "BUY"} ${qty.toNumber()} ${pos.symbol} (${exitReason})`
-                : `LIVE exit FAILED: ${pos.symbol} — ${exitOrder.error}. Position reverted to OPEN for safety!`,
-              severity: exitOrder.ok ? "info" : "error",
-            }), "system");
-          }
         } else {
           if (!newTrailingStop.equals(currentStop) || unrealized.toFixed(2) !== pos.unrealizedPnl) {
             await db.update(paperPositionsTable)

@@ -35,9 +35,7 @@ async function getYahooFinance(): Promise<any> {
   if (yahooLoadAttempted) return yahooFinance;
   yahooLoadAttempted = true;
   try {
-    yahooFinance = await import("yahoo-finance2");
-    // yahoo-finance2 exports default in ESM
-    if (yahooFinance.default) yahooFinance = yahooFinance.default;
+    yahooFinance = (await import("../lib/yahoo-client")).yahooFinance;
     logger.info("yahoo-finance2 loaded successfully for earnings evasion");
   } catch {
     logger.warn(

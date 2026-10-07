@@ -216,6 +216,36 @@ router.post("/suggestions/learning/trigger", async (req, res) => {
   }
 });
 
+// GET /api/suggestions/etf-signal
+// IMPORTANT: Must be defined BEFORE /suggestions/:id to avoid 'etf-signal' being captured as :id
+router.get("/suggestions/etf-signal", async (req, res) => {
+  try {
+    const { readEtfRotationSignal, runEtfSignalJob } = await import("../analysis/strategy_lab");
+    let sig = await readEtfRotationSignal();
+    if (!sig) {
+      sig = await runEtfSignalJob();
+    }
+    res.json({ signal: sig });
+  } catch (err) {
+    req.log.error({ err }, "Failed to get ETF signal");
+    res.status(500).json({ error: "Failed to get ETF signal" });
+  }
+});
+
+// POST /api/suggestions/generate-etf
+// IMPORTANT: Must be defined BEFORE /suggestions/:id to avoid 'generate-etf' being captured as :id
+router.post("/suggestions/generate-etf", async (req, res) => {
+  try {
+    const { syncEtfSuggestionToEngine } = await import("../analysis/etf_suggestion_service");
+    const capital = typeof req.body?.capital === "number" ? req.body.capital : undefined;
+    const result = await syncEtfSuggestionToEngine(capital);
+    res.json(result);
+  } catch (err) {
+    req.log.error({ err }, "Failed to generate ETF suggestion");
+    res.status(500).json({ error: "Failed to generate ETF suggestion", details: String(err) });
+  }
+});
+
 // GET /api/suggestions/:id
 router.get("/suggestions/:id", async (req, res) => {
   const parsed = GetSuggestionParams.safeParse(req.params);
@@ -633,3 +663,4 @@ router.post("/suggestions", async (req, res) => {
 });
 
 export default router;
+

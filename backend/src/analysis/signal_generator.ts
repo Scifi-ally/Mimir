@@ -25,11 +25,17 @@ import { checkAIHealth, batchInference, type BatchResult, getConfluenceScore, ty
 import { checkEarningsRisk } from "./earnings_filter";
 import { getMarketState } from "../market_data/market_state";
 import { stateStore, type RealtimeFeatures } from "../lib/redis_state";
-import { db, learningAnalyticsTable, symbolScoresTable, learningMetricsTable } from "../../db/src";
+import { db, learningAnalyticsTable, symbolScoresTable } from "../../db/src";
 import { eq } from "drizzle-orm";
 import { getISTDateStr } from "../lib/ist-time";
 import { createAnalysisTrace, recordAnalysisStage, runAnalysisStage, type AnalysisTrace } from "./analysis_contracts";
 import { toBatchInferenceCandidates } from "./inference_payload";
+import { quantitativeAdmission, directionalContext } from "./quantitative_admission";
+import { sectorRelativeStrength60 } from "./relative_strength";
+import { loadSectorHistories } from "./sector_history";
+import { computeCvdFromCandles, type CvdDivergenceResult } from "./divergence_engine";
+import { getStockStrategyAffinity } from "./stock_strategy_matrix";
+import { assessSignalData } from "./signal_data_quality";
 
 export interface AdaptiveWeights {
   tech: number;
@@ -104,6 +110,10 @@ async function getAdaptiveWeights(): Promise<AdaptiveWeights> {
 // ── Signal output ────────────────────────────────────────────────────────────
 
 export interface IntelligenceSignal {
+  /** Composite setup quality, separate from measured target-hit probability. */
+  signalScore?: number;
+  quantitativeValidated?: boolean;
+  timeHorizon?: string;
   // Core signal
   symbol: string;
   name: string;
@@ -156,6 +166,9 @@ export interface IntelligenceSignal {
   provisional_trigger: number | null;
   provisional_deviation: number;
 
+  // CVD Order Flow Context
+  cvdDivergence?: CvdDivergenceResult;
+
   // MTF Context
   mtf_score: number;
   mtf_total: number;
@@ -190,6 +203,14 @@ export interface DecisionTrace {
   system1_action?: string;
   system1_confidence?: number;
   position_size_multiplier?: number;
+  cvd_divergence?: string;
+  cvd_net_delta?: number;
+  cvd_boost?: number;
+  stock_champion_strategy?: string;
+  stock_champion_family?: string;
+  stock_champion_pf?: number;
+  stock_champion_wr?: number;
+  stock_affinity_boost?: number;
 }
 
 export interface PipelineResult {
@@ -292,14 +313,6 @@ export async function runIntelligencePipeline(
     metadata: { regime: regime.regime, confidence: regime.confidence },
   });
 
-  // Fetch learning metrics for current regime
-  const learningMetricsRows = await db
-    .select()
-    .from(learningMetricsTable)
-    .where(eq(learningMetricsTable.regimeLabel, regime.regime));
-  
-  const learningMetrics = new Map(learningMetricsRows.map(row => [row.symbol, row]));
-
   logger.info(
     {
       regime: regime.regime,
@@ -359,14 +372,9 @@ export async function runIntelligencePipeline(
   }> = [];
 
   // Pre-calculate Sector RS Averages using the full population of scanned results
-  const sectorRsSums = new Map<string, { total: number; count: number }>();
-  for (const r of scanResults) {
-    if (!r.sector) continue;
-    const current = sectorRsSums.get(r.sector) || { total: 0, count: 0 };
-    current.total += r.rs60;
-    current.count += 1;
-    sectorRsSums.set(r.sector, current);
-  }
+  let sectorPopulation: Awaited<ReturnType<typeof loadSectorHistories>> | null = null;
+  try { sectorPopulation = await loadSectorHistories(); }
+  catch (err) { logger.warn({ err }, "Sector benchmark unavailable; ranker inputs will be incomplete"); }
 
   // Pre-fetch real-time features to keep the compute loop synchronous
   const realtimeFeaturesCache = new Map<string, RealtimeFeatures>();
@@ -394,27 +402,22 @@ export async function runIntelligencePipeline(
     // So the unknown case is passed through explicitly as null, and
     // computeFeatureVector / the ranker contract treat a null here as "not
     // measured" rather than "measured as neutral".
-    let rsVsSectorProxy: number | null = result.rs60;
-    const sectorStats = result.sector ? sectorRsSums.get(result.sector) : null;
-    if (result.sector && result.sector !== "Other" && sectorStats && sectorStats.count > 1) {
-      const sectorAvgRs = sectorStats.total / sectorStats.count;
-      if (sectorAvgRs > 0) {
-        rsVsSectorProxy = result.rs60 / sectorAvgRs;
-      }
-    }
+    let rsVsSectorProxy = sectorPopulation
+      ? sectorRelativeStrength60(result.symbol, result.sector, candles, sectorPopulation.histories, sectorPopulation.sectors)
+      : null;
     const sectorRelativeStrengthKnown = rsVsSectorProxy !== null;
     if (rsVsSectorProxy === null) {
       // A single-member or unknown sector carries no relative-strength
       // information. Recorded so the feature is not silently backfilled.
-      rsVsSectorProxy = result.rs60;
+      rsVsSectorProxy = NaN;
     }
 
     /** Minimum candles needed before the ranker's 32 features are trustworthy. */
-const MIN_RANKER_HISTORY = 200;
+    const MIN_RANKER_HISTORY = 201;
 
-const realtimeFeat = realtimeFeaturesCache.get(result.symbol);
-    let bidAskImbalance = 0;
-    let optionsOiChangeRate = 0;
+    const realtimeFeat = realtimeFeaturesCache.get(result.symbol);
+    let bidAskImbalance: number | null = null;
+    let optionsOiChangeRate: number | null = null;
     let rankerIncomplete = false;
 
     // Realtime features are READ here, but they deliberately do NOT gate the
@@ -431,10 +434,8 @@ const realtimeFeat = realtimeFeaturesCache.get(result.symbol);
     //
     // The ranker is instead gated below on the inputs it genuinely consumes.
     if (realtimeFeat) {
-      bidAskImbalance = realtimeFeat.bidAskImbalance ?? 0;
-      optionsOiChangeRate = realtimeFeat.optionsOiChangeRate ?? 0;
       const diffMs = Date.now() - new Date(realtimeFeat.timestamp).getTime();
-      if (getMarketState().isMarketOpen && diffMs > 60 * 1000) {
+      if (!Number.isFinite(diffMs) || diffMs < -5000 || diffMs > 60 * 1000) {
         // Staleness is still reported, but as a data-quality note rather than a
         // disarming condition: the value is not a model input, so an old one is
         // merely uninformative, not invalidating.
@@ -442,6 +443,9 @@ const realtimeFeat = realtimeFeaturesCache.get(result.symbol);
           { symbol: result.symbol, diffMs },
           "Realtime order-flow reading is stale and will not be used this cycle"
         );
+      } else {
+        bidAskImbalance = Number.isFinite(realtimeFeat.bidAskImbalance) ? realtimeFeat.bidAskImbalance! : null;
+        optionsOiChangeRate = Number.isFinite(realtimeFeat.optionsOiChangeRate) ? realtimeFeat.optionsOiChangeRate! : null;
       }
     }
 
@@ -449,7 +453,7 @@ const realtimeFeat = realtimeFeaturesCache.get(result.symbol);
     // incomplete input. Left unmarked, the fallback (the stock's own rs60) would
     // look like a measured observation of sector-relative strength, which is
     // precisely how the feature became a constant that the model still split on.
-    if (!sectorRelativeStrengthKnown) {
+    if (!sectorRelativeStrengthKnown || !Number.isFinite(result.rs60)) {
       rankerIncomplete = true;
     }
 
@@ -518,7 +522,7 @@ const realtimeFeat = realtimeFeaturesCache.get(result.symbol);
       riskReward: c.result.setup.riskReward,
       marketRegime: regime.regime,
       indiaVix: currentMkt.indiaVix ?? 15.0,
-      ofiRatio: c.features.bidAskImbalance ?? 0.0,
+      ofiRatio: c.features.bidAskImbalance,
       fiiNet: currentMkt.fiiNetInr ?? 0.0,
     }))));
     const fallbackOnly = aiResults.size === 0 || Array.from(aiResults.values()).every(result => result.isFallback);
@@ -580,14 +584,27 @@ const realtimeFeat = realtimeFeaturesCache.get(result.symbol);
     const technicalScore = Math.round(Math.min(100, (result.score / 10) * 100));
     // bullish_probability is 0-1 from both the Python service and the native
     // fallback — scale to the 0-100 range the confidence formula expects.
-    const patternScore = Math.max(0, Math.min(100, (aiResult?.technicalRanking.bullish_probability ?? 0) * 100));
-    const chronosScore = aiResult
+    const technicalSource = aiResult?.technicalRanking?.source?.toLowerCase() ?? "";
+    const isLlmPricePrediction = technicalSource.includes("llm") || technicalSource.includes("priceprediction");
+    const bullishProbability = aiResult?.technicalRanking.bullish_probability ?? 0.5;
+    // Nifty50GPT/LLM price direction is advisory only. Keep its trace/source
+    // available, but make its signal contribution exactly neutral.
+    const patternScore = isLlmPricePrediction ? 50 : Math.max(0, Math.min(100,
+      (result.setup.direction === "BUY" ? bullishProbability : 1 - bullishProbability) * 100));
+    // Only a loaded Chronos model may supply a directional score. Momentum
+    // fallbacks and unavailable/error placeholders have no measured forecast.
+    const chronosScore = aiResult?.chronos?.source === "model" &&
+      typeof aiResult.chronos.forecast_return_pct === "number" && Number.isFinite(aiResult.chronos.forecast_return_pct)
       ? mapChronosToScore(aiResult.chronos, result.setup.direction)
-      : 0;
+      : 50;
 
     // Sector strength from features
     const sectorStrength = features.sectorStrength;
     const regimeScore = features.regimeScore;
+    const directed = directionalContext(features.rsVsNifty60d, sectorStrength, result.setup.direction);
+    const scoreRs = result.setup.direction === "BUY" ? features.rsVsNifty60d : 2 - features.rsVsNifty60d;
+    const scoreSector = result.setup.direction === "BUY" ? sectorStrength : -sectorStrength;
+    const scoreSentiment = result.setup.direction === "BUY" ? sentimentScore : 100 - sentimentScore;
 
     // Compute final confidence using the Regime-Gated Confluence Model
     let confidence = 50;
@@ -595,16 +612,13 @@ const realtimeFeat = realtimeFeaturesCache.get(result.symbol);
     // decision trace must record which formula ran, not which was attempted.
     let usedConfluence = false;
     if (aiContributing) {
-      const rsNormalized = Math.max(0, Math.min(100, ((features.rsVsNifty60d - 0.8) / 0.4) * 100));
-      const sectorNormalized = Math.max(0, Math.min(100, ((sectorStrength + 2) / 4) * 100));
-      
       const confRes = await getConfluenceScore(regime.regime, {
         tech_score: technicalScore,
         pattern_score: patternScore,
         chronos_score: chronosScore,
-        rs_score: rsNormalized,
-        sector_score: sectorNormalized,
-        sentiment_score: sentimentScore
+        rs_score: directed.rs,
+        sector_score: directed.sector,
+        sentiment_score: scoreSentiment
       });
       
       if (!confRes.fallback) {
@@ -615,18 +629,18 @@ const realtimeFeat = realtimeFeaturesCache.get(result.symbol);
           technicalScore,
           patternScore,
           chronosScore,
-          features.rsVsNifty60d,
-          sectorStrength,
+          scoreRs,
+          scoreSector,
           regimeScore,
-          sentimentScore,
+          scoreSentiment,
           adaptiveWeights
         );
       }
     } else {
       confidence = computeFallbackConfidence(
         technicalScore,
-        features.rsVsNifty60d,
-        sectorStrength,
+        scoreRs,
+        scoreSector,
         regimeScore,
         adaptiveWeights
       );
@@ -635,6 +649,43 @@ const realtimeFeat = realtimeFeaturesCache.get(result.symbol);
     // Apply high volatility penalty instead of hard blocking trades
     if (regime.regime === "HIGH_VOLATILITY") {
       confidence = Math.max(0, confidence - 15);
+    }
+
+    // ── CVD (Cumulative Volume Delta) Order Flow Divergence ──
+    let cvdResult: CvdDivergenceResult | null = null;
+    if (candidate.candles && candidate.candles.length >= 5) {
+      try {
+        cvdResult = computeCvdFromCandles(candidate.candles, result.symbol, "15m");
+      } catch (err) {
+        logger.debug({ err, symbol: result.symbol }, "Failed computing candle CVD divergence");
+      }
+    }
+
+    let cvdBoost = 0;
+    if (cvdResult && cvdResult.available) {
+      if (result.setup.direction === "BUY") {
+        if (cvdResult.divergenceType === "BULLISH_ABSORPTION" || cvdResult.divergenceType === "HIDDEN_BULLISH") {
+          cvdBoost = cvdResult.penaltyOrBoost;
+          confidence = Math.min(100, confidence + cvdBoost);
+        } else if (cvdResult.divergenceType === "BEARISH_EXHAUSTION" || cvdResult.divergenceType === "HIDDEN_BEARISH") {
+          cvdBoost = cvdResult.penaltyOrBoost; // -8 to -12
+          confidence = Math.max(0, confidence + cvdBoost);
+        }
+      } else if (result.setup.direction === "SELL") {
+        if (cvdResult.divergenceType === "BEARISH_EXHAUSTION" || cvdResult.divergenceType === "HIDDEN_BEARISH") {
+          cvdBoost = Math.abs(cvdResult.penaltyOrBoost); // +8 to +12
+          confidence = Math.min(100, confidence + cvdBoost);
+        } else if (cvdResult.divergenceType === "BULLISH_ABSORPTION" || cvdResult.divergenceType === "HIDDEN_BULLISH") {
+          cvdBoost = -Math.abs(cvdResult.penaltyOrBoost); // -8 to -12
+          confidence = Math.max(0, confidence + cvdBoost);
+        }
+      }
+    }
+
+    // ── Stock-Specific Strategy Champion Weightage ──
+    const stockAffinity = getStockStrategyAffinity(result.symbol, result.setup.setupType);
+    if (stockAffinity.pipelineConfidenceBoost !== 0) {
+      confidence = Math.max(0, Math.min(100, confidence + stockAffinity.pipelineConfidenceBoost));
     }
 
     let shapString: string | null = null;
@@ -649,7 +700,8 @@ const realtimeFeat = realtimeFeaturesCache.get(result.symbol);
       }
     }
 
-    const buildRejectedSignal = (gate: string, value: number | string | boolean | string[] | null, thresholdVal?: number): IntelligenceSignal => {
+    const buildRejectedSignal = (gate: string, value: number | string | boolean | string[] | null, thresholdVal?: number, cvdOverride?: CvdDivergenceResult | null): IntelligenceSignal => {
+      const activeCvd = cvdOverride !== undefined ? cvdOverride : cvdResult;
       const trace: DecisionTrace = {
         regime: regime.regime,
         regimeStrength: regime.confidence,
@@ -670,6 +722,9 @@ const realtimeFeat = realtimeFeaturesCache.get(result.symbol);
         system1_action: aiResult?.system1_decision?.action,
         system1_confidence: aiResult?.system1_decision?.confidence,
         position_size_multiplier: aiResult?.system1_decision?.position_size_multiplier,
+        cvd_divergence: activeCvd?.divergenceType,
+        cvd_net_delta: activeCvd?.netDelta,
+        cvd_boost: cvdBoost,
       };
       
       return {
@@ -707,6 +762,7 @@ const realtimeFeat = realtimeFeaturesCache.get(result.symbol);
         signalId: "",
         provisional_trigger: null,
         provisional_deviation: 0,
+        cvdDivergence: activeCvd ?? undefined,
         mtf_score: 0,
         mtf_total: 0,
         mtf_confluence: 'PENDING',
@@ -719,15 +775,24 @@ const realtimeFeat = realtimeFeaturesCache.get(result.symbol);
 
     // ── Learned ranker: the primary edge ──────────────────────────────
     // When the LightGBM ranker served this batch it returns a calibrated
-    // P(target1 before stop). We (a) HARD-GATE on the model's own
-    // out-of-sample-optimal threshold — conservative risk means we simply
-    // don't take trades the model expects to lose — and (b) blend the
-    // probability into the confidence so the learned model, not the
-    // hand-tuned linear formula, drives ranking. When the ranker is absent
-    // (null win_probability), nothing here fires and the composite score
-    // continues to rank exactly as before (graceful degradation).
+    // P(target1 before stop). A validated model and complete, fresh data are
+    // mandatory. Probability is reported as confidence; the heuristic score
+    // remains separate and cannot manufacture a calibrated probability.
     const winProb = aiResult?.win_probability;
     const rankerLoaded = aiResult?.ranker_loaded === true;
+    const dataRejection = assessSignalData(candidate.candles);
+    if (dataRejection) {
+      rejectedByRisk++;
+      rejectedSignals.push(buildRejectedSignal(dataRejection, null));
+      continue;
+    }
+    const admission = quantitativeAdmission(winProb, rankerLoaded, !!features.rankerIncomplete);
+    if (admission) {
+      rejectedByAI++;
+      rejectedSignals.push(buildRejectedSignal(admission, null));
+      continue;
+    }
+    const signalScore = confidence;
     if (rankerLoaded && typeof winProb === "number") {
       // Threshold from the trained model's meta (expectancy-maximising on the
       // held-out slice), with a conservative floor so a loose auto-threshold
@@ -746,12 +811,8 @@ const realtimeFeat = realtimeFeaturesCache.get(result.symbol);
         );
         continue;
       }
-      // Blend: map the calibrated probability to a 0-100 scale and take a
-      // 70/30 weighting toward the model over the legacy composite. The model
-      // is the measured edge; the composite is a prior that keeps ordering
-      // sane in the probability band where the model is less discriminating.
-      const rankerConfidence = winProb * 100;
-      confidence = Math.round(rankerConfidence * 0.7 + confidence * 0.3);
+      // Preserve the model's calibrated probability without heuristic boosts.
+      confidence = Math.round(winProb * 100);
     }
 
 
@@ -1021,8 +1082,33 @@ const realtimeFeat = realtimeFeaturesCache.get(result.symbol);
     }
 
     const mergedConfluence = [...result.setup.confluence];
+    if (stockAffinity.isChampion) {
+      mergedConfluence.push(`⭐ Stock Champion: ${stockAffinity.championName} (PF: ${stockAffinity.profitFactor}, WR: ${stockAffinity.winRatePct}%)`);
+    }
     if (shapString) {
       mergedConfluence.push(shapString);
+    }
+    if (cvdResult && cvdResult.available && cvdResult.isDiverging) {
+      if (result.setup.direction === "BUY") {
+        if (cvdResult.divergenceType === "BULLISH_ABSORPTION") {
+          mergedConfluence.push(`CVD: Bullish Delta Absorption (+${cvdResult.penaltyOrBoost} score)`);
+        } else if (cvdResult.divergenceType === "HIDDEN_BULLISH") {
+          mergedConfluence.push(`CVD: Hidden Bullish Accumulation (+${cvdResult.penaltyOrBoost} score)`);
+        }
+      } else if (result.setup.direction === "SELL") {
+        if (cvdResult.divergenceType === "BEARISH_EXHAUSTION") {
+          mergedConfluence.push(`CVD: Bearish Delta Exhaustion (+${Math.abs(cvdResult.penaltyOrBoost)} score)`);
+        } else if (cvdResult.divergenceType === "HIDDEN_BEARISH") {
+          mergedConfluence.push(`CVD: Hidden Bearish Distribution (+${Math.abs(cvdResult.penaltyOrBoost)} score)`);
+        }
+      }
+    }
+    if (cvdResult && cvdResult.available) {
+      if (result.setup.direction === "BUY" && (cvdResult.divergenceType === "BEARISH_EXHAUSTION" || cvdResult.divergenceType === "HIDDEN_BEARISH")) {
+        riskAssessment.warningReasons.push(`CVD: Bearish delta exhaustion against BUY (${cvdResult.divergenceType})`);
+      } else if (result.setup.direction === "SELL" && (cvdResult.divergenceType === "BULLISH_ABSORPTION" || cvdResult.divergenceType === "HIDDEN_BULLISH")) {
+        riskAssessment.warningReasons.push(`CVD: Bullish delta absorption against SELL (${cvdResult.divergenceType})`);
+      }
     }
     if (activeSys1Decision?.verdict === "APPROVE") {
       mergedConfluence.push(`${sys1Label}: Conviction Approved`);
@@ -1082,6 +1168,9 @@ const realtimeFeat = realtimeFeaturesCache.get(result.symbol);
 
     // ── Signal PASSED all gates! ──────────────────────────────────────
     const signal: IntelligenceSignal = {
+      signalScore,
+      quantitativeValidated: true,
+      timeHorizon: "5 trading sessions",
       symbol: result.symbol,
       name: result.name,
       signal: result.setup.direction,
@@ -1130,11 +1219,13 @@ const realtimeFeat = realtimeFeaturesCache.get(result.symbol);
         technicalScore,
         regimeScore,
         sentimentScore,
-        learningMetrics.get(result.symbol)
+        aiResult,
+        cvdResult
       ),
       
       provisional_trigger,
       provisional_deviation,
+      cvdDivergence: cvdResult ?? undefined,
       mtf_score: result.mtfScore ?? 0,
       mtf_total: result.mtfTotal ?? 0,
       mtf_confluence: result.mtfConfluenceString ?? 'PENDING',
@@ -1159,6 +1250,14 @@ const realtimeFeat = realtimeFeaturesCache.get(result.symbol);
         system1_action: aiResult?.system1_decision?.action,
         system1_confidence: aiResult?.system1_decision?.confidence,
         position_size_multiplier: aiResult?.system1_decision?.position_size_multiplier,
+        cvd_divergence: cvdResult?.divergenceType,
+        cvd_net_delta: cvdResult?.netDelta,
+        cvd_boost: cvdBoost,
+        stock_champion_strategy: stockAffinity.championName,
+        stock_champion_family: stockAffinity.championFamily,
+        stock_champion_pf: stockAffinity.profitFactor,
+        stock_champion_wr: stockAffinity.winRatePct,
+        stock_affinity_boost: stockAffinity.pipelineConfidenceBoost,
       }
     };
 
@@ -1261,9 +1360,9 @@ function calculateSignalFactors(
   chronosScore: number,
   technicalScore: number,
   regimeScore: number,
-  sentimentScore: number,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  learningMetric?: any
+  _sentimentScore: number,
+  evidence?: BatchResult,
+  cvd?: CvdDivergenceResult | null
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): Record<string, any> {
   const rsVal = features.rsVsNifty60d;
@@ -1322,20 +1421,31 @@ function calculateSignalFactors(
     regime: {
       score: regimeScore,
       contribution: regimeContrib,
-      align: learningMetric?.regimeAlign ? parseFloat(learningMetric.regimeAlign) : null,
+      align: null, // Legacy rows lack sample counts and outcome provenance.
     },
     technicalRanking: aiContributing ? {
       score: Math.round(patternScore),
       contribution: patternContrib,
     } : null,
-    chronos: aiContributing ? {
+    chronos: aiContributing && evidence?.chronos?.source === "model" ? {
       score: Math.round(chronosScore),
       contribution: chronosContrib,
     } : null,
-    sentiment: {
-      score: Math.round(sentimentScore),
-      contribution: 0
-    },
-    techEdge: learningMetric?.techEdge ? parseFloat(learningMetric.techEdge) : null,
+    sentiment: typeof evidence?.sentiment_score === "number" ? {
+      score: evidence.sentiment_score, contribution: 0,
+      evidence: evidence.sentiment_evidence ?? null,
+    } : null,
+    cvd: cvd && cvd.available ? {
+      divergenceType: cvd.divergenceType,
+      signal: cvd.signal,
+      netDelta: cvd.netDelta,
+      cvdSlope: cvd.cvdSlope,
+      priceSlope: cvd.priceSlope,
+      contribution: cvd.penaltyOrBoost,
+      confidence: cvd.confidence,
+      description: cvd.description,
+    } : null,
+    techEdge: null,
+    measuredFactors: features.measuredFactors ?? null,
   };
 }

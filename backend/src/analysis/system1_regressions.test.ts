@@ -46,11 +46,11 @@ describe("System-1 honest attribution", () => {
 });
 
 describe("System-1 position sizing is risk-aware", () => {
-  it("scales UP only when execution odds are clean", () => {
+  it("never increases exposure on unvalidated execution odds", () => {
     const dec = computeNativeLayaDecision(CLEAN_SETUP);
-    expect(dec.p_execution_success).toBeGreaterThanOrEqual(0.7);
-    expect(dec.p_stop_hunt_risk).toBeLessThanOrEqual(0.2);
-    expect(dec.position_size_multiplier).toBe(1.25);
+    expect(dec.p_execution_success).toBeNull();
+    expect(dec.p_stop_hunt_risk).toBeNull();
+    expect(dec.position_size_multiplier).toBe(1.0);
   });
 
   it("scales DOWN when stop-hunt risk is elevated, even at high confidence", () => {
@@ -63,7 +63,7 @@ describe("System-1 position sizing is risk-aware", () => {
       market_regime: "VOLATILE",
       risk_reward_ratio: 1.8,
     });
-    expect(risky.p_stop_hunt_risk).toBeGreaterThan(0.35);
+    expect(risky.p_stop_hunt_risk).toBeNull();
     // Sizing must reflect the risk rather than ignoring it.
     expect(risky.position_size_multiplier).toBeLessThan(1.25);
   });
@@ -110,18 +110,18 @@ describe("System-1 hard gates cannot be bypassed", () => {
 });
 
 describe("System-1 Noul primitives are state-sensitive", () => {
-  it("reports higher fill probability when order flow confirms the direction", () => {
+  it("keeps heuristic order-flow scores separate from fill probabilities", () => {
     const aligned = computeNativeLayaDecision({ ...CLEAN_SETUP, order_flow_imbalance_ratio: 0.35 });
     const adverse = computeNativeLayaDecision({ ...CLEAN_SETUP, order_flow_imbalance_ratio: -0.35 });
-    expect(aligned.p_execution_success).toBeGreaterThan(adverse.p_execution_success);
+    expect(aligned.p_execution_success).toBeNull();
+    expect(adverse.p_execution_success).toBeNull();
+    expect(aligned.opportunity_score).toBeGreaterThan(adverse.opportunity_score);
   });
 
-  it("keeps all probabilities within [0, 1]", () => {
+  it("publishes unknown probabilities for every unvalidated decision", () => {
     const dec = computeNativeLayaDecision({ ...CLEAN_SETUP, india_vix: 26, risk_reward_ratio: 0.5 });
     for (const p of [dec.p_execution_success, dec.p_stop_hunt_risk, dec.p_adverse_regime_shift]) {
-      expect(Number.isFinite(p)).toBe(true);
-      expect(p).toBeGreaterThanOrEqual(0);
-      expect(p).toBeLessThanOrEqual(1);
+      expect(p).toBeNull();
     }
   });
 });

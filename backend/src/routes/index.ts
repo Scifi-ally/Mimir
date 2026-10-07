@@ -13,6 +13,8 @@ import systemRouter from "./system";
 import paperTradingRouter from "./paper_trading";
 import tradingRouter from "./trading";
 import alertsRouter from "./alerts";
+import factorsRouter from "./factors";
+import researchRouter from "./research";
 
 const router: IRouter = Router();
 
@@ -28,6 +30,8 @@ router.use(systemRouter);
 router.use(paperTradingRouter);
 router.use(tradingRouter);
 router.use(alertsRouter);
+router.use(factorsRouter);
+router.use(researchRouter);
 router.use("/reports", reportsRouter);
 router.use("/benchmark", benchmarkRouter);
 

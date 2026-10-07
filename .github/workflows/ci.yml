@@ -46,6 +46,8 @@ jobs:
       - name: Lint AI Service
         working-directory: ./backend/ai_service
         run: flake8 . --count --show-source --statistics
+      - name: Python model and execution regressions
+        run: python -m pytest -q backend/ai_service
 
   security-scan:
     runs-on: ubuntu-latest
@@ -54,10 +56,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: npm audit backend
-        run: npm --prefix backend audit --audit-level=high
-      - name: npm audit frontend
-        run: npm --prefix frontend audit --audit-level=high
+      - name: Audit production workspace dependencies
+        run: npm audit --omit=dev --audit-level=high
       - name: Setup Python
         uses: actions/setup-python@v5
         with:

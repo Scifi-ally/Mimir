@@ -6,10 +6,13 @@ import { getMonitoringStatus } from "../analysis/intraday_monitor";
 import { getAccessToken } from "../upstox/auth";
 import { logger } from "../lib/logger";
 import { logApiError } from "../lib/api-errors";
-import { db, learningMetricsTable } from "../../db/src/index.js";
+import { db, suggestionsTable } from "../../db/src/index.js";
 import { desc, eq } from "drizzle-orm";
+import { diagnosticPnl, summarizeOutcomeEvidence } from "../analysis/outcome_evidence";
+import { forecastAvailability } from "../analysis/forecast_availability";
 import { resolveIndexAsStock } from "./market_utils";
 import type { UniverseStock } from "../analysis/stock_scanner";
+import { getStockChampion, getAllStockChampions } from "../analysis/stock_strategy_matrix";
 
 const router = Router();
 
@@ -128,14 +131,14 @@ router.get("/market/forecast", async (req, res) => {
 
         return {
           symbol: stock.symbol,
-          available: true,
+          available: forecastAvailability(ai.chronos).available,
           source: ai.chronos?.source || "unknown",
           isFallback,
           trend: ai.chronos?.trend || "neutral",
-          forecastReturnPct: ai.chronos?.forecast_return_pct || 0,
+          forecastReturnPct: forecastAvailability(ai.chronos).returnPct,
           medianForecast: ai.chronos?.median_forecast || [],
           quantileForecasts: ai.chronos?.quantile_forecasts || {},
-          worldSentiment: ai.world_sentiment_score || 0,
+          worldSentiment: ai.world_sentiment_score ?? null,
           compositeScore: ai.composite_score,
           components: ai.components || {},
           lastClose,
@@ -286,14 +289,17 @@ async function computeSymbolInsights(stock: ResolvedStock) {
 
     const metrics: { techEdge: number | null, regimeAlign: number | null } = { techEdge: null, regimeAlign: null };
     try {
-      const resData = await db.select().from(learningMetricsTable)
-                          .where(eq(learningMetricsTable.symbol, stock.symbol))
-                          .orderBy(desc(learningMetricsTable.updatedAt))
-                          .limit(1);
-      if (resData.length > 0) {
-        metrics.techEdge = resData[0].techEdge ? parseFloat(resData[0].techEdge) : null;
-        metrics.regimeAlign = resData[0].regimeAlign ? parseFloat(resData[0].regimeAlign) : null;
-      }
+      // Derive from recorded outcomes rather than trusting legacy 50% baseline rows.
+      const outcomes = await db.select().from(suggestionsTable)
+        .where(eq(suggestionsTable.symbol, stock.symbol))
+        .orderBy(desc(suggestionsTable.closedAt)).limit(200);
+      const closed = outcomes.filter(row => row.closedAt != null &&
+        ["TARGET_1_HIT", "TARGET_2_HIT", "STOP_HIT", "EXPIRED", "CLOSED"].includes(row.status));
+      metrics.techEdge = summarizeOutcomeEvidence(closed.filter(row => /RSI|EMA|vol|technical/i.test(row.reasoning ?? ""))
+        .map(row => diagnosticPnl(row.pnlInr))).winRatePct;
+      const regime = getLastRegimeOutput()?.regime;
+      metrics.regimeAlign = regime ? summarizeOutcomeEvidence(closed.filter(row => row.marketRegime === regime)
+        .map(row => diagnosticPnl(row.pnlInr))).winRatePct : null;
     } catch {
       logger.warn({ symbol: stock.symbol }, "Failed to fetch learning metrics");
     }
@@ -346,31 +352,48 @@ async function computeSymbolInsights(stock: ResolvedStock) {
       monitoring: monitoring ?? null,
       ai: ai
         ? {
-            worldSentiment: ai.world_sentiment_score || 0,
+            worldSentiment: ai.world_sentiment_score ?? null,
             compositeScore: ai.composite_score,
             components: ai.components || {},
             trend: ai.chronos?.trend ?? "UNKNOWN",
-            forecastReturnPct: ai.chronos?.forecast_return_pct ?? 0,
+            forecastReturnPct: ai.chronos?.source === "model" ? ai.chronos.forecast_return_pct ?? null : null,
             technicalPatterns: ai.technicalRanking?.detected_patterns ?? [],
             source: ai.chronos?.source ?? "unknown",
             isFallback: Boolean(ai.isFallback || ai.chronos?.source === "fallback" || ai.technicalRanking?.source === "fallback" || ai.technicalRanking?.source === "Advanced Stochastic Engine" || ai.chronos?.source === "error" || ai.technicalRanking?.source === "error"),
-            techEdge: metrics.techEdge ?? (ai.technicalRanking ? Math.round(ai.technicalRanking.confidence * 100) : null),
-            regimeAlign: metrics.regimeAlign ?? (getLastRegimeOutput()?.strength ?? 50),
+            techEdge: metrics.techEdge,
+            regimeAlign: metrics.regimeAlign,
           }
         : {
-            compositeScore: 0,
+            compositeScore: null,
             trend: "UNKNOWN",
-            forecastReturnPct: 0,
+            forecastReturnPct: null,
             technicalPatterns: [],
             source: "none",
             isFallback: false,
             techEdge: metrics.techEdge,
-            regimeAlign: metrics.regimeAlign ?? (getLastRegimeOutput()?.strength ?? 50),
+            regimeAlign: metrics.regimeAlign,
           },
+      stockChampion: getStockChampion(stock.symbol),
       fetchedAt: new Date().toISOString(),
     };
 
     return payload;
 }
+
+// GET /api/market/stock-champion/:symbol
+router.get("/market/stock-champion/:symbol", (req, res) => {
+  const sym = String(req.params.symbol ?? "").trim().toUpperCase();
+  const champ = getStockChampion(sym);
+  if (!champ) {
+    res.status(404).json({ error: `Stock champion profile not found for ${sym}` });
+    return;
+  }
+  res.json(champ);
+});
+
+// GET /api/market/stock-champions
+router.get("/market/stock-champions", (_req, res) => {
+  res.json(getAllStockChampions());
+});
 
 export default router;

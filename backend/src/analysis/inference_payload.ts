@@ -14,9 +14,9 @@ export interface InferenceCandidateContext {
   target1?: number;
   riskReward?: number;
   marketRegime?: string;
-  indiaVix?: number;
-  ofiRatio?: number;
-  fiiNet?: number;
+  indiaVix?: number | null;
+  ofiRatio?: number | null;
+  fiiNet?: number | null;
 }
 
 function encodeOHLCV(candles: OHLCV[]): number[][] {
@@ -76,13 +76,13 @@ export function toBatchInferenceCandidate(
       // opportunity bonus added (10/3)*20 = 66.7 points, and the worst setup
       // possible was scored 100 / APPROVE / 1.25x. De-normalize instead, and
       // never emit a non-finite R multiple.
-      risk_reward_ratio: resolveRiskRewardMultiple(candidate) ?? 1.5,
+      risk_reward_ratio: resolveRiskRewardMultiple(candidate),
       regime: candidate.marketRegime ?? "UNKNOWN",
       market_regime: candidate.marketRegime ?? "UNKNOWN",
-      vix: candidate.indiaVix ?? 15.0,
-      india_vix: candidate.indiaVix ?? 15.0,
-      ofi_ratio: candidate.ofiRatio ?? candidate.features.bidAskImbalance ?? 0.0,
-      fii_dii_net: candidate.fiiNet ?? candidate.features.fiiDiiNetFlowLag ?? 0.0,
+      vix: candidate.indiaVix ?? null,
+      india_vix: candidate.indiaVix ?? null,
+      ofi_ratio: candidate.ofiRatio ?? candidate.features.bidAskImbalance ?? null,
+      fii_dii_net: candidate.fiiNet ?? (Number.isFinite(candidate.features.fiiDiiNetFlowLag) ? candidate.features.fiiDiiNetFlowLag : null),
       ranker_features: candidate.features.rankerIncomplete
         ? null
         : toRankerFeatureArray(candidate.features),

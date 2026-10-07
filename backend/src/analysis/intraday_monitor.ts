@@ -943,8 +943,8 @@ function buildMonitorFeatureVector(
     volOfVol: 0,
     cprWidthPct: 0,
 
-    bidAskImbalance: 0,
-    optionsOiChangeRate: 0,
+    bidAskImbalance: null,
+    optionsOiChangeRate: null,
     fiiDiiNetFlowLag: 0,
 
     // ALWAYS incomplete, unconditionally.
